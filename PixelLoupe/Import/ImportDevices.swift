@@ -39,6 +39,9 @@ final class ImportDevices: NSObject {
     static let shared = ImportDevices()
     /// Posted when a device connects or disconnects.
     static let didChangeNotification = Notification.Name("ImportDevicesDidChange")
+    /// Posted (with the device's ID as the object) when a phone is unlocked and trusts this Mac, so its
+    /// photos can be read.
+    static let didUnlockNotification = Notification.Name("ImportDevicesDidUnlock")
     nonisolated static let scheme = "pixelloupe-device"
 
     enum DeviceError: LocalizedError {
@@ -172,6 +175,8 @@ final class CameraImportDevice: NSObject, ImportDevice {
     private var filesByID: [String: ICCameraFile] = [:]
     private var catalogWaiters: [CheckedContinuation<Void, Error>] = []
     private var isCatalogComplete = false
+    /// How long a phone can stay access-restricted before it's reported as locked.
+    static let unlockWait = Duration.seconds(3)
 
     init(_ camera: ICCameraDevice) {
         self.camera = camera
@@ -198,11 +203,15 @@ final class CameraImportDevice: NSObject, ImportDevice {
     }
 
     func files() async throws -> [ImportDeviceFile] {
-        if !camera.hasOpenSession { try await camera.requestOpenSession() }
-        if camera.isAccessRestrictedAppleDevice || camera.isLocked { throw ImportDevices.DeviceError.locked(kindName) }
-        if !isCatalogComplete {
-            try await withCheckedThrowingContinuation { catalogWaiters.append($0) }
+        if !camera.hasOpenSession {
+            do {
+                try await camera.requestOpenSession()
+            } catch where Self.isPasscodeLocked(error) {
+                // An unlocked, trusted iPhone still opens its session with this error, then lifts the
+                // restriction and sends its catalog moments later, so the catalog is waited for below.
+            }
         }
+        if !isCatalogComplete { try await waitForCatalog() }
         filesByID = [:]
         var files: [ImportDeviceFile] = []
         for (index, item) in (camera.mediaFiles ?? []).enumerated() {
@@ -250,6 +259,25 @@ final class CameraImportDevice: NSObject, ImportDevice {
         camera.requestEject()
     }
 
+    /// Whether `error` is ImageCaptureCore's "Please unlock" (`ICReturnDeviceIsPasscodeLocked`). Note
+    /// that `ICCameraDevice.isLocked` is something else (whether files can be deleted).
+    nonisolated static func isPasscodeLocked(_ error: Error) -> Bool {
+        let error = error as NSError
+        return error.domain == "com.apple.ImageCaptureCore" && error.code == -9943 // ICReturnDeviceIsPasscodeLocked
+    }
+
+    /// Waits for the device's catalog. A phone that stays locked, or doesn't trust this Mac, never sends
+    /// one, so after ``unlockWait`` it's reported as locked; unlocking it later posts
+    /// ``ImportDevices/didUnlockNotification``.
+    private func waitForCatalog() async throws {
+        Task { [weak self] in
+            try? await Task.sleep(for: Self.unlockWait)
+            guard let self, !isCatalogComplete, !catalogWaiters.isEmpty, camera.isAccessRestrictedAppleDevice else { return }
+            catalogDidComplete(ImportDevices.DeviceError.locked(kindName))
+        }
+        try await withCheckedThrowingContinuation { catalogWaiters.append($0) }
+    }
+
     fileprivate func catalogDidComplete(_ error: Error?) {
         isCatalogComplete = error == nil
         let waiters = catalogWaiters
@@ -260,33 +288,40 @@ final class CameraImportDevice: NSObject, ImportDevice {
     }
 }
 
-extension CameraImportDevice: @preconcurrency ICCameraDeviceDelegate {
-    func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) {
-        catalogDidComplete(nil)
+/// ImageCaptureCore calls these on its own queue (PTP events arrive on `ICDeviceOperationQueue`), so
+/// each one hops to the main queue, in order.
+extension CameraImportDevice: ICCameraDeviceDelegate {
+    nonisolated private func onMain(_ body: @escaping @MainActor () -> Void) {
+        DispatchQueue.main.async { MainActor.assumeIsolated(body) }
     }
 
-    func device(_ device: ICDevice, didOpenSessionWithError error: (any Error)?) {
-        if let error { catalogDidComplete(error) }
+    nonisolated func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) {
+        onMain { self.catalogDidComplete(nil) }
     }
 
-    func device(_ device: ICDevice, didCloseSessionWithError error: (any Error)?) {
-        isCatalogComplete = false
+    nonisolated func device(_ device: ICDevice, didOpenSessionWithError error: (any Error)?) {
+        guard let error, !Self.isPasscodeLocked(error) else { return }
+        onMain { self.catalogDidComplete(error) }
     }
 
-    func didRemove(_ device: ICDevice) {
-        catalogDidComplete(ImportDevices.DeviceError.disconnected)
+    nonisolated func device(_ device: ICDevice, didCloseSessionWithError error: (any Error)?) {
+        onMain { self.isCatalogComplete = false }
     }
 
-    func cameraDeviceDidRemoveAccessRestriction(_ device: ICDevice) {
-        NotificationCenter.default.post(name: ImportDevices.didChangeNotification, object: ImportDevices.shared)
+    nonisolated func didRemove(_ device: ICDevice) {
+        onMain { self.catalogDidComplete(ImportDevices.DeviceError.disconnected) }
     }
 
-    func cameraDeviceDidEnableAccessRestriction(_ device: ICDevice) {}
-    func cameraDevice(_ camera: ICCameraDevice, didAdd items: [ICCameraItem]) {}
-    func cameraDevice(_ camera: ICCameraDevice, didRemove items: [ICCameraItem]) {}
-    func cameraDevice(_ camera: ICCameraDevice, didReceiveThumbnail thumbnail: CGImage?, for item: ICCameraItem, error: (any Error)?) {}
-    func cameraDevice(_ camera: ICCameraDevice, didReceiveMetadata metadata: [AnyHashable: Any]?, for item: ICCameraItem, error: (any Error)?) {}
-    func cameraDevice(_ camera: ICCameraDevice, didRenameItems items: [ICCameraItem]) {}
-    func cameraDeviceDidChangeCapability(_ camera: ICCameraDevice) {}
-    func cameraDevice(_ camera: ICCameraDevice, didReceivePTPEvent eventData: Data) {}
+    nonisolated func cameraDeviceDidRemoveAccessRestriction(_ device: ICDevice) {
+        onMain { NotificationCenter.default.post(name: ImportDevices.didUnlockNotification, object: self.id) }
+    }
+
+    nonisolated func cameraDeviceDidEnableAccessRestriction(_ device: ICDevice) {}
+    nonisolated func cameraDevice(_ camera: ICCameraDevice, didAdd items: [ICCameraItem]) {}
+    nonisolated func cameraDevice(_ camera: ICCameraDevice, didRemove items: [ICCameraItem]) {}
+    nonisolated func cameraDevice(_ camera: ICCameraDevice, didReceiveThumbnail thumbnail: CGImage?, for item: ICCameraItem, error: (any Error)?) {}
+    nonisolated func cameraDevice(_ camera: ICCameraDevice, didReceiveMetadata metadata: [AnyHashable: Any]?, for item: ICCameraItem, error: (any Error)?) {}
+    nonisolated func cameraDevice(_ camera: ICCameraDevice, didRenameItems items: [ICCameraItem]) {}
+    nonisolated func cameraDeviceDidChangeCapability(_ camera: ICCameraDevice) {}
+    nonisolated func cameraDevice(_ camera: ICCameraDevice, didReceivePTPEvent eventData: Data) {}
 }

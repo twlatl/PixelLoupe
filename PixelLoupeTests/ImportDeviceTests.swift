@@ -15,6 +15,8 @@ struct ImportDeviceTests {
         let kindName = "iPhone"
         let folder: URL
         var ejected = 0
+        /// A phone that isn't unlocked yet (or doesn't trust this Mac).
+        var isLocked = false
         var thumbnailRequests = 0
 
         init(folder: URL) {
@@ -26,7 +28,8 @@ struct ImportDeviceTests {
         }
 
         func files() async throws -> [ImportDeviceFile] {
-            names.enumerated().map { index, name in
+            if isLocked { throw ImportDevices.DeviceError.locked(kindName) }
+            return names.enumerated().map { index, name in
                 let size = (try? folder.appending(path: name).resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
                 return ImportDeviceFile(id: String(index), name: name, size: Int64(size),
                                         date: Date(timeIntervalSinceReferenceDate: 800_000_000 + Double(index)), isVideo: false)
@@ -66,6 +69,48 @@ struct ImportDeviceTests {
         #expect(ImportDevices.isMassStorage(ICDeviceTransport.transportTypeMassStorage.rawValue))
         #expect(!ImportDevices.isMassStorage(ICDeviceTransport.transportTypeUSB.rawValue), "a phone or camera over USB is a device")
         #expect(!ImportDevices.isMassStorage(nil))
+    }
+
+    @Test func passcodeLockedErrorIsRecognized() {
+        // ImageCaptureCore's "Please unlock", which a trusted iPhone also reports while its session opens.
+        let error = NSError(domain: "com.apple.ImageCaptureCore", code: -9943,
+                            userInfo: [NSLocalizedDescriptionKey: "Please unlock “Ted's iPhone”"])
+        #expect(CameraImportDevice.isPasscodeLocked(error))
+        #expect(!CameraImportDevice.isPasscodeLocked(NSError(domain: "com.apple.ImageCaptureCore", code: -9934)))
+    }
+
+    @Test @MainActor func aLockedPhoneIsReadAgainOnceItsUnlocked() async throws {
+        let directory = try TemporaryDirectory()
+        let phone = try directory.subdirectory("Phone")
+        try Fixtures.writeJPEG(to: phone.appending(path: "IMG_0001.JPG"))
+        let device = FakeDevice(folder: phone)
+        device.isLocked = true
+        ImportDevices.shared.add(device)
+        defer { ImportDevices.shared.remove(id: device.id) }
+
+        let info = Fixtures.managedInfo(storage: try directory.subdirectory("Storage"))
+        let catalog = directory.url.appending(path: "Test.pixelloupe")
+        let store = try CatalogStore.inMemory(info: info, packageURL: catalog)
+        let source = ImportWindowSource(urls: [ImportDevices.url(of: device.id)])
+        let controller = ImportWindowController(service: ImportService(store: store), catalogURL: catalog, info: info, source: source)
+        defer { controller.close() }
+        let content = try #require(controller.window?.contentView)
+        let grid = try #require(content.firstMatch { $0.accessibilityIdentifier() == "importGrid" } as? NSCollectionView)
+        let message = try #require(content.firstMatch { $0.accessibilityIdentifier() == "importMessage" } as? NSTextField)
+        for _ in 0..<200 where !message.stringValue.hasPrefix("Unlock") { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(message.stringValue == "Unlock the iPhone and choose Trust on it to see its photos.")
+        #expect(!message.isHidden && grid.numberOfSections == 0)
+
+        // Another device unlocking doesn't read this one again.
+        device.isLocked = false
+        NotificationCenter.default.post(name: ImportDevices.didUnlockNotification, object: "SOMETHING-ELSE")
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(grid.numberOfSections == 0)
+
+        NotificationCenter.default.post(name: ImportDevices.didUnlockNotification, object: device.id)
+        for _ in 0..<200 where grid.numberOfSections == 0 { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(grid.numberOfSections == 1 && grid.numberOfItems(inSection: 0) == 1)
+        #expect(message.isHidden)
     }
 
     @Test @MainActor func aPhonesPhotosAreListedDownloadedAndImportedAsCopies() async throws {
