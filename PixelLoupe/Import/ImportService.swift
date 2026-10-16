@@ -81,6 +81,8 @@ final class ImportService {
         let secondCopy = transfer == .copy
             ? extras.secondCopy.map { ImportExtras.secondCopyFolder(in: $0, on: summary.importDate) } : nil
         var reservedSecondCopies = Set<String>()
+        let renaming = transfer == .copy ? extras.renaming.flatMap { $0.isOn ? $0 : nil } : nil
+        var renamed = 0
         progress(ImportProgress(completed: 0, total: count))
         guard count > 0 else { return summary }
 
@@ -119,10 +121,11 @@ final class ImportService {
                 let anchor: URL
                 switch transfer {
                 case .copy:
+                    let original = candidate.source.url.lastPathComponent
+                    let fileName = renaming?.name(for: original, date: captureDate, index: renamed) ?? original
+                    renamed += 1
                     target = Self.uniqueDestination(
-                        in: destination.folder(for: captureDate),
-                        fileName: candidate.source.url.lastPathComponent,
-                        reserved: &reservedDestinations
+                        in: destination.folder(for: captureDate), fileName: fileName, reserved: &reservedDestinations
                     )
                     // The destination's subfolders become roots in the catalog's folder tree.
                     anchor = destination.root
@@ -140,6 +143,7 @@ final class ImportService {
                     fileSize: candidate.fileSize,
                     captureDate: captureDate,
                     metadata: metadata,
+                    extensionCase: renaming?.extensionCase ?? .leave,
                     secondCopy: secondCopy.map {
                         Self.uniqueDestination(in: $0, fileName: candidate.source.url.lastPathComponent, reserved: &reservedSecondCopies)
                     }
@@ -337,7 +341,9 @@ final class ImportService {
         var fileSize: Int64
         var captureDate: Date
         var metadata: ImageMetadata
-        /// Make a Second Copy: where the backup goes.
+        /// File Renaming's Extensions, for the sidecars that come along.
+        var extensionCase: ImportRenaming.ExtensionCase = .leave
+        /// Make a Second Copy: where the backup goes (under the file's own name).
         var secondCopy: URL?
     }
 
@@ -484,8 +490,8 @@ final class ImportService {
     nonisolated private static func prepare(_ item: PlannedImport, copy copies: Bool, thumbnailDirectory: URL) async -> PrepareResult {
         if copies {
             do {
-                // The images that go with it (a raw file's JPEG) come along under the same name.
-                try copy(item.source, sidecars: item.sidecars, to: item.destination)
+                // The images that go with it (a raw file's JPEG) come along under its (new) name.
+                try copy(item.source, sidecars: item.sidecars, to: item.destination, extensionCase: item.extensionCase)
             } catch {
                 return .failure("\(item.source.lastPathComponent): \(error.localizedDescription)")
             }
@@ -512,8 +518,11 @@ final class ImportService {
         return .success(item, warning: warning)
     }
 
-    /// Copies `source` and the images that go with it (a raw file's JPEG) to `destination`.
-    nonisolated private static func copy(_ source: URL, sidecars: [String], to destination: URL) throws {
+    /// Copies `source` and the images that go with it (a raw file's JPEG) to `destination`, the sidecars
+    /// named to match it.
+    nonisolated private static func copy(
+        _ source: URL, sidecars: [String], to destination: URL, extensionCase: ImportRenaming.ExtensionCase = .leave
+    ) throws {
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         try fileManager.copyItem(at: source, to: destination)
@@ -521,7 +530,8 @@ final class ImportService {
             for candidate in [ext, ext.lowercased()] {
                 let sidecar = source.deletingPathExtension().appendingPathExtension(candidate)
                 if fileManager.fileExists(atPath: sidecar.path(percentEncoded: false)) {
-                    try? fileManager.copyItem(at: sidecar, to: destination.deletingPathExtension().appendingPathExtension(candidate))
+                    try? fileManager.copyItem(
+                        at: sidecar, to: destination.deletingPathExtension().appendingPathExtension(extensionCase.apply(candidate)))
                     break
                 }
             }

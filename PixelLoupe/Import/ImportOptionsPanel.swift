@@ -8,7 +8,13 @@ final class ImportOptionsModel {
     var transfer: ImportTransfer { didSet { changed() } }
     var root: URL { didSet { changed() } }
     var usesSubfolder: Bool { didSet { changed() } }
-    var subfolderName: String { didSet { changed() } }
+    var subfolderName: String {
+        didSet {
+            // Shoot Name follows the subfolder until it's typed.
+            if !renaming.shootNameEdited { renaming.shootName = subfolderName }
+            changed()
+        }
+    }
     var layout: ImportFolderLayout { didSet { changed() } }
     /// Why Add can't be used for the current source (a memory card), or `nil` when it can.
     var addUnavailableReason: String? { didSet { if addUnavailableReason != oldValue { changed() } } }
@@ -25,6 +31,11 @@ final class ImportOptionsModel {
     var collectionID: UUID? { didSet { changed() } }
     var newCollectionName = "" { didSet { changed() } }
 
+    // File Renaming
+    var renaming: ImportRenaming { didSet { changed() } }
+    /// The first checked file, for File Renaming's example.
+    var exampleFile: (name: String, date: Date)?
+
     // Apply During Import
     var developPresetPath: String? { didSet { changed() } }
     var metadataPresetID: UUID? { didSet { changed() } }
@@ -40,6 +51,7 @@ final class ImportOptionsModel {
     var rejectedCount = 0
 
     var fileHandlingExpanded = true
+    var renamingExpanded = true
     var applyExpanded = true
     var destinationExpanded = true
 
@@ -71,13 +83,16 @@ final class ImportOptionsModel {
         collectionID = handling.collectionID
         developPresetPath = handling.developPresetPath
         metadataPresetID = handling.metadataPresetID
+        var renaming = handling.renaming ?? ImportRenaming()
+        if !renaming.shootNameEdited { renaming.shootName = settings.destination.subfolder ?? "" }
+        self.renaming = renaming
     }
 
     var settings: ImportSettings {
         ImportSettings(transfer: transfer, destination: destination, handling: ImportHandling(
             allowsDuplicates: !skipsDuplicates, skipsRejected: skipsRejected, makesSecondCopy: makesSecondCopy,
             secondCopy: secondCopy, addsToCollection: addsToCollection, collectionID: collectionID,
-            developPresetPath: developPresetPath, metadataPresetID: metadataPresetID))
+            developPresetPath: developPresetPath, metadataPresetID: metadataPresetID, renaming: renaming))
     }
 
     var destination: ImportDestination {
@@ -102,6 +117,7 @@ final class ImportOptionsModel {
         extras.keywords = keywords
         extras.metadata = metadataPreset
         extras.developPreset = developPreset
+        extras.renaming = renaming.isOn ? renaming : nil
         if addsToCollection {
             if let collectionID {
                 extras.collection = .existing(collectionID)
@@ -112,6 +128,12 @@ final class ImportOptionsModel {
             }
         }
         return extras
+    }
+
+    /// File Renaming's example: the first checked file as it would be named.
+    var renamingExample: String {
+        let file = exampleFile ?? (name: "DSC00112.ARW", date: Date())
+        return renaming.isOn ? renaming.name(for: file.name, date: file.date, index: 0) : file.name
     }
 
     /// Saves a new or edited metadata preset, choosing it.
@@ -150,6 +172,7 @@ struct ImportOptionsPanel: View {
     var body: some View {
         Form {
             fileHandling
+            fileRenaming
             applyDuringImport
             destination
         }
@@ -211,6 +234,58 @@ struct ImportOptionsPanel: View {
         } header: {
             Text("File Handling")
         }
+    }
+
+    // MARK: File Renaming
+
+    private var fileRenaming: some View {
+        Section(isExpanded: $model.renamingExpanded) {
+            Toggle("Rename Files", isOn: $model.renaming.isOn)
+                .tint(switchTint)
+                .accessibilityIdentifier("importRenames")
+            Group {
+                Picker("Template", selection: $model.renaming.template) {
+                    ForEach(ImportRenaming.Template.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .accessibilityIdentifier("importRenameTemplate")
+                TextField("Custom Text", text: $model.renaming.customText, prompt: Text("Custom name"))
+                    .disabled(!model.renaming.template.usesCustomText)
+                    .accessibilityIdentifier("importRenameCustomText")
+                TextField("Shoot Name", text: Binding(
+                    get: { model.renaming.shootName },
+                    set: {
+                        model.renaming.shootName = $0
+                        model.renaming.shootNameEdited = true
+                    }), prompt: Text("Shoot name"))
+                    .disabled(!model.renaming.template.usesShootName)
+                    .accessibilityIdentifier("importRenameShootName")
+                TextField("Start Number", value: $model.renaming.startNumber, format: .number.grouping(.never))
+                    .multilineTextAlignment(.trailing)
+                    .disabled(!model.renaming.template.usesSequence)
+                    .accessibilityIdentifier("importRenameStartNumber")
+                Picker("Extensions", selection: $model.renaming.extensionCase) {
+                    ForEach(ImportRenaming.ExtensionCase.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .accessibilityIdentifier("importRenameExtensions")
+            }
+            .disabled(!model.renaming.isOn)
+            LabeledContent("Example") {
+                Text(model.renamingExample)
+                    .font(.system(.callout, design: .monospaced))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("importRenameExample")
+            }
+            if model.effectiveTransfer == .add {
+                Text("Add leaves photos where they are, so they keep their names.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("File Renaming")
+        }
+        .disabled(model.effectiveTransfer == .add)
     }
 
     // MARK: Apply During Import
