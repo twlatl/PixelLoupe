@@ -35,8 +35,16 @@ final class ImportPreviewLoader {
         "\(pixelSize)|\(url.path(percentEncoded: false))"
     }
 
-    @concurrent
     nonisolated private static func load(_ url: URL, isVideo: Bool, pixelSize: Int) async -> CGImage? {
+        // A file on a camera or phone: its thumbnail, from the device.
+        if ImportDevices.isDeviceURL(url) {
+            return await ImportDevices.shared.thumbnail(for: url, maxPixelSize: pixelSize)
+        }
+        return await loadFile(url, isVideo: isVideo, pixelSize: pixelSize)
+    }
+
+    @concurrent
+    nonisolated private static func loadFile(_ url: URL, isVideo: Bool, pixelSize: Int) async -> CGImage? {
         if isVideo {
             return try? await VideoSupport.posterImage(from: url, maxPixelSize: pixelSize)
         }

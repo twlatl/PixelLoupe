@@ -8,12 +8,21 @@ struct ImportWindowSource: Hashable {
         self.urls = urls.map { $0.standardizedFileURL }
     }
 
+    /// The camera or phone this source is, if it's one.
+    var device: (any ImportDevice)? {
+        guard urls.count == 1, let id = ImportDevices.parse(urls[0])?.deviceID else { return nil }
+        return ImportDevices.shared.device(id: id)
+    }
+
+    var isDevice: Bool { urls.count == 1 && ImportDevices.isDeviceURL(urls[0]) }
+
     var title: String {
-        urls.count == 1 ? FileManager.default.displayName(atPath: urls[0].path(percentEncoded: false)) : "\(urls.count) Items"
+        if isDevice { return device?.name ?? "Device" }
+        return urls.count == 1 ? FileManager.default.displayName(atPath: urls[0].path(percentEncoded: false)) : "\(urls.count) Items"
     }
 
     var isSingleFolder: Bool {
-        guard urls.count == 1 else { return false }
+        guard urls.count == 1, !isDevice else { return false }
         var isDirectory: ObjCBool = false
         return FileManager.default.fileExists(atPath: urls[0].path(percentEncoded: false), isDirectory: &isDirectory)
             && isDirectory.boolValue
@@ -21,6 +30,7 @@ struct ImportWindowSource: Hashable {
 
     /// "Untitled › DCIM › 100MSDCF": the folder's path from its volume, as the top bar shows it.
     var breadcrumb: String {
+        if isDevice { return device.map { "\($0.kindName) · \($0.name)" } ?? "Disconnected" }
         guard urls.count == 1 else { return urls.map(\.lastPathComponent).joined(separator: ", ") }
         return ImportWindowSource.breadcrumb(for: urls[0])
     }
@@ -35,6 +45,7 @@ struct ImportWindowSource: Hashable {
 
     /// The SF Symbol for the source's kind of place.
     var symbol: String {
+        if isDevice { return device?.symbol ?? "camera" }
         guard isSingleFolder else { return "doc.on.doc" }
         let values = try? urls[0].resourceValues(forKeys: [.volumeIsInternalKey, .volumeIsRemovableKey])
         if values?.volumeIsRemovable == true { return "sdcard" }
@@ -48,6 +59,8 @@ final class ImportSourceNode: NSObject {
         case header
         /// A camera card: shown under Devices, with its camera and a New badge.
         case card
+        /// A camera or phone connected over USB (ImageCaptureCore), under Devices.
+        case device
         case volume(ejectable: Bool)
         case folder
         case dropped
@@ -79,7 +92,7 @@ final class ImportSourceNode: NSObject {
         switch kind {
         case .header: true
         case .card, .volume, .folder: children?.isEmpty != true
-        case .dropped, .chooseFolder: false
+        case .device, .dropped, .chooseFolder: false
         }
     }
 
@@ -123,6 +136,8 @@ final class ImportSourceList: NSObject, NSOutlineViewDataSource, NSOutlineViewDe
         NotificationCenter.default.addObserver(
             self, selector: #selector(settingsDidChange(_:)), name: AppSettings.didChangeNotification, object: nil)
         let center = NSWorkspace.shared.notificationCenter
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(devicesDidChange(_:)), name: ImportDevices.didChangeNotification, object: nil)
         for name in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification, NSWorkspace.didRenameVolumeNotification] {
             workspaceObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.reload() }
@@ -181,7 +196,14 @@ final class ImportSourceList: NSObject, NSOutlineViewDataSource, NSOutlineViewDe
         }
         locations.append(ImportSourceNode(kind: .chooseFolder, title: "Choose Folder…", symbol: "plus"))
 
-        roots = (cards.isEmpty ? [] : [ImportSourceNode(kind: .header, title: "Devices", symbol: "", children: cards)]) + [
+        let devices = ImportDevices.shared.devices.map { device in
+            let node = ImportSourceNode(kind: .device, title: device.name, symbol: device.symbol,
+                                        source: ImportWindowSource(urls: [ImportDevices.url(of: device.id)]))
+            node.subtitle = device.kindName
+            return node
+        }
+        let deviceRows = devices + cards
+        roots = (deviceRows.isEmpty ? [] : [ImportSourceNode(kind: .header, title: "Devices", symbol: "", children: deviceRows)]) + [
             ImportSourceNode(kind: .header, title: "Volumes", symbol: "", children: volumes),
             ImportSourceNode(kind: .header, title: "Locations", symbol: "", children: locations),
         ]
@@ -251,6 +273,10 @@ final class ImportSourceList: NSObject, NSOutlineViewDataSource, NSOutlineViewDe
         return result
     }
 
+    @objc private func devicesDidChange(_ notification: Notification) {
+        reload()
+    }
+
     /// Monochrome Mode recolors the selection and the icons, as in the catalog window's sidebar.
     @objc private func settingsDidChange(_ notification: Notification) {
         outlineView.enumerateAvailableRowViews { rowView, _ in
@@ -268,6 +294,10 @@ final class ImportSourceList: NSObject, NSOutlineViewDataSource, NSOutlineViewDe
     @objc private func eject(_ sender: NSButton) {
         guard let node = outlineView.item(atRow: outlineView.row(for: sender)) as? ImportSourceNode,
               let url = node.source?.urls.first else { return }
+        if let device = node.source?.device {
+            device.eject()
+            return
+        }
         Task {
             if let error = await ImportCards.eject(url) { NSAlert(error: error).runModal() }
         }
@@ -338,7 +368,7 @@ final class ImportSourceList: NSObject, NSOutlineViewDataSource, NSOutlineViewDe
     }
 
     func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
-        if let node = item as? ImportSourceNode, case .card = node.kind { return 40 }
+        if let node = item as? ImportSourceNode, node.kind.isCard || node.kind.isDevice { return 40 }
         return 26
     }
 
@@ -379,7 +409,7 @@ final class ImportSourceList: NSObject, NSOutlineViewDataSource, NSOutlineViewDe
         cell.newBadge.isHidden = !node.isNew
         let ejectable: Bool
         switch node.kind {
-        case .card: ejectable = true
+        case .card, .device: ejectable = true
         case .volume(let canEject): ejectable = canEject
         default: ejectable = false
         }
@@ -406,6 +436,7 @@ final class ImportSourceList: NSObject, NSOutlineViewDataSource, NSOutlineViewDe
 private extension ImportSourceNode.Kind {
     var isHeader: Bool { if case .header = self { true } else { false } }
     var isCard: Bool { if case .card = self { true } else { false } }
+    var isDevice: Bool { if case .device = self { true } else { false } }
 }
 
 /// A source row: icon, name, the photo count once read, and an eject button for removable volumes.

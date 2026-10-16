@@ -257,11 +257,17 @@ final class ImportService {
     /// Reads what `urls` hold without importing anything, marking files the catalog already has.
     func scan(_ urls: [URL], includeSubfolders: Bool = true) async throws -> ScanResult {
         let sources = await Self.collectSources(urls, info: store.info, includeSubfolders: includeSubfolders)
+        return try await classify(await Self.readCandidates(sources))
+    }
+
+    /// Marks which of `candidates` the catalog (or an earlier candidate) already has, under each
+    /// duplicate rule. Candidates without metadata are unreadable.
+    func classify(_ candidates: [Candidate]) async throws -> ScanResult {
         let context = store.newBackgroundContext()
         var copiedKeys = try await Self.existingKeys(in: context, mode: .managed)
         var addedKeys = try await Self.existingKeys(in: context, mode: .referenced)
         var result = ScanResult()
-        for candidate in await Self.readCandidates(sources) {
+        for candidate in candidates {
             try Task.checkCancellation()
             guard let metadata = candidate.metadata else {
                 result.unreadable.append(candidate.source.url.lastPathComponent)

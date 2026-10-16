@@ -17,6 +17,10 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     /// Whether the checked photos are being imported: the window is locked except for Cancel.
     private(set) var isImporting = false
+    /// Downloading a camera's or phone's checked photos, before they're imported.
+    private var downloadTask: Task<Void, Never>?
+    /// Where they're downloaded to; removed once the import is done.
+    private var stagingFolder: URL?
     private let lockShield = ImportLockShield()
     private let progressBar = NSProgressIndicator()
     private var cancelButton: NSButton?
@@ -141,6 +145,8 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     override func showWindow(_ sender: Any?) {
         super.showWindow(sender)
         loadPresetsIfNeeded()
+        // Cameras and phones are looked for once the window is on screen.
+        ImportDevices.shared.start()
     }
 
     /// The develop presets for Apply During Import, read from disk once the window is on screen.
@@ -792,10 +798,16 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     private func scan(_ source: Source) {
         currentSource = source
-        // A card's photos are copied: added in place, they'd be gone once the card is ejected.
+        // A card's or a device's photos are copied: added in place, they'd be gone once it's ejected.
         let onCard = ImportCards.isOnCard(source.urls)
-        options.addUnavailableReason = onCard ? "Add isn't available for memory cards; photos on them are copied" : nil
-        ejectAfterImport.isEnabled = onCard
+        options.addUnavailableReason = if source.isDevice {
+            "Add isn't available for cameras and phones; photos on them are copied"
+        } else if onCard {
+            "Add isn't available for memory cards; photos on them are copied"
+        } else {
+            nil
+        }
+        ejectAfterImport.isEnabled = onCard || source.isDevice
         scanTask?.cancel()
         showGrid()
         replaceSelection(with: [])
@@ -804,7 +816,11 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         let includeSubfolders = includeSubfolders.state == .on
         scanTask = Task { [weak self, service] in
             do {
-                let result = try await service.scan(source.urls, includeSubfolders: includeSubfolders)
+                let result = if source.isDevice, let deviceID = ImportDevices.parse(source.urls[0])?.deviceID {
+                    try await service.classify(ImportDevices.shared.candidates(on: deviceID))
+                } else {
+                    try await service.scan(source.urls, includeSubfolders: includeSubfolders)
+                }
                 guard let self, !Task.isCancelled else { return }
                 show(result, from: source)
             } catch is CancellationError {
@@ -1045,7 +1061,11 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     @objc private func cancel(_ sender: Any?) {
         // While importing, Cancel stops the import (what's in so far stays in the catalog).
         if isImporting {
-            onCancelImport?()
+            if let downloadTask, !downloadTask.isCancelled {
+                downloadTask.cancel()
+            } else {
+                onCancelImport?()
+            }
             return
         }
         // Escape leaves the enlarged photo first (handled before this), so here it closes the window.
@@ -1061,7 +1081,7 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         alert.addButton(withTitle: "Stop Import")
         alert.addButton(withTitle: "Continue Importing")
         alert.beginSheetModal(for: sender) { [weak self] response in
-            if response == .alertFirstButtonReturn { self?.onCancelImport?() }
+            if response == .alertFirstButtonReturn { self?.cancel(nil) }
         }
         return false
     }
@@ -1094,6 +1114,11 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     /// and Done closes it.
     func importDidFinish(failures: [String]) {
         isImporting = false
+        downloadTask = nil
+        // The downloads from a camera or phone are copies by now (or not wanted).
+        if let stagingFolder { try? FileManager.default.removeItem(at: stagingFolder) }
+        stagingFolder = nil
+        if failures.isEmpty, ejectAfterImport.state == .on, let device = currentSource?.device { device.eject() }
         guard !failures.isEmpty, let window else {
             close()
             return
@@ -1129,7 +1154,31 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         options.settings.save(for: catalogURL)
         let card = ejectAfterImport.state == .on ? currentSource.flatMap { ImportCards.isOnCard($0.urls) ? ImportCards.card(containing: $0.urls[0]) : nil } : nil
         beginImporting(total: candidates.count)
-        onImport?(candidates, options.effectiveTransfer, options.destination, options.extras, card)
+        guard let currentSource, currentSource.isDevice else {
+            onImport?(candidates, options.effectiveTransfer, options.destination, options.extras, card)
+            return
+        }
+        // A camera's or phone's photos are downloaded first, then imported from there as copies.
+        let staging = FileManager.default.temporaryDirectory
+            .appending(path: "PixelLoupe Import \(UUID().uuidString)", directoryHint: .isDirectory)
+        stagingFolder = staging
+        let total = candidates.count
+        downloadTask = Task { [weak self] in
+            do {
+                let files = try await ImportDevices.shared.download(candidates.map(\.source.url), to: staging) { done in
+                    self?.summaryLabel.stringValue = "Downloading \(done) of \(total)…"
+                    self?.progressBar.doubleValue = Double(done)
+                }
+                try Task.checkCancellation()
+                let downloaded = await ImportService.readCandidates(files.map { ImportService.ImportSource(url: $0, anchor: staging) })
+                guard let self else { return }
+                onImport?(downloaded, .copy, options.destination, options.extras, nil)
+            } catch is CancellationError {
+                self?.importDidFinish(failures: [])
+            } catch {
+                self?.importDidFinish(failures: [error.localizedDescription])
+            }
+        }
     }
 }
 
