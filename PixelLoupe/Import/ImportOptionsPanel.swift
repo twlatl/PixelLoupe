@@ -50,6 +50,8 @@ final class ImportOptionsModel {
     var duplicateCount = 0
     var rejectedCount = 0
 
+    /// While photos import: the top bar's Copy / Add is disabled.
+    var isLocked = false
     var fileHandlingExpanded = true
     var renamingExpanded = true
     var applyExpanded = true
@@ -539,6 +541,7 @@ struct ImportTransferBar: View {
             Image(systemName: "arrow.right")
                 .foregroundStyle(.tertiary)
         }
+        .disabled(model.isLocked)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("importTransfer")
     }

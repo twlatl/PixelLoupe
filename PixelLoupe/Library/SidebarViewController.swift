@@ -272,7 +272,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
         let all = Item(kind: .allPhotos, title: "All Photographs")
         all.count = (try? context.count(for: Photo.fetchRequest())) ?? 0
-        let latestImport = Photo.latestImportID(in: context)
+        // An import under way is the latest from its start, before its first photo is in.
+        let latestImport = state.importingID ?? Photo.latestImportID(in: context)
         let previousImport = Item(kind: .previousImport(id: latestImport), title: "Previous Import")
         previousImport.count = latestImport.map { id in
             let photos = Photo.fetchRequest()
@@ -687,6 +688,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         func matches(_ item: Item) -> Bool {
             if let id = scope.collectionID { return item.collectionID == id }
+            if case .previousImport = scope, case .previousImport = item.kind { return true }
             return item.scope == scope
         }
         func find(in items: [Item]) -> Item? {

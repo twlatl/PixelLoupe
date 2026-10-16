@@ -5,6 +5,8 @@ nonisolated enum PhotoMark: Equatable, Sendable {
     case rating(Int)
     case flag(PhotoFlag)
     case label(ColorLabel)
+    /// A short report, such as an import's ("Imported 34 photos").
+    case message(String)
 
     /// What VoiceOver announces.
     var spokenText: String {
@@ -12,6 +14,7 @@ nonisolated enum PhotoMark: Equatable, Sendable {
         case .rating(let stars): stars == 0 ? "Rating: none" : "Rating: \(stars) star\(stars == 1 ? "" : "s")"
         case .flag(let flag): "Flag: \(flag.title)"
         case .label(let label): "Label: \(label.title)"
+        case .message(let text): text
         }
     }
 }
@@ -79,8 +82,10 @@ final class MarkOverlayView: NSView {
         }
         NSAccessibility.post(element: NSApp.mainWindow as Any, notification: .announcementRequested,
                              userInfo: [.announcement: mark.spokenText, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+        // A message has more to read than a mark.
+        let duration: Duration = if case .message = mark { .seconds(3) } else { Self.displayDuration }
         hideTask = Task { [weak self] in
-            try? await Task.sleep(for: Self.displayDuration)
+            try? await Task.sleep(for: duration)
             guard !Task.isCancelled else { return }
             await self?.fadeOut()
         }
@@ -130,6 +135,10 @@ final class MarkOverlayView: NSView {
         case .label(let label):
             guard label != .none else { return [text("Label"), text("None")] }
             return [text("Label"), symbol("circle.fill", label.color, size: 30)]
+        case .message(let message):
+            let label = text(message)
+            label.font = .systemFont(ofSize: 20, weight: .regular)
+            return [label]
         }
     }
 }
