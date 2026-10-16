@@ -48,7 +48,7 @@ struct ImportOptionsTests {
         files[1].candidate.metadata?.rating = -1
         var extras = ImportExtras()
         extras.keywords = ["Disneyland", "Family"]
-        extras.metadata = MetadataPreset(name: "Me", creator: "Ted Lee", copyright: "© 2026 Ted Lee")
+        extras.metadata = MetadataPreset(name: "Me", fields: [.creator: "Ted Lee", .copyright: "© 2026 Ted Lee"])
         let summary = try await setup.service.importPhotos(files.map(\.candidate), extras: extras)
         #expect(summary.imported == 2)
 
@@ -197,14 +197,24 @@ struct ImportOptionsTests {
         #expect(reloaded.keywords.isEmpty, "keywords aren't remembered")
     }
 
-    @Test func metadataPresetsFillOnlyTheirFields() throws {
+    @Test func metadataPresetsApplyOnlyTheirCheckedFields() throws {
         let directory = try TemporaryDirectory()
         let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "Test.pixelloupe"))
         let photo = Photo(context: store.viewContext)
         photo.titleText = "Castle"
         photo.creatorText = "Camera Owner"
-        MetadataPreset(name: "Me", creator: "Ted Lee", title: "  ").apply(to: photo)
-        #expect(photo.creatorText == "Ted Lee")
-        #expect(photo.titleText == "Castle", "a blank field leaves the photo's own")
+        photo.metadata[.headline] = "Fireworks"
+        photo.metadata[.city] = "Anaheim"
+        let preset = MetadataPreset(name: "Me", fields: [
+            .creator: "Ted Lee", .creatorEmail: " ted@example.com ", .copyrightStatus: "Copyrighted",
+            .label: "Red", .city: "",
+        ])
+        preset.apply(to: photo)
+        #expect(photo.creatorText == "Ted Lee" && photo.metadata[.creator] == "Ted Lee")
+        #expect(photo.metadata[.creatorEmail] == "ted@example.com", "trimmed")
+        #expect(photo.metadata[.copyrightStatus] == "Copyrighted")
+        #expect(photo.colorLabel == ColorLabel.red.rawValue)
+        #expect(photo.metadata[.city] == "", "a checked empty field clears the photo's")
+        #expect(photo.titleText == "Castle" && photo.metadata[.headline] == "Fireworks", "unchecked fields are left alone")
     }
 }

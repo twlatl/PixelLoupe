@@ -245,9 +245,17 @@ subfolder until it's typed; the Example line shows the first checked photo's new
 new name, and second copies keep the original names.
 
 **Apply During Import** sets a **Develop Settings** preset (applied to each photo it suits, as in Develop), a
-**Metadata** preset (creator, copyright, title and caption; the … menu makes and edits them; empty fields leave each
-photo's own) and **Keywords** (completed from the catalog's keywords). A file's own rating comes in too: stars as its
-rating, −1 as Rejected. All of these except the keywords are remembered for each catalog.
+**Metadata** preset and **Keywords** (completed from the catalog's keywords). A file's own rating comes in too: stars as
+its rating, −1 as Rejected. All of these except the keywords are remembered for each catalog.
+
+The **Metadata** pop-up lists None and your metadata presets, then **New…** (makes a preset and chooses it once saved)
+and **Edit Presets…** (opens the editor on the chosen preset, or the first one). The editor, as in Lightroom, has the
+preset's name, a Preset pop-up to switch presets (asking whether to save unsaved changes), and sections of fields:
+Basic Info, Camera Info, IPTC Content, Copyright, Creator, Image and Status, the IPTC Extension fields, Three
+Dimensional Projection and Video. Only checked fields are applied: a checked field left empty clears that field on the
+photo, and an unchecked one is left as the photo has it. Typing in a field checks it; each section's checkbox and Check
+All / Check None / Check Filled check several at once. Delete Preset… asks first. The same presets are in the Library's
+Metadata panel (Preset pop-up), and presets made before keep working.
 
 The footer's **Import Preset** saves Copy or Add, the right panel's choices (except keywords) and the destination under
 a name (Save Current Settings as New Preset…), and applies them when chosen. Changing a choice afterwards shows the

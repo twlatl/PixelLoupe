@@ -27,7 +27,6 @@ final class LibraryInspectorViewController: NSViewController {
 
     private static let setKey = "LibraryMetadataSet"
     private static let targetKey = "LibraryMetadataTarget"
-    static let presetsKey = "MetadataPresets"
 
     /// Metadata of the shown photos, by object ID (read from files off the main thread).
     private var fileMetadata: [NSManagedObjectID: FileMetadata] = [:]
@@ -509,28 +508,29 @@ final class LibraryInspectorViewController: NSViewController {
     // MARK: - Presets
 
     /// Saved metadata presets: name → field values. App-wide, like Lightroom's.
-    static var presets: [String: [String: String]] {
-        get { Defaults.store.dictionary(forKey: presetsKey) as? [String: [String: String]] ?? [:] }
-        set { Defaults.store.set(newValue, forKey: presetsKey) }
+    /// The metadata presets, shared with the import window (see `MetadataPreset`).
+    static var presets: [MetadataPreset] {
+        get { MetadataPreset.all() }
+        set { MetadataPreset.save(newValue) }
     }
 
     private func buildPresetMenu() {
         presetPopUp.removeAllItems()
         presetPopUp.addItem(withTitle: "None")
-        let names = Self.presets.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-        for name in names {
-            presetPopUp.addItem(withTitle: name)
-            presetPopUp.lastItem?.representedObject = name
+        let presets = Self.presets
+        for preset in presets {
+            presetPopUp.addItem(withTitle: preset.name)
+            presetPopUp.lastItem?.representedObject = preset.id
         }
         presetPopUp.menu?.addItem(.separator())
         presetPopUp.addItem(withTitle: "Save Current Settings as New Preset…")
         presetPopUp.lastItem?.tag = 1
-        if !names.isEmpty {
+        if !presets.isEmpty {
             let delete = NSMenu(title: "Delete Preset")
-            for name in names {
-                let item = delete.addItem(withTitle: name, action: #selector(deletePreset(_:)), keyEquivalent: "")
+            for preset in presets {
+                let item = delete.addItem(withTitle: preset.name, action: #selector(deletePreset(_:)), keyEquivalent: "")
                 item.target = self
-                item.representedObject = name
+                item.representedObject = preset.id
             }
             let deleteItem = NSMenuItem(title: "Delete Preset", action: nil, keyEquivalent: "")
             deleteItem.submenu = delete
@@ -543,18 +543,16 @@ final class LibraryInspectorViewController: NSViewController {
         defer { presetPopUp.selectItem(at: 0) }
         if sender.selectedItem?.tag == 1 {
             savePreset()
-        } else if let name = sender.selectedItem?.representedObject as? String {
-            applyPreset(named: name)
+        } else if let id = sender.selectedItem?.representedObject as? UUID {
+            applyPreset(id: id)
         }
     }
 
-    /// Sets every field the preset has on the photos edits go to.
-    func applyPreset(named name: String) {
-        guard let values = Self.presets[name], !values.isEmpty else { return }
+    /// Sets the preset's checked fields on the photos edits go to.
+    func applyPreset(id: UUID) {
+        guard let preset = Self.presets.first(where: { $0.id == id }), !preset.fields.isEmpty else { return }
         editing.edit(editTargets, actionName: "Apply Metadata Preset") { photo in
-            var metadata = photo.metadata
-            for (key, value) in values { metadata.values[key] = value }
-            photo.metadata = metadata
+            preset.apply(to: photo)
         }
         updateMetadata()
     }
@@ -593,14 +591,16 @@ final class LibraryInspectorViewController: NSViewController {
         alert.beginSheetModal(for: window) { [weak self] response in
             let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard response == .alertFirstButtonReturn, !name.isEmpty else { return }
-            Self.presets[name] = values
+            var preset = MetadataPreset(name: name)
+            preset.fields = values
+            Self.presets.append(preset)
             self?.buildPresetMenu()
         }
     }
 
     @objc private func deletePreset(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String else { return }
-        Self.presets[name] = nil
+        guard let id = sender.representedObject as? UUID else { return }
+        Self.presets.removeAll { $0.id == id }
         buildPresetMenu()
     }
 }

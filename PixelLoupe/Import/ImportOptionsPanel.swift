@@ -173,21 +173,18 @@ final class ImportOptionsModel {
         return renaming.isOn ? renaming.name(for: file.name, date: file.date, index: 0) : file.name
     }
 
-    /// Saves a new or edited metadata preset, choosing it.
-    func saveMetadataPreset(_ preset: MetadataPreset) {
-        if let index = metadataPresets.firstIndex(where: { $0.id == preset.id }) {
-            metadataPresets[index] = preset
-        } else {
-            metadataPresets.append(preset)
-        }
-        MetadataPreset.save(metadataPresets)
-        metadataPresetID = preset.id
+    /// Saves the presets as the editor left them. A chosen preset that was deleted is no longer chosen.
+    func saveMetadataPresets(_ presets: [MetadataPreset]) {
+        metadataPresets = presets
+        MetadataPreset.save(presets)
+        if let metadataPresetID, !presets.contains(where: { $0.id == metadataPresetID }) { self.metadataPresetID = nil }
     }
 
-    func deleteMetadataPreset(_ preset: MetadataPreset) {
-        metadataPresets.removeAll { $0.id == preset.id }
-        MetadataPreset.save(metadataPresets)
-        if metadataPresetID == preset.id { metadataPresetID = nil }
+    /// The editor for New… (`nil`) or Edit Presets… (the chosen preset, or the first one).
+    func metadataEditor(forNew isNew: Bool) -> MetadataPresetEditorModel {
+        MetadataPresetEditorModel(
+            presets: metadataPresets, editing: isNew ? nil : metadataPresetID ?? metadataPresets.first?.id,
+            persist: { [weak self] in self?.saveMetadataPresets($0) })
     }
 
     @ObservationIgnored private var isApplying = false
@@ -201,7 +198,14 @@ final class ImportOptionsModel {
 /// The import window's right panel, as in RAW-76's mockups. (File Renaming joins it with RAW-82.)
 struct ImportOptionsPanel: View {
     @Bindable var model: ImportOptionsModel
-    @State private var editingMetadata: MetadataPreset?
+    /// The metadata preset editor, while it's open, and whether it was opened with New….
+    @State private var metadataEditor: MetadataEditorRequest?
+
+    private struct MetadataEditorRequest: Identifiable {
+        let id = UUID()
+        let model: MetadataPresetEditorModel
+        let isNew: Bool
+    }
 
     /// Switches follow Monochrome Mode, like the rest of the window. (Only switches: a tint on buttons
     /// and pop-ups would make them look disabled.)
@@ -218,10 +222,33 @@ struct ImportOptionsPanel: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
-        .sheet(item: $editingMetadata) { preset in
-            MetadataPresetEditor(
-                preset: preset, isNew: !model.metadataPresets.contains { $0.id == preset.id },
-                onSave: { model.saveMetadataPreset($0) }, onDelete: { model.deleteMetadataPreset($0) })
+        .sheet(item: $metadataEditor) { request in
+            MetadataPresetEditor(model: request.model) { saved in
+                // New… chooses the preset once it's saved.
+                if request.isNew, let saved { model.metadataPresetID = saved.id }
+            }
+        }
+    }
+
+    /// The Metadata pop-up: None, the presets, then New… and Edit Presets…, which open the editor and
+    /// leave the choice as it was.
+    private enum MetadataChoice: Hashable {
+        case none, preset(UUID), new, edit
+    }
+
+    private var metadataChoice: Binding<MetadataChoice> {
+        Binding {
+            model.metadataPreset.map { .preset($0.id) } ?? .none
+        } set: { choice in
+            switch choice {
+            case .none: model.metadataPresetID = nil
+            case .preset(let id): model.metadataPresetID = id
+            case .new: metadataEditor = MetadataEditorRequest(model: model.metadataEditor(forNew: true), isNew: true)
+            case .edit:
+                // With no presets yet, it's the same as New….
+                let isNew = model.metadataPresets.isEmpty
+                metadataEditor = MetadataEditorRequest(model: model.metadataEditor(forNew: isNew), isNew: isNew)
+            }
         }
     }
 
@@ -349,31 +376,17 @@ struct ImportOptionsPanel: View {
             }
             .help("Applied to every photo it suits, as in Develop")
             .accessibilityIdentifier("importDevelopPreset")
-            LabeledContent("Metadata") {
-                HStack(spacing: 6) {
-                    Picker("Metadata", selection: $model.metadataPresetID) {
-                        Text("None").tag(UUID?.none)
-                        ForEach(model.metadataPresets) { preset in
-                            Text(preset.name).tag(Optional(preset.id))
-                        }
-                    }
-                    .labelsHidden()
-                    .accessibilityIdentifier("importMetadataPreset")
-                    Menu {
-                        Button("New Preset…") { editingMetadata = MetadataPreset(name: "") }
-                        if let preset = model.metadataPreset {
-                            Button("Edit “\(preset.name)”…") { editingMetadata = preset }
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
-                    .accessibilityLabel("Metadata presets")
-                    .accessibilityIdentifier("importMetadataPresetMenu")
+            Picker("Metadata", selection: metadataChoice) {
+                Text("None").tag(MetadataChoice.none)
+                ForEach(model.metadataPresets) { preset in
+                    Text(preset.name).tag(MetadataChoice.preset(preset.id))
                 }
+                Divider()
+                Text("New…").tag(MetadataChoice.new)
+                Text("Edit Presets…").tag(MetadataChoice.edit)
             }
+            .help("Fills in the preset's checked fields on every imported photo")
+            .accessibilityIdentifier("importMetadataPreset")
             VStack(alignment: .leading, spacing: 6) {
                 Text("Keywords")
                 KeywordTokenField(keywords: $model.keywords, suggestions: model.keywordSuggestions)
@@ -484,54 +497,6 @@ struct KeywordTokenField: NSViewRepresentable {
         ) -> [Any]? {
             parent.suggestions.filter { $0.range(of: substring, options: [.caseInsensitive, .anchored]) != nil }.prefix(20).map { $0 }
         }
-    }
-}
-
-/// Makes or edits a metadata preset (Apply During Import ▸ Metadata).
-struct MetadataPresetEditor: View {
-    @State var preset: MetadataPreset
-    let isNew: Bool
-    let onSave: (MetadataPreset) -> Void
-    let onDelete: (MetadataPreset) -> Void
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(isNew ? "New Metadata Preset" : "Edit Metadata Preset")
-                .font(.headline)
-            Form {
-                TextField("Preset Name", text: $preset.name)
-                    .accessibilityIdentifier("metadataPresetName")
-                TextField("Creator", text: $preset.creator)
-                TextField("Copyright", text: $preset.copyright, prompt: Text("© 2026 Your Name"))
-                TextField("Title", text: $preset.title)
-                TextField("Caption", text: $preset.caption, axis: .vertical)
-                    .lineLimit(2...4)
-            }
-            Text("Empty fields are left as each photo has them.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            HStack {
-                if !isNew {
-                    Button("Delete Preset", role: .destructive) {
-                        onDelete(preset)
-                        dismiss()
-                    }
-                }
-                Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                Button(isNew ? "Create" : "Save") {
-                    onSave(preset)
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(preset.name.trimmingCharacters(in: .whitespaces).isEmpty)
-                .accessibilityIdentifier("metadataPresetSave")
-            }
-        }
-        .padding(20)
-        .frame(width: 420)
     }
 }
 
