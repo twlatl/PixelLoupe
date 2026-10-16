@@ -10,7 +10,13 @@ nonisolated struct ImportProgress: Sendable {
 nonisolated struct ImportSummary: Sendable {
     var imported = 0
     var skippedDuplicates = 0
+    /// Files left out because they're rated as rejected (Don't Import Rejected Images).
+    var skippedRejected = 0
     var failures: [String] = []
+    /// The new photos' IDs, in import order.
+    var importedIDs: [UUID] = []
+    /// When the photos were imported: one stamp for the whole import (Previous Import).
+    var importDate = Date()
 }
 
 /// Imports image files into a catalog.
@@ -48,26 +54,33 @@ final class ImportService {
         _ candidates: [Candidate],
         transfer: ImportTransfer? = nil,
         destination: ImportDestination? = nil,
+        extras: ImportExtras = ImportExtras(),
         progress: (ImportProgress) -> Void = { _ in }
     ) async throws -> ImportSummary {
         let defaults = ImportSettings.defaults(for: store.info)
-        return try await importBatches(
+        let summary = try await importBatches(
             count: candidates.count, transfer: transfer ?? defaults.transfer,
-            destination: destination ?? defaults.destination, progress: progress
+            destination: destination ?? defaults.destination, extras: extras, progress: progress
         ) { range in
             Array(candidates[range])
         }
+        applyAfterImport(summary.importedIDs, extras: extras)
+        return summary
     }
 
     private func importBatches(
         count: Int,
         transfer: ImportTransfer,
         destination: ImportDestination,
+        extras: ImportExtras = ImportExtras(),
         progress: (ImportProgress) -> Void,
         candidates: (Range<Int>) async -> [Candidate]
     ) async throws -> ImportSummary {
         let rule = transfer.duplicateRule
         var summary = ImportSummary()
+        let secondCopy = transfer == .copy
+            ? extras.secondCopy.map { ImportExtras.secondCopyFolder(in: $0, on: summary.importDate) } : nil
+        var reservedSecondCopies = Set<String>()
         progress(ImportProgress(completed: 0, total: count))
         guard count > 0 else { return summary }
 
@@ -92,8 +105,12 @@ final class ImportService {
                     summary.failures.append("\(candidate.source.url.lastPathComponent): not a readable image")
                     continue
                 }
+                if extras.skipsRejected, metadata.rating == -1 {
+                    summary.skippedRejected += 1
+                    continue
+                }
                 let key = Self.dedupeKey(for: candidate, metadata: metadata, mode: rule)
-                guard seenKeys.insert(key).inserted else {
+                guard seenKeys.insert(key).inserted || extras.allowsDuplicates else {
                     summary.skippedDuplicates += 1
                     continue
                 }
@@ -122,7 +139,10 @@ final class ImportService {
                     sidecars: candidate.source.sidecars,
                     fileSize: candidate.fileSize,
                     captureDate: captureDate,
-                    metadata: metadata
+                    metadata: metadata,
+                    secondCopy: secondCopy.map {
+                        Self.uniqueDestination(in: $0, fileName: candidate.source.url.lastPathComponent, reserved: &reservedSecondCopies)
+                    }
                 ))
             }
 
@@ -132,13 +152,16 @@ final class ImportService {
             var ready: [PlannedImport] = []
             for result in prepared {
                 switch result {
-                case .success(let item): ready.append(item)
+                case .success(let item, let warning):
+                    ready.append(item)
+                    if let warning { summary.failures.append(warning) }
                 case .failure(let message): summary.failures.append(message)
                 }
             }
 
-            try await Self.insert(ready, importID: importID, into: context)
+            try await Self.insert(ready, importID: importID, into: context, importDate: summary.importDate, extras: extras)
             summary.imported += ready.count
+            summary.importedIDs += ready.map(\.id)
             completed += range.count
             progress(ImportProgress(completed: completed, total: count))
         }
@@ -147,6 +170,61 @@ final class ImportService {
             "Imported \(summary.imported) photos, skipped \(summary.skippedDuplicates), failed \(summary.failures.count)"
         )
         return summary
+    }
+
+    /// The catalog's regular collections ("Family ▸ Holidays"), for Add to Collection.
+    func collections() -> [(id: UUID, path: String)] {
+        let request = PhotoCollection.fetchRequest()
+        request.predicate = NSPredicate(format: "kindValue == %d", PhotoCollection.Kind.collection.rawValue)
+        let collections = (try? store.viewContext.fetch(request)) ?? []
+        return collections.map { ($0.id, $0.path) }
+            .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+    }
+
+    /// The catalog's keywords, for completing the import window's Keywords.
+    func keywordNames() -> [String] {
+        let request = NSFetchRequest<NSDictionary>(entityName: "Tag")
+        request.resultType = .dictionaryResultType
+        request.propertiesToFetch = ["name"]
+        let rows = (try? store.viewContext.fetch(request)) ?? []
+        return rows.compactMap { $0["name"] as? String }.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    /// The develop preset and collection from Apply During Import and File Handling, on the new photos.
+    /// (On the view context, where presets judge which photos they suit.)
+    private func applyAfterImport(_ ids: [UUID], extras: ImportExtras) {
+        guard !ids.isEmpty, extras.developPreset != nil || extras.collection != nil else { return }
+        let context = store.viewContext
+        let request = Photo.fetchRequest()
+        request.predicate = NSPredicate(format: "id IN %@", ids)
+        guard let photos = try? context.fetch(request), !photos.isEmpty else { return }
+        // Part of the import, not an edit to undo.
+        context.processPendingChanges()
+        context.undoManager?.disableUndoRegistration()
+        defer {
+            context.processPendingChanges()
+            context.undoManager?.enableUndoRegistration()
+        }
+        if let preset = extras.developPreset {
+            for photo in photos {
+                if case .incompatible = preset.compatibility(with: .init(cameraModel: photo.cameraModel)) { continue }
+                photo.adjustments = preset.applied(
+                    to: photo.adjustments, isRaw: SupportedImageTypes.isRaw(photo.fileURL), cameraModel: photo.cameraModel,
+                    iso: photo.iso > 0 ? Double(photo.iso) : nil)
+            }
+        }
+        switch extras.collection {
+        case .existing(let id)?:
+            if let collection = PhotoCollection.with(id: id, in: context), collection.kind == .collection {
+                collection.photos.formUnion(photos)
+            }
+        case .new(let name)?:
+            let collection = PhotoCollection.make(.collection, named: name, in: nil, context: context)
+            collection.photos.formUnion(photos)
+        case nil:
+            break
+        }
+        store.save()
     }
 
     // MARK: - Scanning
@@ -259,10 +337,13 @@ final class ImportService {
         var fileSize: Int64
         var captureDate: Date
         var metadata: ImageMetadata
+        /// Make a Second Copy: where the backup goes.
+        var secondCopy: URL?
     }
 
     nonisolated enum PrepareResult: Sendable {
-        case success(PlannedImport)
+        /// Imported, with a problem that didn't stop it (the second copy failed).
+        case success(PlannedImport, warning: String?)
         case failure(String)
     }
 
@@ -400,26 +481,21 @@ final class ImportService {
         }
     }
 
-    nonisolated private static func prepare(_ item: PlannedImport, copy: Bool, thumbnailDirectory: URL) async -> PrepareResult {
-        let fileManager = FileManager.default
-        if copy {
+    nonisolated private static func prepare(_ item: PlannedImport, copy copies: Bool, thumbnailDirectory: URL) async -> PrepareResult {
+        if copies {
             do {
-                try fileManager.createDirectory(
-                    at: item.destination.deletingLastPathComponent(), withIntermediateDirectories: true
-                )
-                try fileManager.copyItem(at: item.source, to: item.destination)
                 // The images that go with it (a raw file's JPEG) come along under the same name.
-                for ext in item.sidecars {
-                    for candidate in [ext, ext.lowercased()] {
-                        let source = item.source.deletingPathExtension().appendingPathExtension(candidate)
-                        if fileManager.fileExists(atPath: source.path(percentEncoded: false)) {
-                            try? fileManager.copyItem(at: source, to: item.destination.deletingPathExtension().appendingPathExtension(candidate))
-                            break
-                        }
-                    }
-                }
+                try copy(item.source, sidecars: item.sidecars, to: item.destination)
             } catch {
                 return .failure("\(item.source.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+        var warning: String?
+        if let backup = item.secondCopy {
+            do {
+                try copy(item.source, sidecars: item.sidecars, to: backup)
+            } catch {
+                warning = "\(item.source.lastPathComponent): the second copy failed (\(error.localizedDescription))"
             }
         }
         do {
@@ -433,7 +509,23 @@ final class ImportService {
             // The photo is still usable without a thumbnail; the grid shows a placeholder.
             logger.error("Thumbnail failed for \(item.destination.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
-        return .success(item)
+        return .success(item, warning: warning)
+    }
+
+    /// Copies `source` and the images that go with it (a raw file's JPEG) to `destination`.
+    nonisolated private static func copy(_ source: URL, sidecars: [String], to destination: URL) throws {
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fileManager.copyItem(at: source, to: destination)
+        for ext in sidecars {
+            for candidate in [ext, ext.lowercased()] {
+                let sidecar = source.deletingPathExtension().appendingPathExtension(candidate)
+                if fileManager.fileExists(atPath: sidecar.path(percentEncoded: false)) {
+                    try? fileManager.copyItem(at: sidecar, to: destination.deletingPathExtension().appendingPathExtension(candidate))
+                    break
+                }
+            }
+        }
     }
 
     // MARK: - Core Data
@@ -451,12 +543,15 @@ final class ImportService {
         }
     }
 
-    nonisolated private static func insert(_ items: [PlannedImport], importID: UUID, into context: NSManagedObjectContext) async throws {
+    nonisolated private static func insert(
+        _ items: [PlannedImport], importID: UUID, into context: NSManagedObjectContext, importDate: Date = Date(),
+        extras: ImportExtras = ImportExtras()
+    ) async throws {
         guard !items.isEmpty else { return }
         try await context.perform {
             var folders: [String: Folder] = [:]
             var tags: [String: Tag] = [:]
-            let now = Date()
+            let now = importDate
             for item in items {
                 let photo = Photo(context: context)
                 photo.id = item.id
@@ -486,7 +581,14 @@ final class ImportService {
                     in: context,
                     cache: &folders
                 )
-                for keyword in item.metadata.keywords {
+                // The file's own rating: stars, or rejected (as Lightroom reads it).
+                switch item.metadata.rating {
+                case .some(-1): photo.photoFlag = .rejected
+                case .some(let stars) where stars > 0: photo.rating = Int16(min(stars, 5))
+                default: break
+                }
+                extras.metadata?.apply(to: photo)
+                for keyword in item.metadata.keywords + extras.keywords {
                     let tag = tags[keyword.lowercased()] ?? Tag.findOrCreate(named: keyword, in: context)
                     tags[keyword.lowercased()] = tag
                     photo.tags.insert(tag)

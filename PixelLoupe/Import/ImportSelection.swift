@@ -52,6 +52,10 @@ nonisolated struct ImportSelection: Sendable {
     private(set) var filter: Filter
     /// Where copies go, for Destination Folders' headings.
     private(set) var destination: ImportDestination?
+    /// Don't Import Suspected Duplicates off: files in the library can be checked (they still start unchecked).
+    private(set) var allowsDuplicates = false
+    /// Don't Import Rejected Images: files rated as rejected can't be checked.
+    private(set) var skipsRejected = false
     private(set) var sections: [Section] = []
     /// Indexes into `files` in sort order; a file's number in the grid is its position here plus one.
     private var order: [Int] = []
@@ -60,18 +64,48 @@ nonisolated struct ImportSelection: Sendable {
 
     init(
         files: [ImportService.ScannedFile], transfer: ImportTransfer = .copy, sort: Sort = .captureTime,
-        filter: Filter = .all, destination: ImportDestination? = nil
+        filter: Filter = .all, destination: ImportDestination? = nil, allowsDuplicates: Bool = false, skipsRejected: Bool = false
     ) {
         self.files = files
         self.transfer = transfer
         self.sort = sort
         self.filter = filter
         self.destination = destination
-        checked = files.map { !$0.isDuplicate(for: transfer) }
+        self.allowsDuplicates = allowsDuplicates
+        self.skipsRejected = skipsRejected
+        checked = []
+        checked = files.indices.map(startsChecked)
         arrange()
     }
 
     func isDuplicate(_ index: Int) -> Bool { files[index].isDuplicate(for: transfer) }
+
+    /// Rated as rejected (`xmp:Rating` -1), in the camera or another app.
+    func isRejected(_ index: Int) -> Bool { files[index].metadata.rating == -1 }
+
+    /// Whether the file's checkbox can be checked, given File Handling's choices.
+    func isCheckable(_ index: Int) -> Bool {
+        !(isDuplicate(index) && !allowsDuplicates) && !(isRejected(index) && skipsRejected)
+    }
+
+    /// What a file's cell shows: its checkbox, whether it can be checked, and why not.
+    struct Check: Equatable {
+        var isChecked: Bool
+        var isCheckable: Bool
+        /// "In Library" or "Rejected", in place of the file's number.
+        var badge: String?
+    }
+
+    func check(_ index: Int) -> Check {
+        Check(
+            isChecked: checked[index], isCheckable: isCheckable(index),
+            badge: isDuplicate(index) ? "In Library" : isRejected(index) ? "Rejected" : nil)
+    }
+
+    /// Whether a file starts out checked: new, and not left out.
+    private func startsChecked(_ index: Int) -> Bool {
+        !isDuplicate(index) && isCheckable(index)
+    }
 
     func isChecked(_ index: Int) -> Bool { checked[index] }
 
@@ -103,7 +137,7 @@ nonisolated struct ImportSelection: Sendable {
     }
 
     mutating func setChecked(_ isChecked: Bool, _ indexes: some Sequence<Int>) {
-        for index in indexes where !isDuplicate(index) {
+        for index in indexes where isCheckable(index) {
             checked[index] = isChecked
         }
     }
@@ -111,7 +145,7 @@ nonisolated struct ImportSelection: Sendable {
     /// Checks all of `indexes` unless they're all checked already, in which case unchecks them (Space
     /// in the import window).
     mutating func toggle(_ indexes: some Collection<Int>) {
-        let checkable = indexes.filter { !isDuplicate($0) }
+        let checkable = indexes.filter { isCheckable($0) }
         setChecked(!checkable.allSatisfy { checked[$0] }, checkable)
     }
 
@@ -124,7 +158,7 @@ nonisolated struct ImportSelection: Sendable {
             toggle([target])
             return
         }
-        let state = isDuplicate(target) ? checked[anchor] : !checked[target]
+        let state = isCheckable(target) ? !checked[target] : checked[anchor]
         setChecked(state, shown[min(start, end)...max(start, end)])
     }
 
@@ -139,9 +173,24 @@ nonisolated struct ImportSelection: Sendable {
         let wasDuplicate = files.indices.map(isDuplicate)
         self.transfer = transfer
         for index in files.indices where wasDuplicate[index] != isDuplicate(index) {
-            checked[index] = !isDuplicate(index)
+            checked[index] = startsChecked(index)
         }
         arrange()
+    }
+
+    /// Don't Import Suspected Duplicates: turned on, duplicates are unchecked; turned off, they can be
+    /// checked (but aren't checked for you).
+    mutating func setAllowsDuplicates(_ allows: Bool) {
+        allowsDuplicates = allows
+        for index in files.indices where !isCheckable(index) { checked[index] = false }
+    }
+
+    /// Don't Import Rejected Images: turned on, rejected files are unchecked; turned off, the new ones
+    /// are checked again.
+    mutating func setSkipsRejected(_ skips: Bool) {
+        guard skips != skipsRejected else { return }
+        skipsRejected = skips
+        for index in files.indices where isRejected(index) { checked[index] = startsChecked(index) }
     }
 
     mutating func setSort(_ sort: Sort) {
