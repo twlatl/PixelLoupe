@@ -26,7 +26,8 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     private let service: ImportService
     private let catalogURL: URL
-    private let options: ImportOptionsModel
+    /// The choices the panel and top bar edit (internal for tests).
+    let options: ImportOptionsModel
     private let previews = ImportPreviewLoader()
     private var selection = ImportSelection(files: [])
     private var currentSource: Source?
@@ -62,6 +63,9 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     private let sizeSlider = NSSlider()
     // Footer
     private let summaryLabel = NSTextField(labelWithString: "")
+    private let presetPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    /// The Import Preset chosen in the footer, if any.
+    private var chosenPresetID: UUID?
     private let importButton = ProminentButton(label: "Import", target: nil, action: nil)
 
     init(service: ImportService, catalogURL: URL, info: CatalogInfo, source: Source? = nil) {
@@ -413,7 +417,18 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         importButton.target = self
         importButton.action = #selector(importChecked(_:))
         importButton.setAccessibilityIdentifier("importButton")
-        let footer = bar([summaryLabel, flexible(), cancel, importButton])
+        let presetLabel = NSTextField(labelWithString: "Import Preset")
+        presetLabel.textColor = .secondaryLabelColor
+        presetPopUp.setAccessibilityLabel("Import Preset")
+        presetPopUp.setAccessibilityIdentifier("importPreset")
+        presetPopUp.widthAnchor.constraint(greaterThanOrEqualToConstant: 200).isActive = true
+        chosenPresetID = ImportPreset.chosen(for: catalogURL)
+        updatePresetMenu()
+        // The preset sits in the middle of the footer, as in the mockups.
+        let left = flexible(), right = flexible()
+        let footer = bar([summaryLabel, left, presetLabel, presetPopUp, right, cancel, importButton])
+        left.widthAnchor.constraint(equalTo: right.widthAnchor).isActive = true
+        footer.setVisibilityPriority(.init(rawValue: 800), for: presetLabel)
         footer.edgeInsets = NSEdgeInsets(top: 10, left: 16, bottom: 12, right: 16)
         return footer
     }
@@ -628,7 +643,116 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         }
     }
 
+    // MARK: - Import presets
+
+    private var chosenPreset: ImportPreset? {
+        ImportPreset.all().first { $0.id == chosenPresetID }
+    }
+
+    /// The footer's Import Preset menu: None, the presets (the chosen one marked "edited" once its
+    /// choices are changed), and saving, updating, renaming and deleting.
+    private func updatePresetMenu() {
+        let presets = ImportPreset.all()
+        if let chosenPresetID, !presets.contains(where: { $0.id == chosenPresetID }) { self.chosenPresetID = nil }
+        let chosen = presets.first { $0.id == chosenPresetID }
+        let isEdited = chosen.map { $0.settings != options.settings } ?? false
+        let menu = NSMenu()
+        func add(_ title: String, _ action: Selector?, enabled: Bool = true) -> NSMenuItem {
+            let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.isEnabled = enabled
+            return item
+        }
+        let none = add("None", #selector(choosePreset(_:)))
+        for preset in presets {
+            let item = add(preset.id == chosenPresetID && isEdited ? "\(preset.name) (edited)" : preset.name, #selector(choosePreset(_:)))
+            item.representedObject = preset.id
+        }
+        menu.addItem(.separator())
+        _ = add("Save Current Settings as New Preset…", #selector(savePreset(_:)))
+        if let chosen {
+            _ = add("Update Preset “\(chosen.name)”", #selector(updatePreset(_:)), enabled: isEdited)
+            _ = add("Rename Preset “\(chosen.name)”…", #selector(renamePreset(_:)))
+            _ = add("Delete Preset “\(chosen.name)”…", #selector(deletePreset(_:)))
+        }
+        menu.autoenablesItems = false
+        presetPopUp.menu = menu
+        presetPopUp.select(menu.items.first { ($0.representedObject as? UUID) == chosenPresetID && chosenPresetID != nil } ?? none)
+    }
+
+    @objc private func choosePreset(_ sender: NSMenuItem) {
+        chosenPresetID = sender.representedObject as? UUID
+        ImportPreset.setChosen(chosenPresetID, for: catalogURL)
+        if let preset = chosenPreset { options.apply(preset.settings) }
+        updatePresetMenu()
+    }
+
+    @objc private func savePreset(_ sender: Any?) {
+        askForName(title: "New Import Preset", message: "Saves Copy or Add, the right panel's choices and the destination (not keywords).",
+                   initial: "", confirm: "Save") { [weak self] name in
+            guard let self else { return }
+            let preset = ImportPreset(name: name, settings: options.settings)
+            ImportPreset.save(ImportPreset.all() + [preset])
+            chosenPresetID = preset.id
+            ImportPreset.setChosen(preset.id, for: catalogURL)
+            updatePresetMenu()
+        }
+        updatePresetMenu()
+    }
+
+    @objc private func updatePreset(_ sender: Any?) {
+        guard let chosenPresetID else { return }
+        ImportPreset.save(ImportPreset.all().map { $0.id == chosenPresetID ? ImportPreset(id: $0.id, name: $0.name, settings: options.settings) : $0 })
+        updatePresetMenu()
+    }
+
+    @objc private func renamePreset(_ sender: Any?) {
+        guard let chosen = chosenPreset else { return }
+        askForName(title: "Rename Import Preset", message: nil, initial: chosen.name, confirm: "Rename") { [weak self] name in
+            ImportPreset.save(ImportPreset.all().map { $0.id == chosen.id ? ImportPreset(id: $0.id, name: name, settings: $0.settings) : $0 })
+            self?.updatePresetMenu()
+        }
+        updatePresetMenu()
+    }
+
+    @objc private func deletePreset(_ sender: Any?) {
+        guard let chosen = chosenPreset, let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Delete the import preset “\(chosen.name)”?"
+        alert.informativeText = "The window's current choices stay as they are."
+        alert.addButton(withTitle: "Delete").hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            ImportPreset.save(ImportPreset.all().filter { $0.id != chosen.id })
+            chosenPresetID = nil
+            ImportPreset.setChosen(nil, for: catalogURL)
+            updatePresetMenu()
+        }
+        updatePresetMenu()
+    }
+
+    private func askForName(title: String, message: String?, initial: String, confirm: String, then: @escaping (String) -> Void) {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message ?? ""
+        let field = NSTextField(string: initial)
+        field.placeholderString = "Preset name"
+        field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: confirm)
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { response in
+            let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard response == .alertFirstButtonReturn, !name.isEmpty else { return }
+            then(name)
+        }
+    }
+
     private func optionsChanged() {
+        updatePresetMenu()
         options.settings.save(for: catalogURL)
         selection.setTransfer(options.effectiveTransfer)
         selection.setDestination(options.destination)

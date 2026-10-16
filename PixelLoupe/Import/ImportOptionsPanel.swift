@@ -130,6 +130,32 @@ final class ImportOptionsModel {
         return extras
     }
 
+    /// Takes on a preset's choices (Copy or Add, File Handling, File Renaming, Apply During Import
+    /// except keywords, and Destination).
+    func apply(_ settings: ImportSettings) {
+        // One change for the whole preset, not one per choice.
+        isApplying = true
+        defer {
+            isApplying = false
+            changed()
+        }
+        let handling = settings.handling ?? ImportHandling()
+        transfer = settings.transfer
+        root = settings.destination.root
+        usesSubfolder = settings.destination.subfolder != nil
+        subfolderName = settings.destination.subfolder ?? ""
+        layout = settings.destination.layout
+        skipsDuplicates = !handling.allowsDuplicates
+        skipsRejected = handling.skipsRejected
+        makesSecondCopy = handling.makesSecondCopy
+        secondCopy = handling.secondCopy
+        addsToCollection = handling.addsToCollection
+        collectionID = handling.collectionID
+        developPresetPath = handling.developPresetPath
+        metadataPresetID = handling.metadataPresetID
+        renaming = handling.renaming ?? ImportRenaming()
+    }
+
     /// File Renaming's example: the first checked file as it would be named.
     var renamingExample: String {
         let file = exampleFile ?? (name: "DSC00112.ARW", date: Date())
@@ -153,7 +179,10 @@ final class ImportOptionsModel {
         if metadataPresetID == preset.id { metadataPresetID = nil }
     }
 
+    @ObservationIgnored private var isApplying = false
+
     private func changed() {
+        guard !isApplying else { return }
         onChange?()
     }
 }

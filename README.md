@@ -241,6 +241,11 @@ new name, and second copies keep the original names.
 photo's own) and **Keywords** (completed from the catalog's keywords). A file's own rating comes in too: stars as its
 rating, −1 as Rejected. All of these except the keywords are remembered for each catalog.
 
+The footer's **Import Preset** saves Copy or Add, the right panel's choices (except keywords) and the destination under
+a name (Save Current Settings as New Preset…), and applies them when chosen. Changing a choice afterwards shows the
+preset as "(edited)" until it's updated (Update Preset); presets can be renamed and deleted, are shared by every
+catalog, and each catalog remembers the one last chosen.
+
 **Import N Photos** imports the checked photos, with progress in the catalog window's bottom bar, and closes the window.
 The left sidebar's **Previous Import** then shows them.
 
