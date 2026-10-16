@@ -148,10 +148,16 @@ final class ImportDevices: NSObject {
 
 extension ImportDevices: @preconcurrency ICDeviceBrowserDelegate {
     func deviceBrowser(_ browser: ICDeviceBrowser, didAdd device: ICDevice, moreComing: Bool) {
-        // A memory card in a reader is mounted as a disk too (it has a mount point): it's listed once,
-        // as a card, not again as a camera.
-        guard let camera = device as? ICCameraDevice, camera.mountPoint == nil else { return }
+        // A memory card in a reader reaches ImageCaptureCore as a mass-storage "camera", but it's also a
+        // mounted disk, listed as a card: it's listed once, not again here. (Its mount point stays
+        // empty until a session is opened, so the transport type is what tells.)
+        guard let camera = device as? ICCameraDevice, !Self.isMassStorage(camera.transportType) else { return }
         add(CameraImportDevice(camera))
+    }
+
+    /// Whether a device's transport is mass storage: a card or disk that's mounted as a volume.
+    nonisolated static func isMassStorage(_ transportType: String?) -> Bool {
+        transportType == ICDeviceTransport.transportTypeMassStorage.rawValue
     }
 
     func deviceBrowser(_ browser: ICDeviceBrowser, didRemove device: ICDevice, moreGoing: Bool) {

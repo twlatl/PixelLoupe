@@ -1,4 +1,5 @@
 import AppKit
+import ImageCaptureCore
 import Testing
 @testable import PixelLoupe
 
@@ -59,6 +60,12 @@ struct ImportDeviceTests {
         #expect(url.lastPathComponent == "IMG 0001.HEIC", "the grid shows the file's name")
         #expect(ImportDevices.parse(ImportDevices.url(of: "ABC-123"))?.fileID == nil)
         #expect(!ImportDevices.isDeviceURL(URL(filePath: "/Volumes/Card")))
+    }
+
+    @Test func cardsInAReaderAreListedOnlyAsCards() {
+        #expect(ImportDevices.isMassStorage(ICDeviceTransport.transportTypeMassStorage.rawValue))
+        #expect(!ImportDevices.isMassStorage(ICDeviceTransport.transportTypeUSB.rawValue), "a phone or camera over USB is a device")
+        #expect(!ImportDevices.isMassStorage(nil))
     }
 
     @Test @MainActor func aPhonesPhotosAreListedDownloadedAndImportedAsCopies() async throws {
