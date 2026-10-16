@@ -150,15 +150,16 @@ nonisolated struct ImportSelection: Sendable {
     }
 
     /// Shift-clicking a checkbox: every file the grid shows from `anchor` (the checkbox clicked before)
-    /// to `target` takes the state clicking `target` alone would give it, so a range is checked, or
-    /// unchecked if `target` was already checked.
+    /// to `target` takes the anchor's state, the one that click left it in, as in Lightroom and Finder.
+    /// Uncheck one photo, then Shift-click another, and everything between is unchecked too.
     mutating func checkRange(from anchor: Int, to target: Int) {
         let shown = shown
         guard let start = shown.firstIndex(of: anchor), let end = shown.firstIndex(of: target) else {
             toggle([target])
             return
         }
-        let state = isCheckable(target) ? !checked[target] : checked[anchor]
+        // A photo that can't be checked (in the library) has no state to pass on: use the click's.
+        let state = isCheckable(anchor) ? checked[anchor] : !checked[target]
         setChecked(state, shown[min(start, end)...max(start, end)])
     }
 
@@ -244,7 +245,8 @@ nonisolated struct ImportSelection: Sendable {
     private func folderTitle(of index: Int) -> String {
         let file = files[index]
         if transfer == .copy, let destination {
-            let path = destination.relativePath(for: file.captureDate)
+            let path = destination.relativePath(
+                for: file.captureDate, originalFolder: ImportDestination.originalFolder(of: file.candidate.source))
             return path.isEmpty ? destination.root.lastPathComponent : path
         }
         return file.candidate.source.url.deletingLastPathComponent().path(percentEncoded: false)

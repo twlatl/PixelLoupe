@@ -148,7 +148,9 @@ final class ImportDevices: NSObject {
 
 extension ImportDevices: @preconcurrency ICDeviceBrowserDelegate {
     func deviceBrowser(_ browser: ICDeviceBrowser, didAdd device: ICDevice, moreComing: Bool) {
-        guard let camera = device as? ICCameraDevice else { return }
+        // A memory card in a reader is mounted as a disk too (it has a mount point): it's listed once,
+        // as a card, not again as a camera.
+        guard let camera = device as? ICCameraDevice, camera.mountPoint == nil else { return }
         add(CameraImportDevice(camera))
     }
 

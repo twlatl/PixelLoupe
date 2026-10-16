@@ -213,8 +213,9 @@ badge when it has photos the catalog doesn't), **Volumes** and **Locations** (Pi
 ten folders imported from) as folder trees, and **Choose Folder…**. Cards and removable volumes have an eject button.
 **Include Subfolders** (on by default) decides whether a folder's subfolders are read too; **Eject After Import** (off
 by default) ejects a card once all its checked photos have come across. Choosing a source reads its photos and videos
-without importing anything, and shows the count on its row. Photos on a card are always copied (Add is unavailable:
-the catalog would point at a card that's about to be ejected). With Settings ▸ Import ▸ **Open the import window when a
+without importing anything, and shows the count on its row. Photos on a card are always copied (Add is dimmed, and
+choosing it says why: the catalog would point at a card that's about to be ejected). Ejecting the card being shown, or
+unplugging the device, empties the grid. With Settings ▸ Import ▸ **Open the import window when a
 memory card is inserted** (off by default), inserting a card brings PixelLoupe forward with the card chosen. A phone's or camera's
 photos show their thumbnails from the device; importing downloads the checked ones to a temporary folder, imports
 them as copies, then removes the downloads. A locked iPhone asks to be unlocked (and to trust this Mac) first.
@@ -222,10 +223,12 @@ them as copies, then removes the downloads. A locked iPhone asks to be unlocked 
 The grid numbers the photos, sorted by **Capture Time**, **File Name** or **File Type**, and can show **All Photos**,
 **New Photos** (not already in the catalog), or **Destination Folders** (in a section for each folder they'll be copied
 into). New photos start checked; ones the catalog already has show **In Library** and can't be checked (for Copy, the
-same name, size and capture time; for Add, the same file). `Space` checks or unchecks the selected photos. Double-click a
+same name, size and capture time; for Add, the same file). `Space` checks or unchecks the selected photos, as does clicking the checkbox of any one of several selected photos; Shift-clicking a checkbox gives every photo between it and the last checkbox clicked that one's state (uncheck one, Shift-click another, and all between are unchecked). Double-click a
 photo, or click the loupe button, to see it filling the grid's space; `←` / `→` step and `Esc` or a double-click goes
-back. The right panel's **Destination** section sets the folder, an optional subfolder, and how photos are organized by
-date (`2026/2026-10-15`, `2026/10-15`, `2026/10/15`, `2026-10-15`, `2026/October/15`, or into one folder).
+back. The right panel's **Destination** section sets the folder, an optional subfolder, how photos are organized (**By
+Original Folders**, recreating the folders they're in below the source chosen, such as `DCIM/100MSDCF` on a card; **By
+Date**; or **Into One Folder**) and, for By Date, the **Date Format** (`2026/2026-10-15`, `2026/10-15`, `2026/10/15`,
+`2026-10-15` or `2026/October/15`), taken from each photo's capture date.
 
 The right panel's **File Handling** section:
 - **Don't Import Suspected Duplicates** (on by default; turned off, photos in the library can be checked and imported again)
@@ -782,9 +785,9 @@ imported collections). Drag photos in the grid to reorder them; it is undoable.
 
 ## RAW+JPEG pairs, PSD and video
 
-A raw file and a JPEG with the same name in the same folder import as **one photo** (Lightroom's default): the raw is
+A RAW file and a JPEG with the same name in the same folder import as **one photo** (Lightroom's default): the RAW is
 the photo, the JPEG is its sidecar. The Inspector's File Type shows `Raw + JPEG`, and removing the photo from disk
-moves the JPEG to the Trash with it. **Settings ▸ Import ▸ Treat JPEG files next to raw files as separate photos**
+moves the JPEG to the Trash with it. **Settings ▸ Import ▸ Treat JPEG files next to RAW files as separate photos**
 imports them as two photos instead. Photoshop (`.psd`) files import and show like any image. Video files (MOV, MP4, M4V…)
 import as view-only items: they get a poster-frame thumbnail with a play badge and duration, the viewer plays them with
 the standard controls, and Develop and Export leave them alone. A Lightroom import brings across the same kinds,

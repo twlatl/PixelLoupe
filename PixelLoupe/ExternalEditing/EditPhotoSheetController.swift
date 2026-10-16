@@ -106,7 +106,7 @@ struct EditPhotoSheetView: View {
                         .accessibilityIdentifier("editAdjustmentsWarning")
                 }
                 if model.hasFixedPhotos {
-                    Text("Raw photos and virtual copies are always edited as a copy with PixelLoupe adjustments.")
+                    Text("RAW photos and virtual copies are always edited as a copy with PixelLoupe adjustments.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
