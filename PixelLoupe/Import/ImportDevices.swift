@@ -230,7 +230,8 @@ final class CameraImportDevice: NSObject, ImportDevice {
     func thumbnail(of fileID: String, maxPixelSize: Int) async -> CGImage? {
         guard let file = filesByID[fileID] else { return nil }
         let data: Data? = await withCheckedContinuation { continuation in
-            file.requestThumbnailData(options: [.imageSourceThumbnailMaxPixelSize: maxPixelSize]) { data, _ in
+            // ImageCaptureCore calls back on its own queue: the closure mustn't be main-actor isolated.
+            file.requestThumbnailData(options: [.imageSourceThumbnailMaxPixelSize: maxPixelSize]) { @Sendable data, _ in
                 continuation.resume(returning: data)
             }
         }
@@ -244,7 +245,8 @@ final class CameraImportDevice: NSObject, ImportDevice {
             try Task.checkCancellation()
             guard let file = filesByID[fileID], let name = file.name else { throw ImportDevices.DeviceError.disconnected }
             let saved: String? = await withCheckedContinuation { continuation in
-                _ = file.requestDownload(options: [.downloadsDirectoryURL: folder, .saveAsFilename: name, .overwrite: true]) { filename, _ in
+                // Called back on `ICDeviceWriteQueue`: the closure mustn't be main-actor isolated.
+                _ = file.requestDownload(options: [.downloadsDirectoryURL: folder, .saveAsFilename: name, .overwrite: true]) { @Sendable filename, _ in
                     continuation.resume(returning: filename)
                 }
             }
