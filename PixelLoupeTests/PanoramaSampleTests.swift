@@ -6,11 +6,12 @@ import UniformTypeIdentifiers
 @testable import PixelLoupe
 
 /// Photo Merge ▸ Panorama on the RAW-95 sample photos against Lightroom's merges of them. The photos
-/// (about 860 MB) live outside the repository, in `~/Source/PixelLoupe-Sample-Images/Panorama` or the
-/// folder `PIXELLOUPE_PANORAMA_SAMPLES` names, so these run only where they are (never in CI). The
-/// full-resolution merge, which takes a minute or two, runs only with `PIXELLOUPE_PANORAMA_FULL` set
-/// (see Scripts/panorama.sh); `PIXELLOUPE_PANORAMA_OUTPUT` names a folder for the merged images and
-/// side-by-side comparisons.
+/// (about 860 MB) live outside the repository, so these run only when `PIXELLOUPE_PANORAMA_SAMPLES`
+/// names their folder (Scripts/panorama.sh sets it), never in CI: merging them keeps the GPU busy
+/// long enough to starve the Develop tests that wait on renders, so they stay out of the normal
+/// suite. The full-resolution merge, which takes a minute or two, runs only with
+/// `PIXELLOUPE_PANORAMA_FULL` set too; `PIXELLOUPE_PANORAMA_OUTPUT` names a folder for the merged
+/// images, side-by-side comparisons and timings.
 @Suite("Panorama samples", .enabled(if: PanoramaSamples.folder != nil), .serialized)
 struct PanoramaSampleTests {
     @Test func samplesAlignAsLightroomsMergeDoes() async throws {
@@ -102,10 +103,9 @@ struct PanoramaSampleTests {
 nonisolated struct PanoramaSamples {
     static var folder: URL? {
         let environment = ProcessInfo.processInfo.environment
-        let path = environment["PIXELLOUPE_PANORAMA_SAMPLES"]
-            ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: "Source/PixelLoupe-Sample-Images/Panorama").path
+        guard let path = environment["PIXELLOUPE_PANORAMA_SAMPLES"], environment["CI"] == nil else { return nil }
         var isDirectory: ObjCBool = false
-        guard environment["CI"] == nil, FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else { return nil }
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else { return nil }
         return URL(filePath: path, directoryHint: .isDirectory)
     }
 

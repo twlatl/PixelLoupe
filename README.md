@@ -735,11 +735,12 @@ the normal suite; the comparison against real exports runs only when `PIXELLOUPE
 ## Panorama tests
 
 Photo Merge ▸ Panorama is checked in CI on synthetic panoramas (a textured scene photographed by a turning camera).
-Its tests on the RAW-95 sample photos, 12 overlapping RAW photos with Lightroom's Spherical and Cylindrical merges of
-them, run whenever the photos are in `~/Source/PixelLoupe-Sample-Images/Panorama` (or the folder
-`PIXELLOUPE_PANORAMA_SAMPLES` names): they check the alignment, the panorama's size against Lightroom's, and how
-quickly the preview updates. `Scripts/panorama.sh [samples] [output]` also merges them at full resolution, prints how
-long that took and the memory it used, and writes the DNGs and a comparison with Lightroom's merges.
+Its tests on the RAW-95 sample photos (12 overlapping RAW photos, with Lightroom's Spherical and Cylindrical merges of
+them) run with `Scripts/panorama.sh [samples] [output]`, or whenever `PIXELLOUPE_PANORAMA_SAMPLES` names the photos'
+folder; they stay out of the normal suite because they keep the GPU busy long enough to starve the Develop tests that
+wait on renders. They check the alignment, the panorama's size against Lightroom's and how quickly the preview
+updates, then merge the photos at full resolution and write the DNGs, a comparison with Lightroom's merges and the
+timings (`timings.txt`: how long each step took and the memory used).
 
 ## Acknowledgments
 
