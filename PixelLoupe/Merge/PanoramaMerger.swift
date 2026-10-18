@@ -327,6 +327,8 @@ nonisolated final class PanoramaMerger {
         let labels: [Int16]
         /// Each merged photo's mask: red 1 where it shows, at the small size, origin at zero.
         let masks: [Int: CIImage]
+        /// Each merged photo's weight for the coarsest band of the blend (red; they add up to 1).
+        let feathers: [Int: CIImage]
         let coverage: [Bool]
     }
 
@@ -409,8 +411,35 @@ nonisolated final class PanoramaMerger {
                                 size: CGSize(width: photo.width, height: photo.height), format: .RGBA8, colorSpace: nil)
             masks[frame] = image.transformed(by: CGAffineTransform(translationX: CGFloat(photo.x), y: CGFloat(height - photo.y - photo.height)))
         }
+        // The coarsest band (the photos' broad brightness, vignetting included) is feathered instead:
+        // each photo weighted by how far a pixel is from its edges, so it fades out across the overlap.
+        var total = [Float](repeating: 0, count: width * height)
+        for photo in photos {
+            for y in 0..<photo.height {
+                for x in 0..<photo.width where photo.covered[y * photo.width + x] {
+                    total[(photo.y + y) * width + photo.x + x] += photo.centrality[y * photo.width + x]
+                }
+            }
+        }
+        var feathers: [Int: CIImage] = [:]
+        for (position, frame) in photoFrames.enumerated() {
+            let photo = photos[position]
+            var values = [Float](repeating: 0, count: photo.width * photo.height * 4)
+            for y in 0..<photo.height {
+                for x in 0..<photo.width {
+                    let i = y * photo.width + x
+                    let sum = total[(photo.y + y) * width + photo.x + x]
+                    values[i * 4] = photo.covered[i] && sum > 0 ? photo.centrality[i] / sum : 0
+                    values[i * 4 + 3] = 1
+                }
+            }
+            let data = values.withUnsafeBufferPointer { Data(buffer: $0) }
+            let image = CIImage(bitmapData: data, bytesPerRow: photo.width * 16,
+                                size: CGSize(width: photo.width, height: photo.height), format: .RGBAf, colorSpace: nil)
+            feathers[frame] = image.transformed(by: CGAffineTransform(translationX: CGFloat(photo.x), y: CGFloat(height - photo.y - photo.height)))
+        }
         let analysis = Analysis(layout: layout, width: width, height: height, scale: scale, labels: labels,
-                                masks: masks, coverage: labels.map { $0 >= 0 })
+                                masks: masks, feathers: feathers, coverage: labels.map { $0 >= 0 })
         analyses[projection] = analysis
         return analysis
     }
@@ -604,13 +633,14 @@ nonisolated final class PanoramaMerger {
         let layout = analysis.layout
         let sources = sourceImages(scale: scale)
         let maskScale = CGAffineTransform(scaleX: canvas.width / CGFloat(analysis.width), y: canvas.height / CGFloat(analysis.height))
-        var photos: [(image: CIImage, mask: CIImage)] = []
+        var photos: [BlendPhoto] = []
         for index in frames.indices where layout.cameras[index] != nil {
-            guard let mask = analysis.masks[index] else { continue }
+            guard let mask = analysis.masks[index], let feather = analysis.feathers[index] else { continue }
             let footprint = ciRect(pixelRect(layout.footprint(of: index), scale: scale, extent: canvas), canvasHeight: canvas.height)
             guard !footprint.isEmpty else { continue }
             let warped = warpedPhoto(index, layout: layout, scale: scale, canvas: canvas, sources: sources)
-            photos.append((warped, mask.transformed(by: maskScale).cropped(to: footprint)))
+            photos.append(BlendPhoto(image: warped, mask: mask.transformed(by: maskScale).cropped(to: footprint),
+                                     feather: feather.transformed(by: maskScale)))
         }
         let levels = max(1, Int((Double(Self.fullResolutionLevels) + log2(Double(scale))).rounded()))
         var blended = Self.blend(photos, canvas: canvas, levels: levels)
@@ -691,10 +721,18 @@ nonisolated final class PanoramaMerger {
         }
     }
 
+    /// A warped photo with its seam mask and coarsest-band weight, on the canvas.
+    struct BlendPhoto {
+        var image: CIImage
+        var mask: CIImage
+        var feather: CIImage
+    }
+
     /// Multiband blending (Burt and Adelson): each photo's Laplacian pyramid, each level weighted by
     /// its mask blurred to that level, summed, and the pyramid collapsed. Fine detail switches photo
-    /// sharply at the seam; broad brightness changes blend over a wide band.
-    static func blend(_ photos: [(image: CIImage, mask: CIImage)], canvas: CGRect, levels: Int) -> CIImage {
+    /// sharply at the seam; broader brightness changes blend over wider bands, and the coarsest
+    /// (vignetting, a sky's gradient) is feathered across the whole overlap.
+    static func blend(_ photos: [BlendPhoto], canvas: CGRect, levels: Int) -> CIImage {
         guard !photos.isEmpty else { return blank(canvas) }
         var extents = [canvas]
         for _ in 0..<levels {
@@ -716,9 +754,11 @@ nonisolated final class PanoramaMerger {
                 let detail = up(next, to: extents[level])
                 bands[level] = PanoramaKernels.addBand.apply(extent: extents[level], arguments: [bands[level], image, detail, mask]) ?? bands[level]
                 image = next
-                mask = down(mask, to: extents[level + 1])
+                if level + 1 < levels { mask = down(mask, to: extents[level + 1]) }
             }
-            bands[levels] = PanoramaKernels.addLevel.apply(extent: extents[levels], arguments: [bands[levels], image, mask]) ?? bands[levels]
+            let scale = 1 / CGFloat(1 << levels)
+            let feather = photo.feather.transformed(by: CGAffineTransform(scaleX: scale, y: scale)).cropped(to: extents[levels])
+            bands[levels] = PanoramaKernels.addLevel.apply(extent: extents[levels], arguments: [bands[levels], image, feather]) ?? bands[levels]
         }
         var result = bands[levels]
         for level in stride(from: levels - 1, through: 0, by: -1) {
