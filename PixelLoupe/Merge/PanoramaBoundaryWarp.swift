@@ -6,10 +6,10 @@ import simd
 /// content's shapes as much as it can (after He, Chang and Sun's "Rectangling Panoramic Images via
 /// Warping", without their line constraints). Worked out on the small panorama the seams use.
 ///
-/// A mesh is laid over the photos' coverage by stretching each row, then each column, of the covered
-/// area to the full rectangle; that mesh is then solved again (least squares) so every cell keeps its
-/// shape, as nearly as a similarity transform allows, while the outer vertices stay on the
-/// rectangle's edges. Boundary Warp's amount moves the mesh from where the content is (0) to that
+/// A mesh is laid over the photos' coverage by stretching each column, then each row, of the covered
+/// area to the full rectangle (rows first for a tall panorama); that mesh is then solved again (least
+/// squares) so every cell keeps its shape, as nearly as scaling and moving it allows (not turning it,
+/// so verticals stay vertical), while the outer vertices stay on the rectangle's edges. Boundary Warp's amount moves the mesh from where the content is (0) to that
 /// solution (100).
 nonisolated struct PanoramaBoundaryWarp: Sendable {
     let width: Int
@@ -119,8 +119,7 @@ nonisolated struct PanoramaBoundaryWarp: Sendable {
 
     // MARK: - Solving
 
-    /// The vertex positions that keep each cell's shape (as a similarity transform of its `source`
-    /// shape) with the outer vertices on the rectangle's edges: linear least squares. `start` is the
+    /// The vertex positions that keep each cell's shape (scaled and moved from its `source` shape) with the outer vertices on the rectangle's edges: linear least squares. `start` is the
     /// answer when it can't be solved.
     static func solve(source: [SIMD2<Double>], start: [SIMD2<Double>], columns: Int, rows: Int, width: Double, height: Double) -> [SIMD2<Double>] {
         // Each energy term: a weighted linear combination of unknowns (x and y of each vertex) minus a constant.
@@ -131,21 +130,22 @@ nonisolated struct PanoramaBoundaryWarp: Sendable {
         for row in 0..<rows {
             for column in 0..<columns {
                 let corners = [vertex(row, column), vertex(row, column + 1), vertex(row + 1, column + 1), vertex(row + 1, column)]
-                // The similarity fit's residual: (A (AᵀA)⁻¹ Aᵀ − I) t, A's rows from the source corners.
+                // The fit's residual: (A (AᵀA)⁻¹ Aᵀ − I) t, A's rows from the source corners. The cell may
+                // be scaled and moved but not turned, so verticals stay vertical.
                 var a = [[Double]]()
                 for c in corners {
                     let s = source[c]
-                    a.append([s.x, -s.y, 1, 0])
-                    a.append([s.y, s.x, 0, 1])
+                    a.append([s.x, 1, 0])
+                    a.append([s.y, 0, 1])
                 }
-                var ata = [Double](repeating: 0, count: 16)
-                for r in a { for i in 0..<4 { for j in 0..<4 { ata[i * 4 + j] += r[i] * r[j] } } }
-                guard let inverse = invert4(ata) else { continue }
+                var ata = [Double](repeating: 0, count: 9)
+                for r in a { for i in 0..<3 { for j in 0..<3 { ata[i * 3 + j] += r[i] * r[j] } } }
+                guard let inverse = invert3(ata) else { continue }
                 var projection = [[Double]](repeating: [Double](repeating: 0, count: 8), count: 8)
                 for i in 0..<8 {
                     for j in 0..<8 {
                         var sum = 0.0
-                        for k in 0..<4 { for l in 0..<4 { sum += a[i][k] * inverse[k * 4 + l] * a[j][l] } }
+                        for k in 0..<3 { for l in 0..<3 { sum += a[i][k] * inverse[k * 3 + l] * a[j][l] } }
                         projection[i][j] = sum - (i == j ? 1 : 0)
                     }
                 }
@@ -205,74 +205,76 @@ nonisolated struct PanoramaBoundaryWarp: Sendable {
         return stride(from: 0, to: n, by: 2).map { SIMD2(x[$0], x[$0 + 1]) }
     }
 
-    static func invert4(_ m: [Double]) -> [Double]? {
-        var a = m, inverse = (0..<16).map { $0 % 5 == 0 ? 1.0 : 0.0 }
-        for column in 0..<4 {
-            guard let pivot = (column..<4).max(by: { abs(a[$0 * 4 + column]) < abs(a[$1 * 4 + column]) }),
-                  abs(a[pivot * 4 + column]) > 1e-12 else { return nil }
-            for k in 0..<4 { a.swapAt(pivot * 4 + k, column * 4 + k); inverse.swapAt(pivot * 4 + k, column * 4 + k) }
-            let d = a[column * 4 + column]
-            for k in 0..<4 { a[column * 4 + k] /= d; inverse[column * 4 + k] /= d }
-            for row in 0..<4 where row != column {
-                let f = a[row * 4 + column]
-                guard f != 0 else { continue }
-                for k in 0..<4 { a[row * 4 + k] -= f * a[column * 4 + k]; inverse[row * 4 + k] -= f * inverse[column * 4 + k] }
-            }
-        }
-        return inverse
+    static func invert3(_ m: [Double]) -> [Double]? {
+        let matrix = simd_double3x3(rows: [SIMD3(m[0], m[1], m[2]), SIMD3(m[3], m[4], m[5]), SIMD3(m[6], m[7], m[8])])
+        guard abs(matrix.determinant) > 1e-12 else { return nil }
+        let inverse = matrix.inverse
+        return (0..<3).flatMap { row in (0..<3).map { column in inverse[column, row] } }
     }
 
     // MARK: - The starting mesh
 
-    /// Stretching each row of the covered area to the full width, then each column of that to the
-    /// full height: where a point of the rectangle comes from on the unwarped panorama.
+    /// Stretching each column of the covered area to the full height, then each row of that to the
+    /// full width: where a point of the rectangle comes from on the unwarped panorama. A tall
+    /// panorama is done the other way round (rows, then columns), by transposing it.
     struct Stretch {
-        let width: Int
-        let height: Int
-        /// Each row's covered span, then (after the rows are stretched) each column's.
-        let left: [Double], right: [Double], top: [Double], bottom: [Double]
+        let transposed: Bool
+        private let first: [Double], firstEnd: [Double], second: [Double], secondEnd: [Double]
+        private let width: Int, height: Int
 
         init(coverage: [Bool], width: Int, height: Int) {
-            self.width = width
-            self.height = height
-            var left = [Double?](repeating: nil, count: height), right = left
-            for y in 0..<height {
-                let row = y * width
-                if let first = (0..<width).first(where: { coverage[row + $0] }),
-                   let last = (0..<width).last(where: { coverage[row + $0] }) {
-                    left[y] = Double(first)
-                    right[y] = Double(last + 1)
+            let tall = height > width
+            transposed = tall
+            // Worked out as for a wide panorama: in the transposed case x and y swap.
+            let w = tall ? height : width, h = tall ? width : height
+            let covered: (Int, Int) -> Bool = { x, y in tall ? coverage[x * width + y] : coverage[y * width + x] }
+            self.width = w
+            self.height = h
+            // Each column's covered span (top to bottom).
+            var top = [Double?](repeating: nil, count: w), bottom = top
+            for x in 0..<w {
+                var firstRow: Int?, lastRow: Int?
+                for y in 0..<h where covered(x, y) {
+                    if firstRow == nil { firstRow = y }
+                    lastRow = y
+                }
+                if let firstRow, let lastRow {
+                    top[x] = Double(firstRow)
+                    bottom[x] = Double(lastRow + 1)
                 }
             }
-            let smoothing = max(1, height / 60)
-            let l = Self.smoothed(Self.filled(left, fallback: 0), radius: smoothing)
-            let r = Self.smoothed(Self.filled(right, fallback: Double(width)), radius: smoothing)
-            var top = [Double?](repeating: nil, count: width), bottom = top
-            for x in 0..<width {
-                var first: Int?, last: Int?
-                for y in 0..<height {
-                    let sx = Int((l[y] + (Double(x) + 0.5) / Double(width) * (r[y] - l[y])).rounded(.down))
-                    guard sx >= 0, sx < width, coverage[y * width + sx] else { continue }
-                    if first == nil { first = y }
-                    last = y
+            let columnSmoothing = max(1, w / 60)
+            let t = Self.smoothed(Self.filled(top, fallback: 0), radius: columnSmoothing)
+            let b = Self.smoothed(Self.filled(bottom, fallback: Double(h)), radius: columnSmoothing)
+            // Then each row's span, once the columns are stretched to the full height.
+            var left = [Double?](repeating: nil, count: h), right = left
+            for y in 0..<h {
+                var firstColumn: Int?, lastColumn: Int?
+                for x in 0..<w {
+                    let sy = Int((t[x] + (Double(y) + 0.5) / Double(h) * (b[x] - t[x])).rounded(.down))
+                    guard sy >= 0, sy < h, covered(x, sy) else { continue }
+                    if firstColumn == nil { firstColumn = x }
+                    lastColumn = x
                 }
-                if let first, let last {
-                    top[x] = Double(first)
-                    bottom[x] = Double(last + 1)
+                if let firstColumn, let lastColumn {
+                    left[y] = Double(firstColumn)
+                    right[y] = Double(lastColumn + 1)
                 }
             }
-            let columnSmoothing = max(1, width / 60)
-            self.left = l
-            self.right = r
-            self.top = Self.smoothed(Self.filled(top, fallback: 0), radius: columnSmoothing)
-            self.bottom = Self.smoothed(Self.filled(bottom, fallback: Double(height)), radius: columnSmoothing)
+            let rowSmoothing = max(1, h / 60)
+            first = t
+            firstEnd = b
+            second = Self.smoothed(Self.filled(left, fallback: 0), radius: rowSmoothing)
+            secondEnd = Self.smoothed(Self.filled(right, fallback: Double(w)), radius: rowSmoothing)
         }
 
         func source(of point: SIMD2<Double>) -> SIMD2<Double> {
-            let t = Self.sample(top, at: point.x), b = Self.sample(bottom, at: point.x)
-            let y = t + point.y / Double(height) * (b - t)
-            let l = Self.sample(left, at: y), r = Self.sample(right, at: y)
-            return SIMD2(l + point.x / Double(width) * (r - l), y)
+            let p = transposed ? SIMD2(point.y, point.x) : point
+            let l = Self.sample(second, at: p.y), r = Self.sample(secondEnd, at: p.y)
+            let x = l + p.x / Double(width) * (r - l)
+            let t = Self.sample(first, at: x), b = Self.sample(firstEnd, at: x)
+            let result = SIMD2(x, t + p.y / Double(height) * (b - t))
+            return transposed ? SIMD2(result.y, result.x) : result
         }
 
         static func sample(_ values: [Double], at position: Double) -> Double {
