@@ -50,7 +50,7 @@ xcodebuild -project PixelLoupe.xcodeproj -scheme PixelLoupe -destination 'platfo
 | `PixelLoupe/Library` | Library module: sidebar, filter bar, grid, bottom toolbar |
 | `PixelLoupe/Develop` | Develop module, adjustment model and render pipeline |
 | `PixelLoupe/Develop/Panel` | Adjust panel and its controls |
-| `PixelLoupe/Merge` | Photo Merge: the HDR merge, its sheet, and the Linear DNG writer |
+| `PixelLoupe/Merge` | Photo Merge: the HDR and panorama merges, their sheets, and the Linear DNG writer |
 | `PixelLoupe/Windows` | Welcome, new-catalog and catalog windows |
 
 ## Keyboard shortcuts
@@ -73,6 +73,8 @@ xcodebuild -project PixelLoupe.xcodeproj -scheme PixelLoupe -destination 'platfo
 | `S` / `⇧S` | Collapse or expand the stack of the selected photo / move the selected photo to the top of its stack |
 | `⌘'` | Create Virtual Copy (Photo menu; a copy keeps the master's file but has its own edits, rating, flag, label and keywords) |
 | `⌃H` | Photo Merge ▸ HDR… (the selected bracketed RAW photos) |
+| `⌃M` | Photo Merge ▸ Panorama… (the selected overlapping RAW photos) |
+| `⌃⇧M` | Photo Merge ▸ Panorama with Previous Settings: merges a panorama straight away with the last options, without the preview (hold Shift in the menu) |
 | `⌘E` / `⌥⌘E` | Photo ▸ Edit In: edit the selected photos in the primary / additional external editor (Settings ▸ External Editing) |
 | `⌘[` / `⌘]` | Rotate left (counterclockwise) / right (clockwise) |
 | `⇧⌘R` | Revert to Original (selected photos) |
@@ -561,7 +563,48 @@ the Library's bottom bar, and selects the result when it's done. The merged phot
 `<name>-HDR.dng` (`-HDR-2`, `-HDR-3`… when that name is taken), so it develops like any RAW file with highlights
 several stops above white to recover (stored in 256×256 tiles, as cameras do). It takes the middle exposure's white balance, capture date, camera and shooting
 details, and every source's keywords; its rating, flag and label start empty. Only RAW photos from one camera, all
-the same size, can be merged. Panorama is in the menu but not available yet.
+the same size, can be merged.
+
+## Photo Merge: Panorama
+
+Photo ▸ Photo Merge ▸ Panorama… (`⌃M`, also in the grid's right-click menu) merges two or more overlapping RAW photos
+into one panorama, as Lightroom does. The Panorama Merge Preview sheet shows the result on the left, updating as the
+options on the right change. Click the panorama to zoom to 100% (the part shown is merged at full resolution), drag to
+look around, and click again to fit it. The sheet says how many of the photos merged: photos that don't overlap any of
+the others are left out ("10 of 12 photos merged").
+
+- **Projection:** **Spherical** maps the photos to the inside of a sphere, for very wide or multi-row panoramas.
+  **Cylindrical** maps them to the inside of a cylinder, for wide panoramas, keeping verticals straight.
+  **Perspective** maps them to a flat surface, keeping straight lines straight (architecture); it can't show photos
+  spanning more than 150°, so it's unavailable for those.
+- **Boundary Warp** (0–100) bends the panorama's ragged edge out toward its rectangle, keeping the shapes of what's in
+  it as much as it can, so less is lost to cropping. At 100 the panorama fills (nearly) the whole rectangle.
+- **Auto Crop** crops away the edges the photos don't reach, to the largest rectangle they cover entirely. It's a
+  Develop crop on the whole panorama, so it can be widened again in Crop & Straighten.
+- **Auto Settings** starts the panorama with Develop's Auto Settings (tone), measured inside that rectangle.
+- **Create Stack** stacks the panorama on top of its sources, in the order they were taken, collapsed (or adds it to
+  the top of the stack the sources already share).
+
+Where the photos don't reach, the sheet shows a checkerboard and the merged photo is white (in Develop, thumbnails and
+exports). When a photo has no lens profile to apply, the sheet shows Lightroom's notice: for the best results, apply the
+lens's profile in Develop's Lens Corrections before merging. Photo ▸ Photo Merge ▸ Panorama with Previous Settings
+(`⌃⇧M`, or hold Shift in the menu) merges straight away with the last options used, without the sheet; Perspective
+becomes Spherical for photos it can't show.
+
+Each photo is decoded linearly with the earliest photo's white balance, its lens profile applied (the camera's built-in
+profile, its Lens Corrections profile in Develop, or the LensFun profile for its camera and lens), and scaled by its
+exposure (shutter speed, aperture and ISO) to the photos' average, as Lightroom's merges render. Corners found in each
+photo are matched between every pair, and the matches give each photo's rotation and the lens's focal length, refined
+together and levelled so the horizon is straight and verticals stand up. Seams follow where neighboring photos look
+most alike (a graph cut, so they go around things that moved, like water and leaves), brightness differences the
+exposures don't explain are evened out, and the photos are blended across the seams band by band (a Laplacian
+pyramid) on the GPU, in Core Image kernels (`PixelLoupe/Merge/PanoramaKernels.ci.metal`). The preview is the same
+merge at the sheet's size. Merge runs in the background with progress and Cancel in the Library's bottom bar, and
+selects the result when it's done. The panorama is a Linear DNG (16-bit floating point) at the photos' own resolution,
+up to Lightroom's limits (65,000 pixels on a side, 512 megapixels), saved beside the earliest photo as `<name>-Pano.dng`
+(`-Pano-2`, `-Pano-3`… when that name is taken). It takes the earliest photo's capture date, camera and shooting
+details, and every source's keywords; its rating, flag and label start empty. Only RAW photos from one camera, all the
+same size, can be merged. Lightroom's Fill Edges and HDR Panorama aren't available yet.
 
 ## Edit In (external editors)
 
@@ -688,6 +731,16 @@ the repository (about 40 photos); `Scripts/fetch-fidelity-fixtures.sh` unpacks a
 tuning `LightroomScales`: `SliderSweepFit` turns a slider sweep (−100…+100 against the PixelLoupe value that matched best) into a
 monotone table to paste in. The tests that check this tooling (published ΔE2000 data, SSIM, the report, the sweep fit) run with
 the normal suite; the comparison against real exports runs only when `PIXELLOUPE_FIDELITY_DIR` is set.
+
+## Panorama tests
+
+Photo Merge ▸ Panorama is checked in CI on synthetic panoramas (a textured scene photographed by a turning camera).
+Its tests on the RAW-95 sample photos (12 overlapping RAW photos, with Lightroom's Spherical and Cylindrical merges of
+them) run with `Scripts/panorama.sh [samples] [output]`, or whenever `PIXELLOUPE_PANORAMA_SAMPLES` names the photos'
+folder; they stay out of the normal suite because they keep the GPU busy long enough to starve the Develop tests that
+wait on renders. They check the alignment, the panorama's size against Lightroom's and how quickly the preview
+updates, then merge the photos at full resolution and write the DNGs, a comparison with Lightroom's merges and the
+timings (`timings.txt`: how long each step took and the memory used).
 
 ## Acknowledgments
 

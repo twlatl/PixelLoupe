@@ -50,41 +50,6 @@ nonisolated struct HDRMergeOptions: Codable, Equatable, Sendable {
     }
 }
 
-/// One of the bracketed exposures, with what the catalog knows about how it was taken.
-nonisolated struct HDRMergeSource: Sendable, Equatable {
-    var url: URL
-    /// Seconds, or 0 when unknown.
-    var exposureTime: Double
-    /// F-number, or 0.
-    var aperture: Double
-    var iso: Int
-    var make: String?
-    var model: String?
-    var lensModel: String? = nil
-    var focalLength = 0.0
-    var captureDate: Date? = nil
-
-    var name: String { url.lastPathComponent }
-}
-
-nonisolated enum HDRMergeError: LocalizedError, Equatable {
-    case tooFewPhotos
-    case notRaw(String)
-    case unreadable(String)
-    case differentSizes
-    case differentCameras
-
-    var errorDescription: String? {
-        switch self {
-        case .tooFewPhotos: "Select at least two photos to merge."
-        case .notRaw(let name): "“\(name)” isn’t a RAW photo. HDR merges need RAW files."
-        case .unreadable(let name): "“\(name)” can’t be read."
-        case .differentSizes: "The photos aren’t all the same size."
-        case .differentCameras: "The photos weren’t all taken with the same camera."
-        }
-    }
-}
-
 /// Where the merge found something moving between exposures (Deghost), 0…1, top row first.
 nonisolated struct GhostMask: @unchecked Sendable {
     var width: Int
@@ -136,7 +101,7 @@ nonisolated struct HDRMergeResult: Sendable {
 /// Not thread-safe: use one instance per task.
 nonisolated final class HDRMerger {
     struct Frame {
-        let source: HDRMergeSource
+        let source: PhotoMergeSource
         fileprivate let filter: CIRAWFilter
         /// How much brighter the exposure is than the reference (1 for the reference itself).
         fileprivate(set) var gain: Double
@@ -146,7 +111,7 @@ nonisolated final class HDRMerger {
     private(set) var frames: [Frame]
     /// The middle exposure: its white balance, look and metadata are the merged photo's.
     let referenceIndex: Int
-    var reference: HDRMergeSource { frames[referenceIndex].source }
+    var reference: PhotoMergeSource { frames[referenceIndex].source }
     let nativeSize: CGSize
     /// Something worth knowing before merging (the exposures barely differ), or nil.
     let warning: String?
@@ -167,23 +132,23 @@ nonisolated final class HDRMerger {
     private static let usableRange: ClosedRange<Float> = 0.03...0.9
     private static let bandRows = 512
 
-    init(sources: [HDRMergeSource]) throws {
-        guard sources.count >= 2 else { throw HDRMergeError.tooFewPhotos }
+    init(sources: [PhotoMergeSource]) throws {
+        guard sources.count >= 2 else { throw PhotoMergeError.tooFewPhotos }
         var frames: [Frame] = []
         var size: CGSize?
         for source in sources {
-            guard SupportedImageTypes.isRaw(source.url) else { throw HDRMergeError.notRaw(source.name) }
+            guard SupportedImageTypes.isRaw(source.url) else { throw PhotoMergeError.notRaw(source.name) }
             guard let filter = CIRAWFilter(imageURL: source.url), let output = filter.outputImage else {
-                throw HDRMergeError.unreadable(source.name)
+                throw PhotoMergeError.unreadable(source.name)
             }
-            guard size == nil || size == output.extent.size else { throw HDRMergeError.differentSizes }
+            guard size == nil || size == output.extent.size else { throw PhotoMergeError.differentSizes }
             size = output.extent.size
             frames.append(Frame(source: source, filter: filter, gain: 1))
         }
-        func camera(_ source: HDRMergeSource) -> String {
+        func camera(_ source: PhotoMergeSource) -> String {
             "\(source.make ?? "")|\(source.model ?? "")".lowercased()
         }
-        guard Set(sources.map(camera)).count == 1 else { throw HDRMergeError.differentCameras }
+        guard Set(sources.map(camera)).count == 1 else { throw PhotoMergeError.differentCameras }
         nativeSize = size ?? .zero
 
         let metered = sources.allSatisfy { $0.exposureTime > 0 && $0.aperture > 0 && $0.iso > 0 }

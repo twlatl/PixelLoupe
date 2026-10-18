@@ -58,8 +58,29 @@ nonisolated enum LinearDNGWriter {
         0.0176399, -0.0427706, 0.9421031,
     ]
 
+    /// Writes the DNG a row of tiles at a time (to a temporary file, moved into place when it's
+    /// complete), so a large merge isn't held in memory twice more while it's saved.
     static func write(_ image: LinearDNGImage, metadata: DNGMetadata, to url: URL) throws {
-        try data(for: image, metadata: metadata).write(to: url, options: .atomic)
+        let layout = Layout(image: image, metadata: metadata)
+        let temporary = url.deletingLastPathComponent().appending(path: ".\(UUID().uuidString)-\(url.lastPathComponent)")
+        guard FileManager.default.createFile(atPath: temporary.path(percentEncoded: false), contents: nil) else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: url.path(percentEncoded: false)])
+        }
+        do {
+            let handle = try FileHandle(forWritingTo: temporary)
+            defer { try? handle.close() }
+            try handle.write(contentsOf: layout.prefix)
+            for row in 0..<layout.tilesDown { try handle.write(contentsOf: layout.tiles(row: row, of: image)) }
+            try handle.close()
+            if FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
+                _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
+            } else {
+                try FileManager.default.moveItem(at: temporary, to: url)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: temporary)
+            throw error
+        }
     }
 
     /// The stops `BaselineExposure` adds back for pixels whose brightest value is `peak`.
@@ -67,29 +88,92 @@ nonisolated enum LinearDNGWriter {
         peak > 1 ? Double(log2(peak)) : 0
     }
 
+    /// The whole DNG in memory (what ``write(_:metadata:to:)`` writes).
     static func data(for image: LinearDNGImage, metadata: DNGMetadata) -> Data {
-        let headroom: Double
+        let layout = Layout(image: image, metadata: metadata)
+        var data = layout.prefix
+        for row in 0..<layout.tilesDown { data.append(layout.tiles(row: row, of: image)) }
+        return data
+    }
+
+    /// Where everything goes in the file: the header, IFD and EXIF directory, then the tiles, left to
+    /// right and top to bottom (those at the right and bottom edges padded with zeros).
+    private struct Layout {
         let scale: Float
-        if let given = image.headroom {
-            headroom = given
-            scale = 1
-        } else {
-            let peak = image.pixels.reduce(Float(0)) { max($0, Float($1)) }
-            headroom = Self.headroom(peak: peak)
-            scale = peak > 1 ? 1 / peak : 1
+        let tilesAcross: Int
+        let tilesDown: Int
+        let tileBytes: Int
+        /// Everything before the pixels.
+        let prefix: Data
+
+        init(image: LinearDNGImage, metadata: DNGMetadata) {
+            let headroom: Double
+            if let given = image.headroom {
+                headroom = given
+                scale = 1
+            } else {
+                let peak = image.pixels.reduce(Float(0)) { max($0, Float($1)) }
+                headroom = LinearDNGWriter.headroom(peak: peak)
+                scale = peak > 1 ? 1 / peak : 1
+            }
+            let tile = tileSize
+            tilesAcross = (image.width + tile - 1) / tile
+            tilesDown = (image.height + tile - 1) / tile
+            tileBytes = tile * tile * 3 * 2
+            let tileBytes = tileBytes
+            let tileOffsets = (0..<(tilesAcross * tilesDown)).map { UInt32($0 * tileBytes) }
+
+            var ifd = TIFFDirectory()
+            ifd.add(254, long: [0])
+            ifd.add(256, long: [UInt32(image.width)])
+            ifd.add(257, long: [UInt32(image.height)])
+            ifd.add(258, short: [16, 16, 16])
+            ifd.add(259, short: [1])
+            ifd.add(262, short: [34892])  // LinearRaw
+            if let make = metadata.make { ifd.add(271, ascii: make) }
+            if let model = metadata.model { ifd.add(272, ascii: model) }
+            ifd.add(274, short: [1])
+            ifd.add(277, short: [3])
+            ifd.add(284, short: [1])
+            ifd.add(322, long: [UInt32(tile)])
+            ifd.add(323, long: [UInt32(tile)])
+            ifd.addTiles(offsets: tileOffsets, counts: Array(repeating: UInt32(tileBytes), count: tileOffsets.count))
+            ifd.add(305, ascii: "PixelLoupe")
+            if let date = metadata.captureDate { ifd.add(306, ascii: exifDate(date, timeZone: metadata.timeZone)) }
+            ifd.add(339, short: [3, 3, 3])  // floating point
+            ifd.add(50706, byte: [1, 4, 0, 0])
+            ifd.add(50707, byte: [1, 4, 0, 0])
+            ifd.add(50708, ascii: [metadata.make, metadata.model].compactMap { $0 }.joined(separator: " ").nonEmpty ?? "PixelLoupe HDR")
+            ifd.add(50717, long: [1])
+            ifd.add(50721, srational: xyzToRec2020)
+            ifd.add(50728, rational: [1, 1, 1])
+            ifd.add(50730, srational: [metadata.baselineExposure + headroom])
+            ifd.add(50778, short: [21])  // D65
+
+            var exif = TIFFDirectory()
+            if metadata.exposureTime > 0 { exif.add(33434, rational: [metadata.exposureTime]) }
+            if metadata.aperture > 0 { exif.add(33437, rational: [metadata.aperture]) }
+            if metadata.iso > 0 { exif.add(34855, short: [UInt16(clamping: metadata.iso)]) }
+            exif.add(36864, undefined: Array("0231".utf8))
+            if let date = metadata.captureDate {
+                exif.add(36867, ascii: exifDate(date, timeZone: metadata.timeZone))
+                exif.add(36881, ascii: offsetString(for: date, timeZone: metadata.timeZone))
+            }
+            if metadata.focalLength > 0 { exif.add(37386, rational: [metadata.focalLength]) }
+            if let lens = metadata.lensModel { exif.add(42036, ascii: lens) }
+
+            prefix = TIFFDirectory.prefix(ifd: ifd, exif: exif)
         }
 
-        // Tiles left to right, top to bottom; those at the right and bottom edges are padded with zeros.
-        let tile = tileSize
-        let tilesAcross = (image.width + tile - 1) / tile, tilesDown = (image.height + tile - 1) / tile
-        let tileBytes = tile * tile * 3 * 2
-        var pixelData = Data(count: tilesAcross * tilesDown * tileBytes)
-        pixelData.withUnsafeMutableBytes { raw in
-            let output = raw.bindMemory(to: UInt16.self)
-            image.pixels.withUnsafeBufferPointer { input in
-                for tileY in 0..<tilesDown {
+        /// One row of tiles' pixels, as stored (half floats, little-endian).
+        func tiles(row tileY: Int, of image: LinearDNGImage) -> Data {
+            let tile = tileSize
+            var data = Data(count: tilesAcross * tileBytes)
+            data.withUnsafeMutableBytes { raw in
+                let output = raw.bindMemory(to: UInt16.self)
+                image.pixels.withUnsafeBufferPointer { input in
                     for tileX in 0..<tilesAcross {
-                        let base = (tileY * tilesAcross + tileX) * tile * tile * 3
+                        let base = tileX * tile * tile * 3
                         let columns = min(tile, image.width - tileX * tile)
                         for row in 0..<min(tile, image.height - tileY * tile) {
                             let from = ((tileY * tile + row) * image.width + tileX * tile) * 3
@@ -109,49 +193,8 @@ nonisolated enum LinearDNGWriter {
                     }
                 }
             }
+            return data
         }
-        let tileOffsets = (0..<(tilesAcross * tilesDown)).map { UInt32($0 * tileBytes) }
-
-        var ifd = TIFFDirectory()
-        ifd.add(254, long: [0])
-        ifd.add(256, long: [UInt32(image.width)])
-        ifd.add(257, long: [UInt32(image.height)])
-        ifd.add(258, short: [16, 16, 16])
-        ifd.add(259, short: [1])
-        ifd.add(262, short: [34892])  // LinearRaw
-        if let make = metadata.make { ifd.add(271, ascii: make) }
-        if let model = metadata.model { ifd.add(272, ascii: model) }
-        ifd.add(274, short: [1])
-        ifd.add(277, short: [3])
-        ifd.add(284, short: [1])
-        ifd.add(322, long: [UInt32(tile)])
-        ifd.add(323, long: [UInt32(tile)])
-        ifd.addTiles(offsets: tileOffsets, counts: Array(repeating: UInt32(tileBytes), count: tileOffsets.count))
-        ifd.add(305, ascii: "PixelLoupe")
-        if let date = metadata.captureDate { ifd.add(306, ascii: exifDate(date, timeZone: metadata.timeZone)) }
-        ifd.add(339, short: [3, 3, 3])  // floating point
-        ifd.add(50706, byte: [1, 4, 0, 0])
-        ifd.add(50707, byte: [1, 4, 0, 0])
-        ifd.add(50708, ascii: [metadata.make, metadata.model].compactMap { $0 }.joined(separator: " ").nonEmpty ?? "PixelLoupe HDR")
-        ifd.add(50717, long: [1])
-        ifd.add(50721, srational: xyzToRec2020)
-        ifd.add(50728, rational: [1, 1, 1])
-        ifd.add(50730, srational: [metadata.baselineExposure + headroom])
-        ifd.add(50778, short: [21])  // D65
-
-        var exif = TIFFDirectory()
-        if metadata.exposureTime > 0 { exif.add(33434, rational: [metadata.exposureTime]) }
-        if metadata.aperture > 0 { exif.add(33437, rational: [metadata.aperture]) }
-        if metadata.iso > 0 { exif.add(34855, short: [UInt16(clamping: metadata.iso)]) }
-        exif.add(36864, undefined: Array("0231".utf8))
-        if let date = metadata.captureDate {
-            exif.add(36867, ascii: exifDate(date, timeZone: metadata.timeZone))
-            exif.add(36881, ascii: offsetString(for: date, timeZone: metadata.timeZone))
-        }
-        if metadata.focalLength > 0 { exif.add(37386, rational: [metadata.focalLength]) }
-        if let lens = metadata.lensModel { exif.add(42036, ascii: lens) }
-
-        return TIFFDirectory.file(ifd: ifd, exif: exif, pixels: pixelData)
     }
 
     private static func exifDate(_ date: Date, timeZone: TimeZone?) -> String {
@@ -267,9 +310,9 @@ nonisolated private struct TIFFDirectory {
         return directory + extra
     }
 
-    /// A TIFF file: header, IFD0 (with a pointer to the EXIF directory), the EXIF directory, then the
-    /// pixel data.
-    static func file(ifd: TIFFDirectory, exif: TIFFDirectory, pixels: Data) -> Data {
+    /// The start of a TIFF file: header, IFD0 (with a pointer to the EXIF directory), the EXIF
+    /// directory and padding to a 4-byte boundary. The pixel data follows.
+    static func prefix(ifd: TIFFDirectory, exif: TIFFDirectory) -> Data {
         let header = Data([0x49, 0x49, 42, 0]) + bytes([UInt32(8)])
         // Lay out once with placeholder offsets to learn the sizes (they don't depend on the values).
         let ifdLength = ifd.encoded(at: 8, pixelsAt: 0, exifAt: 0).count
@@ -283,7 +326,6 @@ nonisolated private struct TIFFDirectory {
         file.append(ifd.encoded(at: 8, pixelsAt: pixelsOffset, exifAt: exifOffset))
         file.append(exif.encoded(at: exifOffset, pixelsAt: 0, exifAt: nil))
         file.append(Data(count: padding))
-        file.append(pixels)
         return file
     }
 }

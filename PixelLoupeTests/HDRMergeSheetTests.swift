@@ -39,7 +39,7 @@ struct HDRMergeSheetTests {
 
     @Test func clickZoomsTo100PercentAndBack() throws {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 400), styleMask: [.titled], backing: .buffered, defer: true)
-        let view = HDRPreviewView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+        let view = MergePreviewView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
         window.contentView = view
         view.photoSize = CGSize(width: 6000, height: 4000)
         view.image = NSImage(size: NSSize(width: 600, height: 400))

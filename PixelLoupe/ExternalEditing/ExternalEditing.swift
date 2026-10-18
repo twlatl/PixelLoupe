@@ -169,7 +169,7 @@ extension PhotoEditing {
         var added: [Photo] = []
         for (output, source) in pairs {
             let photo = Photo(context: context)
-            // The grid's fetched results must see the photo under the id it keeps after saving (see addMergedHDR).
+            // The grid's fetched results must see the photo under the id it keeps after saving (see addMergedPhoto).
             try? context.obtainPermanentIDs(for: [photo])
             let url = output.job.url
             let now = Date()

@@ -551,9 +551,9 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
     var exportTask: Task<Void, Never>?
     var lightroomReportController: LightroomImportReportWindowController?
     var lastExportDialog: ExportDialogController?
-    /// Photo ▸ Photo Merge ▸ HDR's merge, running in the background.
+    /// Photo ▸ Photo Merge's merge (HDR or Panorama), running in the background.
     var mergeTask: Task<Void, Never>?
-    var mergeSheet: HDRMergeSheetController?
+    var mergeSheet: NSWindowController?
     /// Photo ▸ Edit In's copies being written.
     var editInTask: Task<Void, Never>?
     var editInSheet: EditPhotoSheetController?
@@ -1051,7 +1051,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
             return exportTask == nil && window?.attachedSheet == nil && !state.selectedPhotoIDs.isEmpty
         case #selector(cancelExport(_:)):
             return exportTask != nil
-        case #selector(photoMergeHDR(_:)):
+        case #selector(photoMergeHDR(_:)), #selector(photoMergePanorama(_:)), #selector(photoMergePanoramaWithPreviousSettings(_:)):
             return mergeTask == nil && window?.attachedSheet == nil
                 && state.selectedPhotoIDs.count >= 2
                 && editing.photos(state.selectedPhotoIDs).filter { SupportedImageTypes.isRaw($0.fileURL) }.count >= 2

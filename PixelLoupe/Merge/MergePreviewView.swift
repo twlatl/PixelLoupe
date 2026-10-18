@@ -4,7 +4,7 @@ import AppKit
 /// around the click at 100% (one photo pixel per screen pixel), which can be dragged around. Another
 /// click fits the photo again. The 100% view starts as the fitted preview enlarged and sharpens when
 /// the full-resolution part (``showDetail(_:center:)``) arrives.
-final class HDRPreviewView: NSView {
+final class MergePreviewView: NSView {
     /// The whole photo, as merged at preview size.
     var image: NSImage? {
         didSet { needsDisplay = true }

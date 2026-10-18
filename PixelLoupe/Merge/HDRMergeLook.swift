@@ -53,7 +53,7 @@ actor HDRMergePreviewer {
     }
     private var cached: (key: Key, url: URL, mask: GhostMask?, headroom: Double?)?
 
-    init(sources: [HDRMergeSource]) throws {
+    init(sources: [PhotoMergeSource]) throws {
         merger = try HDRMerger(sources: sources)
         warning = merger.warning
         photoSize = merger.nativeSize
@@ -110,12 +110,12 @@ actor HDRMergePreviewer {
     /// white balance (As Shot), as in Lightroom. Auto Settings' look is in the merge itself.
     private func draw(_ url: URL, mask: GhostMask?, region: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1)) throws -> HDRMergePreview {
         try Task.checkCancellation()
-        guard let source = DevelopSource(url: url) else { throw HDRMergeError.unreadable(merger.reference.name) }
+        guard let source = DevelopSource(url: url) else { throw PhotoMergeError.unreadable(merger.reference.name) }
         var image = source.image(with: PhotoAdjustments(), scale: 1)
         if let mask { image = HDRMergeLook.overlaying(mask, on: image, region: region) }
         guard let colorSpace = CGColorSpace(name: CGColorSpace.displayP3),
               let cgImage = PhotoRenderer.context.createCGImage(image, from: image.extent, format: .RGBA8, colorSpace: colorSpace)
-        else { throw HDRMergeError.unreadable(merger.reference.name) }
+        else { throw PhotoMergeError.unreadable(merger.reference.name) }
         return HDRMergePreview(image: cgImage)
     }
 }

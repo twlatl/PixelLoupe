@@ -24,12 +24,13 @@ nonisolated enum AutoDevelop {
 
     /// Auto Settings: Exposure and Shadows (Develop's Auto for Light), then Whites and Blacks to put
     /// the brightest and darkest tones near the ends of the range, and Vibrance and Saturation for a
-    /// muted photo. `nil` when the file can't be read.
+    /// muted photo. `region` (a unit rectangle of the photo, origin bottom left) limits what's
+    /// measured, as for a panorama's edges. `nil` when the file can't be read.
     @concurrent
-    static func settings(for url: URL, adjustments: PhotoAdjustments) async -> PhotoAdjustments? {
+    static func settings(for url: URL, adjustments: PhotoAdjustments, region: CGRect? = nil) async -> PhotoAdjustments? {
         guard let source = DevelopSource(url: url) else { return nil }
         var result = adjustments
-        let auto = AdjustmentPipeline.autoLight(for: source, current: adjustments, context: PhotoRenderer.context)
+        let auto = AdjustmentPipeline.autoLight(for: source, current: adjustments, context: PhotoRenderer.context, region: region)
         result.light.isEnabled = true
         result.light.exposure = auto.exposure
         result.light.shadows = auto.shadows
@@ -38,7 +39,7 @@ nonisolated enum AutoDevelop {
         result.presence.vibrance = 0
         result.presence.saturation = 0
 
-        let image = source.image(with: result, scale: source.scale(toFit: samplePixels, adjustments: result))
+        let image = cropped(source.image(with: result, scale: source.scale(toFit: samplePixels, adjustments: result)), to: region)
         guard let statistics = toneStatistics(of: image) else { return result }
         let tones = autoTones(statistics)
         result.light.whites = tones.whites
@@ -47,6 +48,16 @@ nonisolated enum AutoDevelop {
         result.presence.vibrance = tones.vibrance
         result.presence.saturation = tones.saturation
         return result
+    }
+
+    /// The part of `image` a unit rectangle (origin bottom left) covers, or all of it.
+    static func cropped(_ image: CIImage, to region: CGRect?) -> CIImage {
+        guard let region else { return image }
+        let extent = image.extent
+        return image.cropped(to: CGRect(
+            x: extent.minX + region.minX * extent.width, y: extent.minY + region.minY * extent.height,
+            width: region.width * extent.width, height: region.height * extent.height
+        ).integral)
     }
 
     /// What Auto Settings looks at: the brightest and darkest tones (0.5% in from each end) and how
