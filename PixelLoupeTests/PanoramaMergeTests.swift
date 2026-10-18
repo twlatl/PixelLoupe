@@ -88,7 +88,9 @@ struct SyntheticPanorama {
     }
 }
 
-@Suite("Panorama merge")
+/// One test at a time: each merges on the GPU, and many at once starve the Develop tests that wait
+/// on renders.
+@Suite("Panorama merge", .serialized)
 struct PanoramaMergeTests {
     // MARK: Alignment
 
@@ -374,7 +376,7 @@ struct PanoramaMergeTests {
     }
 }
 
-@Suite("Panorama merge in the catalog")
+@Suite("Panorama merge in the catalog", .serialized)
 @MainActor
 struct PanoramaCatalogTests {
     /// A referenced catalog holding a synthetic panorama, the photos in file name order.
