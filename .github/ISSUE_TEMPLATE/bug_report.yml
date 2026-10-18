@@ -1,0 +1,39 @@
+name: Bug report
+description: Something in PixelLoupe doesn't work as it should.
+labels: [bug, needs-triage]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead. Screenshots help.
+      placeholder: |
+        1. Opened a catalog and selected a photo
+        2. Pressed D for Develop
+        3. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: PixelLoupe version
+      description: PixelLoupe ▸ About PixelLoupe (for example 0.1 (67)).
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: macOS 27.1
+    validations:
+      required: true
+  - type: input
+    id: camera
+    attributes:
+      label: Camera and file type
+      description: For problems with a photo, e.g. "Sony A7 IV, ARW". Attach a sample file if you can share one.
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Crash reports (from Console ▸ Crash Reports), catalog size, whether the photos are on an external drive, etc.
