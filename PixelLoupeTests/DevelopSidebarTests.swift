@@ -61,7 +61,12 @@ struct DevelopSidebarTests {
         #expect(lensIcon.accessibilityValue() as? String == "active")
         window.layoutIfNeeded()
         let lensPanel = try #require(window.contentView!.descendants.first { $0.accessibilityIdentifier() == "lensPanel" })
-        #expect(lensPanel.frame.height > 400, "the panel fills the sidebar: \(lensPanel.frame)")
+        // The panel fills the sidebar below the tool icons' line, whatever the window's height (CI screens are small).
+        let panelFrame = lensPanel.convert(lensPanel.bounds, to: nil)
+        let sidebarFrame = sidebar.convert(sidebar.bounds, to: nil)
+        #expect(abs(panelFrame.minY - sidebarFrame.minY) <= 1, "reaches the bottom of the sidebar: \(panelFrame) in \(sidebarFrame)")
+        #expect(panelFrame.maxY <= lineTop + 1 && lineTop - panelFrame.maxY < 20, "starts just below the line: \(panelFrame.maxY) vs \(lineTop)")
+        #expect(panelFrame.height > 100)
         #expect(!lensPanel.hasAmbiguousLayout && !histogram.hasAmbiguousLayout)
         #expect(abs(histogram.frame.height - (HistogramView.plotHeight + 6 + 16)) < 0.5)
     }

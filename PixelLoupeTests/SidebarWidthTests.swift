@@ -10,8 +10,8 @@ struct SidebarWidthTests {
     private func window(_ store: CatalogStore, defaults: UserDefaults, width: CGFloat = 1600) async throws -> (NSWindow, MainSplitViewController) {
         let split = MainSplitViewController(store: store, state: LibraryState(), defaults: defaults)
         split.isDraggingDivider = { false }
-        let window = NSWindow(contentViewController: split)
-        // Room for both sidebars at full width beside the Library's content.
+        let window = TestWindow(contentViewController: split)
+        // Room for both sidebars at full width beside the Library's content, whatever the screen's size.
         window.setContentSize(NSSize(width: width, height: 900))
         window.makeKeyAndOrderFront(nil)
         window.layoutIfNeeded()
