@@ -206,6 +206,15 @@ final class LibraryState {
         didSet { if mergeStatus != oldValue { notify(.importStatus) } }
     }
 
+    /// Which kind of merge `mergeStatus` is for.
+    var mergeKind = PhotoMergeKind.hdr
+
+    /// A note about the merge that just finished (a panorama that left photos out), shown where the
+    /// progress was for a few seconds.
+    var mergeMessage: String? {
+        didSet { if mergeMessage != oldValue { notify(.importStatus) } }
+    }
+
     /// Photo ▸ Edit In's progress writing copies, shown like import's.
     var editInStatus: ImportStatus? {
         didSet { if editInStatus != oldValue { notify(.importStatus) } }

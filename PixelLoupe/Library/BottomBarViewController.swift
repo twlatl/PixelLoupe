@@ -114,18 +114,22 @@ final class BottomBarViewController: NSViewController {
             progressLabel.stringValue = if exporting != nil {
                 "Exporting \(status.completed.formatted()) of \(status.total.formatted())"
             } else if merging != nil {
-                "Merging HDR"
+                state.mergeKind.progressTitle
             } else if editingIn != nil {
                 "Preparing \(status.total.formatted()) photo\(status.total == 1 ? "" : "s") for \(state.editInApplicationName)"
             } else {
                 "Importing \(status.completed.formatted()) of \(status.total.formatted())"
             }
+        } else if let message = state.mergeMessage {
+            progressIndicator.isHidden = true
+            progressLabel.isHidden = false
+            progressLabel.stringValue = message
         } else {
             progressIndicator.isHidden = true
             progressLabel.isHidden = true
         }
         cancelExportButton.isHidden = exporting == nil && merging == nil
-        let cancelTitle = exporting == nil ? "Cancel HDR Merge" : "Cancel Export"
+        let cancelTitle = exporting == nil ? state.mergeKind.cancelTitle : "Cancel Export"
         cancelExportButton.action = exporting == nil
             ? #selector(PixelLoupeActions.cancelPhotoMerge(_:)) : #selector(PixelLoupeActions.cancelExport(_:))
         cancelExportButton.toolTip = cancelTitle

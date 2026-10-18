@@ -29,25 +29,25 @@ struct PhotoMergeTests {
 
         func merge(_ ids: [NSManagedObjectID]? = nil, options: HDRMergeOptions = HDRMergeOptions()) async throws -> Photo {
             let ids = ids ?? self.ids
-            let destination = try #require(editing.hdrDestination(for: ids))
+            let destination = try #require(editing.mergeDestination(for: ids, kind: .hdr))
             let output = try await HDRMergeRunner.run(
-                sources: editing.hdrMergeSources(ids), options: options, destination: destination,
+                sources: editing.photoMergeSources(ids), options: options, destination: destination,
                 thumbnailDirectory: store.thumbnails.directory
             )
-            let id = try #require(editing.addMergedHDR(output, sources: ids, createsStack: options.createsStack))
+            let id = try #require(editing.addMergedPhoto(output, sources: ids, createsStack: options.createsStack))
             return photo(id)
         }
     }
 
     @Test func sourcesCarryTheCatalogsShootingDetails() async throws {
         let setup = try await Setup()
-        let sources = setup.editing.hdrMergeSources(setup.ids)
+        let sources = setup.editing.photoMergeSources(setup.ids)
         #expect(sources.map(\.url.lastPathComponent) == ["IMG_0.dng", "IMG_1.dng", "IMG_2.dng"])
         #expect(sources[1].exposureTime == 0.01 && sources[1].aperture == 8 && sources[1].iso == 100)
         #expect(sources[1].make == "Canon" && sources[1].model == "EOS R5")
         // A virtual copy is the same file, so it isn't merged twice.
         let copies = setup.editing.createVirtualCopies(of: [setup.ids[0]])
-        #expect(setup.editing.hdrMergeSources(setup.ids + copies).count == 3)
+        #expect(setup.editing.photoMergeSources(setup.ids + copies).count == 3)
     }
 
     @Test func mergedPhotoJoinsTheCatalogBesideItsSources() async throws {
@@ -121,24 +121,26 @@ struct PhotoMergeTests {
         #expect(!undo.canUndo)
     }
 
-    @Test func menusOfferHDRWithLightroomsShortcut() async throws {
+    @Test func menusOfferHDRAndPanoramaWithLightroomsShortcuts() async throws {
         let photoMenu = try #require(MainMenu.make().items.first { $0.title == "Photo" }?.submenu)
         let merge = try #require(photoMenu.items.first { $0.title == "Photo Merge" }?.submenu)
-        #expect(merge.items.map(\.title) == ["HDR…", "Panorama…"])
-        let hdr = merge.items[0], panorama = merge.items[1]
+        #expect(merge.items.map(\.title) == ["HDR…", "Panorama…", "Panorama with Previous Settings"])
+        let hdr = merge.items[0], panorama = merge.items[1], headless = merge.items[2]
         #expect(hdr.keyEquivalent == "h" && hdr.keyEquivalentModifierMask == .control)
-        // ⌃M is Lightroom's Panorama shortcut, left free until Panorama exists.
-        #expect(panorama.keyEquivalent.isEmpty)
+        #expect(panorama.keyEquivalent == "m" && panorama.keyEquivalentModifierMask == .control)
+        // Holding Shift turns Panorama… into the headless merge (⌃⇧M).
+        #expect(headless.isAlternate && headless.keyEquivalent == "m" && headless.keyEquivalentModifierMask == [.control, .shift])
 
         let setup = try await Setup()
         let controller = CatalogWindowController(store: setup.store)
-        #expect(!controller.responds(to: #selector(PixelLoupeActions.photoMergePanorama(_:))), "Panorama stays disabled")
-        controller.state.selectedPhotoIDs = [setup.ids[0]]
-        #expect(!controller.validateUserInterfaceItem(hdr), "needs two photos")
-        controller.state.selectedPhotoIDs = setup.ids
-        #expect(controller.validateUserInterfaceItem(hdr))
+        for item in [hdr, panorama, headless] {
+            controller.state.selectedPhotoIDs = [setup.ids[0]]
+            #expect(!controller.validateUserInterfaceItem(item), "\(item.title) needs two photos")
+            controller.state.selectedPhotoIDs = setup.ids
+            #expect(controller.validateUserInterfaceItem(item), "\(item.title)")
+        }
         let context = controller.rootViewController.main.library.grid.contextMenu()
-        #expect(context.items.first { $0.title == "Photo Merge" }?.submenu?.items.map(\.title) == ["HDR…", "Panorama…"])
+        #expect(context.items.first { $0.title == "Photo Merge" }?.submenu?.items.map(\.title) == ["HDR…", "Panorama…", "Panorama with Previous Settings"])
     }
 
     @Test func gridShowsTheMergedPhoto() async throws {
@@ -156,8 +158,8 @@ struct PhotoMergeTests {
 
     @Test func cancellingWritesNothing() async throws {
         let setup = try await Setup()
-        let destination = try #require(setup.editing.hdrDestination(for: setup.ids))
-        let sources = setup.editing.hdrMergeSources(setup.ids)
+        let destination = try #require(setup.editing.mergeDestination(for: setup.ids, kind: .hdr))
+        let sources = setup.editing.photoMergeSources(setup.ids)
         let directory = setup.store.thumbnails.directory
         let task = Task {
             try await HDRMergeRunner.run(sources: sources, options: HDRMergeOptions(), destination: destination, thumbnailDirectory: directory)

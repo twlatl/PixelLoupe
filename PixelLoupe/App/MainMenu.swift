@@ -51,6 +51,7 @@ import AppKit
     @objc optional func expandAllStacks(_ sender: Any?)
     @objc optional func photoMergeHDR(_ sender: Any?)
     @objc optional func photoMergePanorama(_ sender: Any?)
+    @objc optional func photoMergePanoramaWithPreviousSettings(_ sender: Any?)
     @objc optional func cancelPhotoMerge(_ sender: Any?)
     @objc optional func editInPrimary(_ sender: Any?)
     @objc optional func editInAdditional(_ sender: Any?)
@@ -132,12 +133,17 @@ enum MainMenu {
         return mainMenu
     }
 
-    /// Photo ▸ Photo Merge, also in the grid's context menu. HDR has Lightroom's ⌃H. Panorama is
-    /// coming later: nothing handles it yet, so it stays disabled (and Lightroom's ⌃M is left free).
+    /// Photo ▸ Photo Merge, also in the grid's context menu, with Lightroom's shortcuts: ⌃H for HDR,
+    /// ⌃M for Panorama, and ⌃⇧M (Panorama's alternate, shown while Shift is held) to merge a panorama
+    /// straight away with the last settings, without the preview.
     static func photoMergeItem() -> NSMenuItem {
         let menu = NSMenu(title: "Photo Merge")
         menu.addItem(item("HDR…", #selector(PixelLoupeActions.photoMergeHDR(_:)), "h", modifiers: .control))
-        menu.addItem(item("Panorama…", #selector(PixelLoupeActions.photoMergePanorama(_:))))
+        menu.addItem(item("Panorama…", #selector(PixelLoupeActions.photoMergePanorama(_:)), "m", modifiers: .control))
+        let headless = item("Panorama with Previous Settings", #selector(PixelLoupeActions.photoMergePanoramaWithPreviousSettings(_:)),
+                            "m", modifiers: [.control, .shift])
+        headless.isAlternate = true
+        menu.addItem(headless)
         return submenuItem(menu)
     }
 

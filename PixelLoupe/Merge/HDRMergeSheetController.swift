@@ -3,18 +3,18 @@ import AppKit
 /// Photo ▸ Photo Merge ▸ HDR's sheet, laid out like Lightroom's HDR Merge Preview: the merged photo on
 /// the left, updating as the options change, and the options on the right (Auto Align, Auto
 /// Settings, Deghost Amount, Show Deghost Overlay, Create Stack). Merge and Cancel sit centered below.
-/// Clicking the photo zooms to 100% to check the merge's detail (see ``HDRPreviewView``).
+/// Clicking the photo zooms to 100% to check the merge's detail (see ``MergePreviewView``).
 final class HDRMergeSheetController: NSWindowController, NSWindowDelegate {
     /// The options to merge with, or nil for Cancel.
     var onFinish: ((HDRMergeOptions?) -> Void)?
 
-    let sources: [HDRMergeSource]
+    let sources: [PhotoMergeSource]
     private(set) var options: HDRMergeOptions
 
     /// The well the preview sits in: the user's matte color with a medium gray border, so the sheet keeps
     /// its layout while the first preview loads.
     let previewWell = MatteView()
-    let previewView = HDRPreviewView()
+    let previewView = MergePreviewView()
     let spinner = NSProgressIndicator()
     let messageLabel = NSTextField(wrappingLabelWithString: "")
     let autoAlignCheckbox = NSButton(checkboxWithTitle: "Auto Align", target: nil, action: nil)
@@ -32,7 +32,7 @@ final class HDRMergeSheetController: NSWindowController, NSWindowDelegate {
     /// Why the photos can't be merged, once known.
     private var problem: String?
 
-    init(sources: [HDRMergeSource], options: HDRMergeOptions) {
+    init(sources: [PhotoMergeSource], options: HDRMergeOptions) {
         self.sources = sources
         self.options = options
         let window = NSWindow(
@@ -238,7 +238,7 @@ final class HDRMergeSheetController: NSWindowController, NSWindowDelegate {
     }
 
     @concurrent
-    private nonisolated static func makePreviewer(_ sources: [HDRMergeSource]) async throws -> HDRMergePreviewer {
+    private nonisolated static func makePreviewer(_ sources: [PhotoMergeSource]) async throws -> HDRMergePreviewer {
         try HDRMergePreviewer(sources: sources)
     }
 

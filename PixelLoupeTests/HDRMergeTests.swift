@@ -9,7 +9,7 @@ struct Bracket {
     let width: Int
     let height: Int
     let scene: (Int, Int) -> Float
-    var sources: [HDRMergeSource] = []
+    var sources: [PhotoMergeSource] = []
 
     /// A textured scene from about 0.007 to 3.9 (two stops over white), shot at `stops` around the
     /// middle exposure. `shifts` moves each frame's content (pixels right and down), `ghostIn` adds a
@@ -49,7 +49,7 @@ struct Bracket {
                 dng.iso = 100
             }
             try LinearDNGWriter.write(image, metadata: dng, to: url)
-            sources.append(HDRMergeSource(
+            sources.append(PhotoMergeSource(
                 url: url, exposureTime: dng.exposureTime, aperture: dng.aperture, iso: dng.iso,
                 make: dng.make, model: dng.model, captureDate: dng.captureDate
             ))
@@ -182,18 +182,18 @@ struct HDRMergeTests {
 
     @Test func rejectsSelectionsThatCannotMerge() throws {
         let bracket = try Bracket()
-        #expect(throws: HDRMergeError.tooFewPhotos) { try HDRMerger(sources: [bracket.sources[0]]) }
+        #expect(throws: PhotoMergeError.tooFewPhotos) { try HDRMerger(sources: [bracket.sources[0]]) }
 
         let jpeg = try Fixtures.writeJPEG(to: bracket.directory.url.appending(path: "a.jpg"), width: 480, height: 320)
-        let jpegSource = HDRMergeSource(url: jpeg, exposureTime: 0.01, aperture: 8, iso: 100, make: "Canon", model: "EOS R5")
-        #expect(throws: HDRMergeError.notRaw("a.jpg")) { try HDRMerger(sources: [bracket.sources[0], jpegSource]) }
+        let jpegSource = PhotoMergeSource(url: jpeg, exposureTime: 0.01, aperture: 8, iso: 100, make: "Canon", model: "EOS R5")
+        #expect(throws: PhotoMergeError.notRaw("a.jpg")) { try HDRMerger(sources: [bracket.sources[0], jpegSource]) }
 
         let small = try Bracket(width: 400, height: 320, name: "SMALL")
-        #expect(throws: HDRMergeError.differentSizes) { try HDRMerger(sources: [bracket.sources[0], small.sources[1]]) }
+        #expect(throws: PhotoMergeError.differentSizes) { try HDRMerger(sources: [bracket.sources[0], small.sources[1]]) }
 
         var other = bracket.sources[1]
         other.model = "EOS R6"
-        #expect(throws: HDRMergeError.differentCameras) { try HDRMerger(sources: [bracket.sources[0], other]) }
+        #expect(throws: PhotoMergeError.differentCameras) { try HDRMerger(sources: [bracket.sources[0], other]) }
     }
 
     @Test func warnsWhenExposuresMatch() throws {

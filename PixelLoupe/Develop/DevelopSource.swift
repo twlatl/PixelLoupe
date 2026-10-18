@@ -347,12 +347,13 @@ nonisolated enum AdjustmentPipeline {
     }
 
     /// Suggested Light settings: exposure to bring average brightness to middle gray, plus the
-    /// shadow/highlight balance Core Image's auto-enhance recommends.
-    static func autoLight(for source: DevelopSource, current: PhotoAdjustments, context: CIContext) -> PhotoAdjustments.Light {
+    /// shadow/highlight balance Core Image's auto-enhance recommends. `region` (a unit rectangle,
+    /// origin bottom left) limits what's measured.
+    static func autoLight(for source: DevelopSource, current: PhotoAdjustments, context: CIContext, region: CGRect? = nil) -> PhotoAdjustments.Light {
         var neutral = current
         neutral.light = PhotoAdjustments.Light()
         let scale = source.scale(toFit: 512)
-        let image = source.baseImage(with: neutral, scale: scale)
+        let image = AutoDevelop.cropped(source.baseImage(with: neutral, scale: scale), to: region)
 
         var light = PhotoAdjustments.Light()
         if let averageFilter = CIFilter(name: "CIAreaAverage", parameters: [
