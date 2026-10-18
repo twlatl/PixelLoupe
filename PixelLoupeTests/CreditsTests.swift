@@ -1,0 +1,15 @@
+import Foundation
+import Testing
+@testable import PixelLoupe
+
+/// The About window's credits and the bundled data's license ship with the app (THIRD_PARTY_NOTICES.md).
+@Suite("Credits")
+struct CreditsTests {
+    @Test func theAboutWindowCreditsLensFunAndTheLicenseShips() throws {
+        let bundle = Bundle(for: Photo.self)
+        let credits = try String(contentsOf: try #require(bundle.url(forResource: "Credits", withExtension: "html")), encoding: .utf8)
+        #expect(credits.contains("LensFun") && credits.contains("CC BY-SA 3.0") && credits.contains("MIT License"))
+        let license = try String(contentsOf: try #require(bundle.url(forResource: "LensFun-LICENSE", withExtension: "txt")), encoding: .utf8)
+        #expect(license.contains("COMMONS PUBLIC LICENSE"))
+    }
+}

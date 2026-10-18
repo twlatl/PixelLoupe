@@ -1,0 +1,31 @@
+# Third-party notices
+
+PixelLoupe's own code is released under the [MIT License](LICENSE). It includes, or works with, the following
+material from others.
+
+## Bundled with the app
+
+### LensFun lens database
+
+- **What:** the camera and lens calibration data in the app's `Resources/LensFun/*.xml`, used by Develop's Lens
+  Corrections.
+- **From:** the [LensFun project](https://github.com/lensfun/lensfun) (`data/db`), © the LensFun contributors.
+- **License:** [Creative Commons Attribution-ShareAlike 3.0 Unported](https://creativecommons.org/licenses/by-sa/3.0/).
+  The full text ships next to the data, as `LensFun-LICENSE.txt`.
+- **Changes:** none. The XML files are LensFun's own, unmodified, so they're distributed as part of a collection rather
+  than as an adaptation. If they're ever edited, the edited files must stay under CC BY-SA 3.0 and say what changed.
+- **Not used:** LensFun's code (LGPL). PixelLoupe reads the database itself and implements the published lens models
+  (distortion, chromatic aberration, vignetting) in its own code.
+
+## Used but not bundled
+
+- **Adobe camera profiles and presets:** PixelLoupe reads profiles and Lightroom / Camera Raw presets that the user
+  imports from their own Adobe installation. None of Adobe's files ship with PixelLoupe. "Adobe", "Lightroom" and
+  "Camera Raw" are trademarks of Adobe Inc.; PixelLoupe isn't affiliated with or endorsed by Adobe.
+- **Apple frameworks and SF Symbols:** used from the system under Apple's terms; nothing of Apple's is bundled.
+
+## Keeping this file up to date
+
+Add an entry here (and to `Resources/Credits.html`, which the About window shows) whenever a dependency,
+dataset or asset from someone else is added, such as a Swift package. Its license must be compatible with
+distributing PixelLoupe under the MIT License.

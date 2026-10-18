@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0" lastSavedToolsVersion="24000" systemVersion="27A000" minimumToolsVersion="Automatic" sourceLanguage="Swift" userDefinedModelVersionIdentifier="3">
+    <entity name="Folder" representedClassName="Folder" syncable="YES">
+        <attribute name="name" attributeType="String" defaultValueString=""/>
+        <attribute name="path" attributeType="String" defaultValueString=""/>
+        <relationship name="children" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="Folder" inverseName="parent" inverseEntity="Folder"/>
+        <relationship name="parent" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Folder" inverseName="children" inverseEntity="Folder"/>
+        <relationship name="photos" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="Photo" inverseName="folder" inverseEntity="Photo"/>
+        <fetchIndex name="byPathIndex">
+            <fetchIndexElement property="path" type="Binary" order="ascending"/>
+        </fetchIndex>
+    </entity>
+    <entity name="Photo" representedClassName="Photo" syncable="YES">
+        <attribute name="adjustmentsData" optional="YES" attributeType="Binary"/>
+        <attribute name="cameraMake" optional="YES" attributeType="String"/>
+        <attribute name="cameraModel" optional="YES" attributeType="String"/>
+        <attribute name="captureDate" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="dedupeKey" optional="YES" attributeType="String"/>
+        <attribute name="editDate" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="fileName" attributeType="String" defaultValueString=""/>
+        <attribute name="filePath" attributeType="String" defaultValueString=""/>
+        <attribute name="fileSize" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="fileType" attributeType="String" defaultValueString=""/>
+        <attribute name="flag" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="id" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="importDate" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="lensModel" optional="YES" attributeType="String"/>
+        <attribute name="metadataData" optional="YES" attributeType="Binary"/>
+        <attribute name="orientation" attributeType="Integer 16" defaultValueString="1" usesScalarValueType="YES"/>
+        <attribute name="originalPath" optional="YES" attributeType="String"/>
+        <attribute name="pixelHeight" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="pixelWidth" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="rating" attributeType="Integer 16" minValueString="0" maxValueString="5" defaultValueString="0" usesScalarValueType="YES"/>
+        <relationship name="folder" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Folder" inverseName="photos" inverseEntity="Folder"/>
+        <relationship name="tags" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="Tag" inverseName="photos" inverseEntity="Tag"/>
+        <fetchIndex name="byCaptureDateIndex">
+            <fetchIndexElement property="captureDate" type="Binary" order="ascending"/>
+        </fetchIndex>
+        <fetchIndex name="byFilePathIndex">
+            <fetchIndexElement property="filePath" type="Binary" order="ascending"/>
+        </fetchIndex>
+        <fetchIndex name="byDedupeKeyIndex">
+            <fetchIndexElement property="dedupeKey" type="Binary" order="ascending"/>
+        </fetchIndex>
+        <fetchIndex name="byRatingIndex">
+            <fetchIndexElement property="rating" type="Binary" order="ascending"/>
+        </fetchIndex>
+    </entity>
+    <entity name="Tag" representedClassName="Tag" syncable="YES">
+        <attribute name="name" attributeType="String" defaultValueString=""/>
+        <relationship name="photos" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="Photo" inverseName="tags" inverseEntity="Photo"/>
+        <fetchIndex name="byNameIndex">
+            <fetchIndexElement property="name" type="Binary" order="ascending"/>
+        </fetchIndex>
+    </entity>
+</model>
