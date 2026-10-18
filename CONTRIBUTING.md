@@ -36,7 +36,9 @@ updated when the work lands.
 4. Open a pull request against `main`. Describe what changed and why, how you tested it, what you didn't test, and
    what a reviewer should check by hand. Update the README for any new shortcut or user-facing behavior.
 
-`main` is protected: every change goes through a pull request.
+`main` is protected: every change goes through a pull request. Each pull request is built and its unit tests run by
+GitHub Actions (the **Build and test** check, `.github/workflows/ci.yml`), with compiler warnings treated as errors; it
+must pass before merging. If it fails, the run's test results are attached to it for download.
 
 ## Third-party code and data
 

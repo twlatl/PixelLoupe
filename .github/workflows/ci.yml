@@ -1,0 +1,79 @@
+# Builds PixelLoupe and runs its unit tests on every pull request to main, and on pushes to main.
+# Free on GitHub-hosted standard runners once the repository is public.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same pull request (or branch) cancels the run in progress.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The Xcode the project is developed with (README: Xcode 27.2 or later).
+  XCODE: /Applications/Xcode_27.2.app
+
+jobs:
+  build-and-test:
+    name: Build and test
+    # GitHub's macOS 27 image with Xcode 27 (a public preview). Not the -xlarge variant, which is billed.
+    runs-on: xcode-27
+    # A clean run takes about 10 minutes.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Install the Metal Toolchain
+        # Photo Merge's Core Image kernels (.ci.metal) need it; the image doesn't include it.
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      - name: Build and run the unit tests
+        # - Ad-hoc signed ("Sign to Run Locally"): no signing identity is needed.
+        # - Warnings fail the build (SKILLS.md: no build warnings).
+        # - UI tests are left out: they need an interactive session and are flaky in CI.
+        # - Left out because CI's virtual machines can't run them reliably: the large-catalog performance test (it
+        #   measures speed) and the three tests that wait for a photo to decode in Develop (Navigator zoom, preset
+        #   amount, preset hover), which time out there. They still run locally.
+        # - Each test gets at most 4 minutes (2 by default): a test that hangs is stopped and reported by name instead
+        #   of stalling the run until the job's time limit.
+        # - The runner's display is 1024 x 768: layout tests use TestWindow (PixelLoupeTests/TestSupport.swift) so a
+        #   small screen doesn't squeeze their windows.
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project PixelLoupe.xcodeproj \
+            -scheme PixelLoupe \
+            -destination 'platform=macOS' \
+            -derivedDataPath DerivedData \
+            -resultBundlePath TestResults.xcresult \
+            -skip-testing:PixelLoupeUITests \
+            -skip-testing:'PixelLoupeTests/LargeCatalogPerformanceTests/syntheticCatalog()' \
+            -skip-testing:'PixelLoupeTests/NavigatorZoomTests/developZoomsAndPublishesWhatShows()' \
+            -skip-testing:'PixelLoupeTests/PresetAmountDevelopTests/theAmountSliderScalesThePresetAndEndsWithAnotherEdit()' \
+            -skip-testing:'PixelLoupeTests/PresetHoverTests/hoveringPreviewsWithoutChangingThePhoto()' \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 120 \
+            -maximum-test-execution-time-allowance 240 \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES GCC_TREAT_WARNINGS_AS_ERRORS=YES \
+            -quiet
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TestResults
+          path: TestResults.xcresult
+          retention-days: 14

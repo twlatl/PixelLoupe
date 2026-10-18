@@ -1,8 +1,15 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 @testable import PixelLoupe
+
+/// A window that keeps the size a test gives it. macOS shrinks a window to fit its screen, and CI machines have small
+/// virtual displays (GitHub's macOS runners are 1024 × 768), so layout tests that need a big window use this.
+final class TestWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+}
 
 /// A temporary directory removed when the value is deallocated.
 final class TemporaryDirectory {
