@@ -1,7 +1,8 @@
 # PixelLoupe
-A very nice raw editor/photo catalog app for the Mac
+A raw photo editor and catalog for the Mac, modeled on Lightroom Classic. Free and open source.
 
-Before contributing, read [SKILLS.md](SKILLS.md) for the project's rules.
+Found a bug or want a feature? [Open an issue](https://github.com/twlatl/PixelLoupe/issues/new/choose). Want to help with
+the code? Read [CONTRIBUTING.md](CONTRIBUTING.md) and [SKILLS.md](SKILLS.md), the project's rules.
 
 ## Requirements
 

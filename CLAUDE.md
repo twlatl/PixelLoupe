@@ -6,7 +6,7 @@ Project rules for people and agents are in `SKILLS.md`. Read it before making ch
 
 ### Issue tracker
 
-Issues are tracked in Jira (project `RAW` on pixegen.atlassian.net) through the Atlassian connector; GitHub holds only code and PRs. See `docs/agents/issue-tracker.md`.
+Work is tracked in Jira (project `RAW` on pixegen.atlassian.net) through the Atlassian connector. GitHub (`twlatl/PixelLoupe`) holds the code and PRs, and takes bug reports and feature requests from the public as GitHub issues, which are triaged into Jira. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

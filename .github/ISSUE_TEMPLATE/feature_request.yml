@@ -1,0 +1,20 @@
+name: Feature request
+description: Something PixelLoupe should do.
+labels: [enhancement, needs-triage]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+      description: The task or problem, rather than a particular solution.
+    validations:
+      required: true
+  - type: textarea
+    id: lightroom
+    attributes:
+      label: How does Lightroom Classic do it?
+      description: If Lightroom has this, how it works there (menus, shortcuts, screenshots). PixelLoupe follows Lightroom where it has the same feature.
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?

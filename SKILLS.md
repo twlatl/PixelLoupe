@@ -72,5 +72,6 @@ clunky. When choosing between designs, prefer the faster one.
 
 - Branch per Jira ticket, named after the ticket key and summary, e.g. `RAW-6-filmstrip`.
 - **Pull requests should be as verbose as possible:** what changed and why, how it works, decisions and trade-offs,
-  how it was tested, anything not tested, and anything reviewers should check by hand. Link the Jira ticket.
+  how it was tested, anything not tested, and anything reviewers should check by hand. Link the Jira ticket, and the
+  GitHub issue it fixes if there is one (`Fixes #123`).
 - **Don't add a tagline about which AI agent helped write or create the code** in pull requests.
