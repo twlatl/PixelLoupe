@@ -253,6 +253,10 @@ extension PhotoEditing {
             }
         }
         store.save()
+        // The thumbnail written with the file is the panorama as merged; redraw it with its settings.
+        if !output.adjustments.isDefault {
+            store.thumbnails.regenerate(id: output.id, source: output.url, adjustments: output.adjustments)
+        }
         return photo.objectID
     }
 }
