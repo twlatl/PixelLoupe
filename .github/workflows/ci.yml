@@ -1,0 +1,68 @@
+# Builds PixelLoupe and runs its unit tests on every pull request to main, and on pushes to main.
+# Free on GitHub-hosted standard runners once the repository is public.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same pull request (or branch) cancels the run in progress.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The Xcode the project is developed with (README: Xcode 27.2 or later).
+  XCODE: /Applications/Xcode_27.2.app
+
+jobs:
+  build-and-test:
+    name: Build and test
+    # GitHub's macOS 27 image with Xcode 27 (a public preview). Not the -xlarge variant, which is billed.
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Install the Metal Toolchain
+        # Photo Merge's Core Image kernels (.ci.metal) need it; the image doesn't include it.
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      - name: Build and run the unit tests
+        # - Ad-hoc signed ("Sign to Run Locally"): no signing identity is needed.
+        # - Warnings fail the build (SKILLS.md: no build warnings).
+        # - UI tests are left out: they need an interactive session and are flaky in CI.
+        # - The large-catalog performance test only measures speed, which CI machines don't keep steady.
+        # - Timing-sensitive tests (render waits, Navigator zoom) get one retry before failing the run.
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project PixelLoupe.xcodeproj \
+            -scheme PixelLoupe \
+            -destination 'platform=macOS' \
+            -derivedDataPath DerivedData \
+            -resultBundlePath TestResults.xcresult \
+            -skip-testing:PixelLoupeUITests \
+            -skip-testing:'PixelLoupeTests/LargeCatalogPerformanceTests/syntheticCatalog()' \
+            -retry-tests-on-failure -test-iterations 2 \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES GCC_TREAT_WARNINGS_AS_ERRORS=YES \
+            -quiet
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TestResults
+          path: TestResults.xcresult
+          retention-days: 14

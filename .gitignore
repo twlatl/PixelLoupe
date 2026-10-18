@@ -63,3 +63,7 @@ fastlane/test_output
 
 # macOS
 .DS_Store
+
+# Build output from command-line builds and CI (.github/workflows/ci.yml)
+/DerivedData/
+*.xcresult
