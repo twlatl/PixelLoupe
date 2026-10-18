@@ -342,6 +342,10 @@ struct KeywordFocusTests {
         let (controller, directory) = try window(selectingFirstOf: 2)
         defer { controller.close(); _ = directory }
         let window = try #require(controller.window)
+        // The window's usual width. A small screen (CI's is 1024 × 768) squeezes it when it's shown, and in a
+        // window that narrow the toolbar can't keep the control centered.
+        window.setFrame(NSRect(x: 0, y: 0, width: 1400, height: 700), display: true)
+        window.layoutIfNeeded()
         func button() -> NSButton? {
             window.toolbar?.items.compactMap(\.view).first { $0.accessibilityIdentifier() == "rightSidebarToolbarButton" } as? NSButton
         }
