@@ -16,6 +16,9 @@ final class RecentCatalogsListView: NSView, NSTableViewDataSource, NSTableViewDe
     private var heightConstraint: NSLayoutConstraint!
     /// The catalog last clicked, for `openRecentCatalog(_:)`.
     private(set) var recentCatalogURL: URL?
+    /// Where Open Recent is sent: up the responder chain to the app delegate (nil), or a stand-in in tests,
+    /// which mustn't open catalogs or show the app's error alerts.
+    var actionTarget: AnyObject?
 
     init(recents: RecentCatalogs = .shared) {
         self.recents = recents
@@ -115,7 +118,7 @@ final class RecentCatalogsListView: NSView, NSTableViewDataSource, NSTableViewDe
     func open(row: Int) {
         guard entries.indices.contains(row), entries[row].isAvailable else { return }
         recentCatalogURL = entries[row].url
-        NSApp.sendAction(#selector(PixelLoupeActions.openRecentCatalog(_:)), to: nil, from: self)
+        NSApp.sendAction(#selector(PixelLoupeActions.openRecentCatalog(_:)), to: actionTarget, from: self)
     }
 
     // MARK: - Table

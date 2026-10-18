@@ -257,10 +257,25 @@ struct RecentCatalogsListTests {
         let recents = RecentCatalogs(defaults: scratch.defaults)
         recents.noteOpened(iceland, name: "Iceland 2025")
         let list = RecentCatalogsListView(recents: recents)
+        // A stand-in for the app delegate: the real one would try to open the (empty) folder and show a modal
+        // error alert, which blocks the test run (it did on CI).
+        let opener = RecentCatalogOpener()
+        list.actionTarget = opener
         list.open(row: 0)
         #expect(list.recentCatalogURL?.standardizedFileURL == iceland.standardizedFileURL)
+        #expect(opener.opened.map(\.standardizedFileURL) == [iceland.standardizedFileURL], "sends Open Recent with the catalog")
         list.open(row: 5)
         #expect(list.recentCatalogURL?.standardizedFileURL == iceland.standardizedFileURL, "rows out of range are ignored")
+        #expect(opener.opened.count == 1)
+    }
+
+    /// Records Open Recent instead of opening the catalog.
+    private final class RecentCatalogOpener: NSObject {
+        private(set) var opened: [URL] = []
+
+        @objc func openRecentCatalog(_ sender: Any?) {
+            if let url = (sender as? RecentCatalogSender)?.recentCatalogURL { opened.append(url) }
+        }
     }
 
     @Test func menuItemsCarryTheirCatalog() {
