@@ -99,6 +99,17 @@ Vision-based alignment and optional deghosting. The merged frame is in linear Re
 [LinearDNGWriter.swift](PixelLoupe/Merge/LinearDNGWriter.swift) saves it as a linear DNG, which re-enters the normal
 pipeline through `CIRAWFilter`.
 
+## 6. Photo Merge ▸ Panorama (RAW-95)
+
+[PanoramaMerger.swift](PixelLoupe/Merge/PanoramaMerger.swift) decodes each photo through `CIRAWFilter` the same way
+(linear, with the earliest photo's white balance), applies its lens profile, and scales it to the photos' average
+exposure. [PanoramaAligner.swift](PixelLoupe/Merge/PanoramaAligner.swift) finds the photos' rotations on 1536-pixel
+copies. The warp onto the panorama, the blend and Boundary Warp are Core Image kernels, so at full resolution the RAW
+engine decodes only the parts of each photo the panorama's blocks need. The result is saved as a linear DNG through
+[LinearDNGWriter.swift](PixelLoupe/Merge/LinearDNGWriter.swift). `CIRAWFilter` ignores DNG transparency masks
+(including those in Lightroom's own panoramas), so the areas the photos don't reach are written white rather than
+transparent.
+
 ## What this means in practice
 
 Demosaicing, camera color matrices and the base rendering come from Apple and change with macOS updates. Lightroom

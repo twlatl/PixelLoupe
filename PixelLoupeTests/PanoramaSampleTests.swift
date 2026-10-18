@@ -17,7 +17,7 @@ struct PanoramaSampleTests {
         let samples = try PanoramaSamples()
         let start = Date()
         let merger = try PanoramaMerger(sources: samples.sources)
-        print("Panorama samples: read and aligned in \(String(format: "%.1f", Date().timeIntervalSince(start)))s")
+        PanoramaSamples.note("read and aligned in \(String(format: "%.1f", Date().timeIntervalSince(start)))s")
         #expect(merger.mergedCount == 12)
         // About 200° across: too wide for Perspective, as in Lightroom.
         #expect(!merger.allowsPerspective)
@@ -54,7 +54,7 @@ struct PanoramaSampleTests {
             start = Date()
             let warped = try merger.merge(options: options, scale: scale)
             let warpTime = Date().timeIntervalSince(start)
-            print("Panorama samples: \(projection.title) preview \(first.image.width)×\(first.image.height) in \(String(format: "%.2f", firstTime))s, Auto Crop \(String(format: "%.2f", againTime))s, Boundary Warp 100 \(String(format: "%.2f", warpTime))s")
+            PanoramaSamples.note("\(projection.title) preview \(first.image.width)×\(first.image.height) in \(String(format: "%.2f", firstTime))s, Auto Crop \(String(format: "%.2f", againTime))s, Boundary Warp 100 \(String(format: "%.2f", warpTime))s")
             #expect(againTime < 1)
             if let output = PanoramaSamples.output {
                 try PanoramaSamples.write(first, to: output.appending(path: "\(projection.rawValue)-preview.jpg"))
@@ -65,6 +65,35 @@ struct PanoramaSampleTests {
             #expect(covered.reduce(0, +) / Float(covered.count) > 0.97)
             let plain = try #require(first.coverage).values
             #expect(plain.reduce(0, +) / Float(plain.count) < 0.97)
+        }
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["PIXELLOUPE_PANORAMA_FULL"] != nil), .timeLimit(.minutes(20)))
+    func fullResolutionMergesMatchLightroomsShape() async throws {
+        let samples = try PanoramaSamples()
+        let output = PanoramaSamples.output ?? FileManager.default.temporaryDirectory.appending(path: "PanoramaSamples")
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        for (projection, lightroom) in [(PanoramaProjection.spherical, "LR Spherical Output.dng"), (.cylindrical, "LR Cylindrical.dng")] {
+            var options = PanoramaMergeOptions()
+            options.projection = projection
+            options.autoSettings = false
+            let destination = output.appending(path: "DSC00245-\(projection.title).dng")
+            try? FileManager.default.removeItem(at: destination)
+            let start = Date()
+            let result = try await PanoramaMergeRunner.run(
+                sources: samples.sources, options: options, destination: destination, thumbnailDirectory: output
+            )
+            let seconds = Date().timeIntervalSince(start)
+            var usage = rusage()
+            getrusage(RUSAGE_SELF, &usage)
+            PanoramaSamples.note("\(projection.title) full merge \(result.output.pixelWidth)×\(result.output.pixelHeight) in \(String(format: "%.1f", seconds))s, peak memory \(usage.ru_maxrss / 1_048_576) MB")
+            #expect(result.mergedCount == 12)
+            let theirs = try #require(CIRAWFilter(imageURL: PanoramaSamples.folder!.appending(path: lightroom))).nativeSize
+            let ours = CGSize(width: result.output.pixelWidth, height: result.output.pixelHeight)
+            PanoramaSamples.note("\(projection.title) ours \(Int(ours.width))×\(Int(ours.height)) (\(String(format: "%.3f", ours.width / ours.height)):1), Lightroom's \(Int(theirs.width))×\(Int(theirs.height)) (\(String(format: "%.3f", theirs.width / theirs.height)):1)")
+            #expect(abs(ours.height - theirs.height) / theirs.height < 0.03)
+            try PanoramaSamples.compare(destination, with: PanoramaSamples.folder!.appending(path: lightroom),
+                                        to: output.appending(path: "\(projection.rawValue)-compare.jpg"))
         }
     }
 }
@@ -78,6 +107,22 @@ nonisolated struct PanoramaSamples {
         var isDirectory: ObjCBool = false
         guard environment["CI"] == nil, FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else { return nil }
         return URL(filePath: path, directoryHint: .isDirectory)
+    }
+
+    /// Prints a timing or size, and adds it to `timings.txt` in the output folder.
+    static func note(_ line: String) {
+        print("Panorama samples: \(line)")
+        guard let output else { return }
+        try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let url = output.appending(path: "timings.txt")
+        let text = Data("\(line)\n".utf8)
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(text)
+            try? handle.close()
+        } else {
+            try? text.write(to: url)
+        }
     }
 
     static var output: URL? {
@@ -111,6 +156,36 @@ nonisolated struct PanoramaSamples {
             focalLength: shooting.focalLength ?? 0,
             captureDate: (exif[kCGImagePropertyExifDateTimeOriginal] as? String).flatMap(formatter.date)
         )
+    }
+
+    /// Ours above Lightroom's, each drawn the way PixelLoupe first shows a DNG, 3000 pixels across,
+    /// and a strip of each at 100% from the middle.
+    static func compare(_ ours: URL, with theirs: URL, to url: URL) throws {
+        let context = PhotoRenderer.context
+        func drawn(_ url: URL, width: CGFloat) throws -> CIImage {
+            let source = try #require(DevelopSource(url: url))
+            let image = source.image(with: PhotoAdjustments(), scale: width / source.nativeSize.width)
+            return image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
+        }
+        func detail(_ url: URL) throws -> CIImage {
+            let source = try #require(DevelopSource(url: url))
+            let image = source.image(with: PhotoAdjustments(), scale: 1)
+            let middle = CGRect(x: image.extent.midX - 750, y: image.extent.midY - 300, width: 1500, height: 600)
+            return image.cropped(to: middle).transformed(by: CGAffineTransform(translationX: -middle.minX, y: -middle.minY))
+        }
+        let top = try drawn(ours, width: 3000), bottom = try drawn(theirs, width: 3000)
+        let oursDetail = try detail(ours), theirsDetail = try detail(theirs)
+        let gap: CGFloat = 20
+        let height = top.extent.height + bottom.extent.height + 600 + 3 * gap
+        var canvas = CIImage(color: CIColor(red: 0.2, green: 0.2, blue: 0.2)).cropped(to: CGRect(x: 0, y: 0, width: 3000, height: height))
+        canvas = bottom.transformed(by: CGAffineTransform(translationX: 0, y: 600 + gap)).composited(over: canvas)
+        canvas = top.transformed(by: CGAffineTransform(translationX: 0, y: 600 + bottom.extent.height + 2 * gap)).composited(over: canvas)
+        canvas = oursDetail.composited(over: canvas)
+        canvas = theirsDetail.transformed(by: CGAffineTransform(translationX: 1500, y: 0)).composited(over: canvas)
+        let cg = try #require(context.createCGImage(canvas, from: canvas.extent, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)))
+        let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, cg, [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
+        #expect(CGImageDestinationFinalize(destination))
     }
 
     /// The merge as a JPEG, drawn the way PixelLoupe first shows it (via a temporary DNG and the
