@@ -129,18 +129,26 @@ nonisolated enum PanoramaMergeRunner {
         sources: [PhotoMergeSource], options: PanoramaMergeOptions, destination: URL, thumbnailDirectory: URL,
         progress: @escaping @Sendable (Double) -> Void = { _ in }
     ) async throws -> Result {
-        let merger = try PanoramaMerger(sources: sources)
+        let result: PanoramaMergeResult, adjustments: PhotoAdjustments, metadata: DNGMetadata
+        let mergedCount: Int, referenceURL: URL
+        do {
+            let merger = try PanoramaMerger(sources: sources)
+            try Task.checkCancellation()
+            progress(0.1)
+            var options = options
+            if options.projection == .perspective, !merger.allowsPerspective { options.projection = .spherical }
+            let scratch = FileManager.default.temporaryDirectory.appending(path: "PixelLoupe-Panorama-\(UUID().uuidString)", directoryHint: .isDirectory)
+            defer { try? FileManager.default.removeItem(at: scratch) }
+            adjustments = try await merger.startingAdjustments(options: options, directory: scratch)
+            progress(0.15)
+            result = try merger.merge(options: options, scale: 1) { progress(0.15 + $0 * 0.75) }
+            metadata = merger.dngMetadata()
+            mergedCount = merger.mergedCount
+            referenceURL = merger.reference.url
+        }
+        // The merger (its RAW decoders and Core Image caches) is gone before the DNG is written.
         try Task.checkCancellation()
-        progress(0.1)
-        var options = options
-        if options.projection == .perspective, !merger.allowsPerspective { options.projection = .spherical }
-        let scratch = FileManager.default.temporaryDirectory.appending(path: "PixelLoupe-Panorama-\(UUID().uuidString)", directoryHint: .isDirectory)
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let adjustments = try await merger.startingAdjustments(options: options, directory: scratch)
-        progress(0.15)
-        let result = try merger.merge(options: options, scale: 1) { progress(0.15 + $0 * 0.75) }
-        try Task.checkCancellation()
-        try LinearDNGWriter.write(result.image, metadata: merger.dngMetadata(), to: destination)
+        try LinearDNGWriter.write(result.image, metadata: metadata, to: destination)
 
         let id = UUID()
         try? ThumbnailStore.generateThumbnail(from: destination, to: ThumbnailStore.url(for: id, in: thumbnailDirectory))
@@ -150,10 +158,10 @@ nonisolated enum PanoramaMergeRunner {
             (a.element.captureDate ?? .distantFuture, a.offset) < (b.element.captureDate ?? .distantFuture, b.offset)
         }
         let output = PhotoMergeOutput(
-            id: id, url: destination, referenceURL: merger.reference.url, stackOrder: taken.map(\.element.url),
+            id: id, url: destination, referenceURL: referenceURL, stackOrder: taken.map(\.element.url),
             pixelWidth: result.image.width, pixelHeight: result.image.height, fileSize: fileSize, adjustments: adjustments
         )
-        return Result(output: output, mergedCount: merger.mergedCount, photoCount: sources.count)
+        return Result(output: output, mergedCount: mergedCount, photoCount: sources.count)
     }
 }
 
