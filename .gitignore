@@ -67,3 +67,6 @@ fastlane/test_output
 # Build output from command-line builds and CI (.github/workflows/ci.yml)
 /DerivedData/
 *.xcresult
+
+# Disk images from Scripts/release.sh (.github/workflows/release.yml)
+/build/
