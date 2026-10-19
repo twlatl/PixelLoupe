@@ -47,11 +47,11 @@ jobs:
         # - UI tests are left out: they need an interactive session and are flaky in CI.
         # - Left out because CI's virtual machines can't run them reliably: the large-catalog performance test (it
         #   measures speed) and the three tests that wait for a photo to decode in Develop (Navigator zoom, preset
-        #   amount, preset hover), which time out there. They still run locally.
-        # - Each test gets 4 minutes: a test that hangs is stopped and reported by name instead of stalling the run
-        #   until the job's time limit. The clock includes the time a test waits for the main actor, where most tests
-        #   run one at a time, so on these virtual machines tests that take a fraction of a second alone showed
-        #   100-120 s; 2 minutes stopped whichever happened to wait longest.
+        #   amount, preset hover), which take over a minute each there (RAW-111). They still run locally.
+        # - Each test gets 2 minutes (at most 4, if it asks): a test that hangs is stopped and reported by name instead
+        #   of stalling the run until the job's time limit. The unit tests run one at a time (the scheme's
+        #   PixelLoupeTests isn't parallelizable): nearly all of them need the main actor, so running them in parallel
+        #   saved almost nothing and made each test's clock count its wait for the others (RAW-111).
         # - The runner's display is 1024 x 768: layout tests use TestWindow (PixelLoupeTests/TestSupport.swift) so a
         #   small screen doesn't squeeze their windows.
         run: |
@@ -68,7 +68,7 @@ jobs:
             -skip-testing:'PixelLoupeTests/PresetAmountDevelopTests/theAmountSliderScalesThePresetAndEndsWithAnotherEdit()' \
             -skip-testing:'PixelLoupeTests/PresetHoverTests/hoveringPreviewsWithoutChangingThePhoto()' \
             -test-timeouts-enabled YES \
-            -default-test-execution-time-allowance 240 \
+            -default-test-execution-time-allowance 120 \
             -maximum-test-execution-time-allowance 240 \
             DEVELOPMENT_TEAM= \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=YES GCC_TREAT_WARNINGS_AS_ERRORS=YES \
