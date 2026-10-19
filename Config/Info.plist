@@ -108,5 +108,7 @@
 	</array>
 	<key>SUFeedURL</key>
 	<string>https://github.com/twlatl/PixelLoupe/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>6PrRsTj46bS3Q4J4nhgeTBx4ybvqJu4xdzy8hlqwjhs=</string>
 </dict>
 </plist>
