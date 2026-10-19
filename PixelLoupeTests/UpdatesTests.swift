@@ -79,35 +79,42 @@ struct UpdatesTests {
 
     // MARK: - The feed
 
-    private static let repository = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+    nonisolated private static let repository = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
 
     struct ScriptFailed: Error { let message: String }
 
     /// Runs Scripts/appcast.sh with a release's metadata and notes, returning the feed it writes.
-    private func appcast(notes: String, metadata: [String: Any]) throws -> XMLDocument {
+    private func appcast(notes: String, metadata: [String: Any]) async throws -> XMLDocument {
         let directory = try TemporaryDirectory()
         let metadataURL = directory.url.appending(path: "PixelLoupe-1.2.0.appcast.json")
         try JSONSerialization.data(withJSONObject: metadata).write(to: metadataURL)
         let notesURL = directory.url.appending(path: "notes.md")
         try Data(notes.utf8).write(to: notesURL)
+        let (status, output, errors) = try await Self.run(
+            ["Scripts/appcast.sh", metadataURL.path(percentEncoded: false), "v1.2.0",
+             notesURL.path(percentEncoded: false), "2026-10-19T13:05:00Z"])
+        guard status == 0 else { throw ScriptFailed(message: String(decoding: errors, as: UTF8.self)) }
+        return try XMLDocument(data: output)
+    }
 
+    /// Runs a script with bash from the repository, off the main actor: the other tests run there, and waiting with
+    /// waitUntilExit() would run them inside this one's wait. (The output is small enough to read once it has exited.)
+    @concurrent private static func run(_ arguments: [String]) async throws -> (status: Int32, output: Data, errors: Data) {
         let process = Process()
         process.executableURL = URL(filePath: "/bin/bash")
-        process.currentDirectoryURL = Self.repository
-        process.arguments = ["Scripts/appcast.sh", metadataURL.path(percentEncoded: false), "v1.2.0",
-                             notesURL.path(percentEncoded: false), "2026-10-19T13:05:00Z"]
+        process.currentDirectoryURL = repository
+        process.arguments = arguments
         process.environment = ["PATH": "/usr/bin:/bin", "GITHUB_REPOSITORY": "twlatl/PixelLoupe"]
-        let output = Pipe()
+        let output = Pipe(), errors = Pipe()
         process.standardOutput = output
-        let errors = Pipe()
         process.standardError = errors
-        try process.run()
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw ScriptFailed(message: String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+        return try await withCheckedThrowingContinuation { continuation in
+            process.terminationHandler = { process in
+                continuation.resume(returning: (process.terminationStatus, output.fileHandleForReading.readDataToEndOfFile(),
+                                                errors.fileHandleForReading.readDataToEndOfFile()))
+            }
+            do { try process.run() } catch { continuation.resume(throwing: error) }
         }
-        return try XMLDocument(data: data)
     }
 
     private let metadata: [String: Any] = [
@@ -115,9 +122,9 @@ struct UpdatesTests {
         "file": "PixelLoupe-1.2.0.dmg", "length": 5_033_473, "edSignature": "UbREz+C8AvRLxA+Wg315abc==",
     ]
 
-    @Test func theFeedOffersTheReleaseWithItsNotes() throws {
+    @Test func theFeedOffersTheReleaseWithItsNotes() async throws {
         let notes = "## What's Changed\n* Previous Import by @twlatl\n* An odd line: a < b & c ]]> d"
-        let feed = try appcast(notes: notes, metadata: metadata)
+        let feed = try await appcast(notes: notes, metadata: metadata)
         let item = try #require(feed.rootElement()?.elements(forName: "channel").first?.elements(forName: "item").first)
         func text(_ name: String) -> String? { item.elements(forName: name).first?.stringValue }
 
@@ -139,16 +146,16 @@ struct UpdatesTests {
         #expect(enclosure.attribute(forName: "sparkle:edSignature")?.stringValue == "UbREz+C8AvRLxA+Wg315abc==")
     }
 
-    @Test func aReleaseWithoutNotesHasNoDescription() throws {
-        let feed = try appcast(notes: "  \n", metadata: metadata)
+    @Test func aReleaseWithoutNotesHasNoDescription() async throws {
+        let feed = try await appcast(notes: "  \n", metadata: metadata)
         let item = try #require(feed.rootElement()?.elements(forName: "channel").first?.elements(forName: "item").first)
         #expect(item.elements(forName: "description").isEmpty)
     }
 
-    @Test func metadataThatWouldBreakTheFeedIsRefused() throws {
+    @Test func metadataThatWouldBreakTheFeedIsRefused() async throws {
         var broken = metadata
         broken["shortVersion"] = "1.2.0\"><evil"
-        let error = #expect(throws: ScriptFailed.self) { try appcast(notes: "Notes", metadata: broken) }
+        let error = await #expect(throws: ScriptFailed.self) { _ = try await appcast(notes: "Notes", metadata: broken) }
         #expect(error?.message.contains("unexpected version") == true)
     }
 }
