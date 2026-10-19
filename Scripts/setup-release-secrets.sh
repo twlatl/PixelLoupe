@@ -238,6 +238,42 @@ sparkle_tools() {
   printf '%s' "$bin"
 }
 
+# Whether $1 is an EdDSA (Ed25519) public key as Sparkle writes it: 32 bytes in base64.
+is_public_key() { [[ "$1" =~ ^[A-Za-z0-9+/]{43}=$ ]]; }
+
+# The public half of the keychain's Sparkle key ($SPARKLE_ACCOUNT), or nothing. generate_keys -p prints its
+# "no key" error on standard output, so neither its output nor its status alone is trusted.
+keychain_public_key() {
+  local key
+  key=$("$SPARKLE_BIN/generate_keys" --account "$SPARKLE_ACCOUNT" -p 2>/dev/null) || return 1
+  is_public_key "$key" || return 1
+  printf '%s' "$key"
+}
+
+# set_plist_key KEY [PLIST] makes SUPublicEDKey KEY in the Info.plist (default Config/Info.plist), replacing the value
+# it has or adding it after SUFeedURL, as text so the rest of the file stays as it is. Fails unless it reads back.
+set_plist_key() {
+  local key="$1" plist="${2:-Config/Info.plist}"
+  is_public_key "$key" || return 1
+  if grep -q "<key>SUPublicEDKey</key>" "$plist"; then
+    perl -0pi -e 's#(<key>SUPublicEDKey</key>\s*<string>)[^<]*(</string>)#${1}'"$key"'${2}#' "$plist"
+  else
+    perl -0pi -e 's#(\n(\s*)<key>SUFeedURL</key>\s*<string>[^<]*</string>)#$1\n$2<key>SUPublicEDKey</key>\n$2<string>'"$key"'</string>#' "$plist"
+  fi
+  [[ "$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" "$plist" 2>/dev/null)" == "$key" ]]
+}
+
+# export_checked_key DIR PUBLIC_KEY exports the keychain's Sparkle key to DIR/sparkle.key, then checks it's the private
+# half of PUBLIC_KEY by signing a small file with it and verifying that the way the app will.
+export_checked_key() {
+  local dir="$1" public_key="$2" signature
+  (umask 077 && "$SPARKLE_BIN/generate_keys" --account "$SPARKLE_ACCOUNT" -x "$dir/sparkle.key" >/dev/null 2>&1) || return 1
+  [[ -s "$dir/sparkle.key" ]] || return 1
+  printf PixelLoupe > "$dir/probe"
+  signature=$("$SPARKLE_BIN/sign_update" --ed-key-file "$dir/sparkle.key" -p "$dir/probe" 2>/dev/null) || return 1
+  xcrun swift Scripts/verify-update-signature.swift "$dir/probe" "$signature" "$public_key" >/dev/null 2>&1
+}
+
 # ask_file KEY "Prompt" asks until KEY names a file that exists.
 ask_file() {
   local key="$1" prompt="$2" value
@@ -400,7 +436,11 @@ if [[ ! -x "$SPARKLE_BIN/generate_keys" ]]; then
   exit 1
 fi
 PLIST_KEY=$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" Config/Info.plist 2>/dev/null || true)
-KEYCHAIN_KEY=$("$SPARKLE_BIN/generate_keys" --account "$SPARKLE_ACCOUNT" -p 2>/dev/null || true)
+if [[ -n "$PLIST_KEY" ]] && ! is_public_key "$PLIST_KEY"; then
+  warn "Config/Info.plist's SUPublicEDKey isn't a public key (\"$PLIST_KEY\"), so it'll be replaced."
+  PLIST_KEY=""
+fi
+KEYCHAIN_KEY=$(keychain_public_key || true)
 if [[ -z "$KEYCHAIN_KEY" ]]; then
   if [[ -n "$PLIST_KEY" ]]; then
     warn "Config/Info.plist has a key ($PLIST_KEY), but its private half isn't in this Mac's keychain."
@@ -411,17 +451,19 @@ if [[ -z "$KEYCHAIN_KEY" ]]; then
   fi
   say "There's no key yet. macOS may ask to let generate_keys use your keychain: allow it."
   confirm "Make the key now?" || exit 1
-  "$SPARKLE_BIN/generate_keys" --account "$SPARKLE_ACCOUNT" >/dev/null
-  KEYCHAIN_KEY=$("$SPARKLE_BIN/generate_keys" --account "$SPARKLE_ACCOUNT" -p)
+  "$SPARKLE_BIN/generate_keys" --account "$SPARKLE_ACCOUNT" >/dev/null 2>&1 || true
+  if ! KEYCHAIN_KEY=$(keychain_public_key); then
+    warn "generate_keys didn't make the key, or it can't be read back. If macOS asked for keychain access,"
+    warn "allow it; then run this again."
+    exit 1
+  fi
 fi
 step "Public key: $KEYCHAIN_KEY"
 if [[ -z "$PLIST_KEY" ]]; then
-  # Added as text after SUFeedURL, so the rest of the file stays as it is.
-  perl -0pi -e 's#(\n(\s*)<key>SUFeedURL</key>\s*<string>[^<]*</string>)#$1\n$2<key>SUPublicEDKey</key>\n$2<string>'"$KEYCHAIN_KEY"'</string>#' Config/Info.plist
-  if [[ "$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" Config/Info.plist 2>/dev/null)" == "$KEYCHAIN_KEY" ]]; then
-    step "Added it to Config/Info.plist as SUPublicEDKey. ${BOLD}Commit that change.${RESET}"
+  if set_plist_key "$KEYCHAIN_KEY"; then
+    step "Put it in Config/Info.plist as SUPublicEDKey. ${BOLD}Commit that change.${RESET}"
   else
-    warn "Couldn't add it to Config/Info.plist; add SUPublicEDKey = $KEYCHAIN_KEY there by hand."
+    warn "Couldn't put it in Config/Info.plist; set SUPublicEDKey to $KEYCHAIN_KEY there by hand."
     SKIPPED+=("SUPublicEDKey in Config/Info.plist: $KEYCHAIN_KEY")
   fi
 elif [[ "$PLIST_KEY" != "$KEYCHAIN_KEY" ]]; then
@@ -432,10 +474,17 @@ else
   step "Config/Info.plist already has it."
 fi
 if ! keep_existing SPARKLE_ED_PRIVATE_KEY; then
+  say "Exporting the key for GitHub and checking it signs for that public key…"
   EXPORT_DIR=$(mktemp -d)
-  (umask 077 && "$SPARKLE_BIN/generate_keys" --account "$SPARKLE_ACCOUNT" -x "$EXPORT_DIR/sparkle.key" >/dev/null)
-  set_secret SPARKLE_ED_PRIVATE_KEY "$(cat "$EXPORT_DIR/sparkle.key")"
-  rm -rf "$EXPORT_DIR"
+  if export_checked_key "$EXPORT_DIR" "$KEYCHAIN_KEY"; then
+    set_secret SPARKLE_ED_PRIVATE_KEY "$(cat "$EXPORT_DIR/sparkle.key")"
+    rm -rf "$EXPORT_DIR"
+  else
+    rm -rf "$EXPORT_DIR"
+    warn "Couldn't export the key, or it doesn't sign for $KEYCHAIN_KEY. If macOS asked for keychain"
+    warn "access, allow it; then run this again."
+    exit 1
+  fi
 fi
 say ""
 note "Back the key up, for example in a password manager:"
