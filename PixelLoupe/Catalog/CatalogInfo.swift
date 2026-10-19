@@ -44,6 +44,8 @@ nonisolated struct CatalogViewState: Codable, Equatable, Sendable {
 
     /// The collection shown in the grid (instead of a folder).
     var collectionID: UUID?
+    /// Whether the grid shows Previous Import (instead of a folder or collection).
+    var showsPreviousImport = false
     /// Lightroom's target collection: where B adds photos.
     var targetCollectionID: UUID?
     /// Whether the starter smart collections have been made (so deleting them sticks).
@@ -64,6 +66,7 @@ nonisolated struct CatalogViewState: Codable, Equatable, Sendable {
         folderPath = try container.decodeIfPresent(String.self, forKey: .folderPath)
         selectedPhotos = try container.decodeIfPresent([UUID].self, forKey: .selectedPhotos) ?? []
         collectionID = try container.decodeIfPresent(UUID.self, forKey: .collectionID)
+        showsPreviousImport = try container.decodeIfPresent(Bool.self, forKey: .showsPreviousImport) ?? false
         targetCollectionID = try container.decodeIfPresent(UUID.self, forKey: .targetCollectionID)
         createdDefaultCollections = try container.decodeIfPresent(Bool.self, forKey: .createdDefaultCollections) ?? false
     }

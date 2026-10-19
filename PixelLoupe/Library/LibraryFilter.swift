@@ -6,6 +6,8 @@ nonisolated struct LibraryFilter: Equatable, Sendable {
         case allPhotos
         /// A folder and all of its subfolders.
         case folder(path: String)
+        /// The photos of the catalog's most recent import (see `Photo.latestImportID(in:)`).
+        case previousImport(id: UUID)
         /// A collection, smart collection or collection set, with what it contains.
         case collection(id: UUID, content: CollectionContent)
         /// Photos whose Lightroom settings weren't fully imported for a reason (the import report's
@@ -62,6 +64,8 @@ nonisolated struct LibraryFilter: Equatable, Sendable {
             predicates.append(NSPredicate(
                 format: "folder.path == %@ OR folder.path BEGINSWITH %@", path, path + "/"
             ))
+        case .previousImport(let id):
+            predicates.append(NSPredicate(format: "importID == %@", id as CVarArg))
         case .collection(_, let content):
             predicates.append(content.predicate)
         case .importDifference(let reason):

@@ -105,6 +105,34 @@ struct ImportServiceTests {
         #expect(again.skippedDuplicates == 2)
     }
 
+    @Test func eachImportGivesItsPhotosOneImportID() async throws {
+        let directory = try TemporaryDirectory()
+        // More photos than one batch saves, so the import spans several saves.
+        let first = try directory.subdirectory("First")
+        for index in 0..<40 {
+            try Fixtures.writeJPEG(to: first.appending(path: String(format: "IMG_%04d.jpg", index)), width: 8, height: 6)
+        }
+        let second = try directory.subdirectory("Second")
+        try Fixtures.writeJPEG(to: second.appending(path: "DSC_0001.jpg"), width: 8, height: 6)
+
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "Test.pixelloupe"))
+        let service = ImportService(store: store)
+        #expect(try await service.importPhotos(from: [first]).imported == 40)
+        #expect(try await service.importPhotos(from: [second]).imported == 1)
+
+        let imported = try photos(in: store)
+        let firstIDs = Set(imported.filter { $0.fileName.hasPrefix("IMG_") }.map(\.importID))
+        let secondIDs = Set(imported.filter { $0.fileName.hasPrefix("DSC_") }.map(\.importID))
+        #expect(firstIDs.count == 1 && secondIDs.count == 1)
+        let secondID = try #require(secondIDs.first ?? nil)
+        #expect(firstIDs != secondIDs && !firstIDs.contains(nil))
+        #expect(Photo.latestImportID(in: store.viewContext) == secondID)
+
+        // An import that adds nothing (all duplicates) leaves Previous Import as it was.
+        #expect(try await service.importPhotos(from: [first]).imported == 0)
+        #expect(Photo.latestImportID(in: store.viewContext) == secondID)
+    }
+
     @Test func folderWithOnlySubfoldersImportsEverythingRecursively() async throws {
         let directory = try TemporaryDirectory()
         let shoots = try directory.subdirectory("Shoots")

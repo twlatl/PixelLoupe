@@ -47,6 +47,16 @@ enum LibraryTimings {
 
         let all = try gridFetch(LibraryFilter(), "All Photographs fetch + identifiers")
 
+        // Previous Import: finding the newest import (each sidebar reload does), then showing it.
+        let latestImport = record("Sidebar: Previous Import's newest import", { $0 == nil ? "none" : "found" }) {
+            Photo.latestImportID(in: context)
+        }
+        if let latestImport {
+            var previousImport = LibraryFilter()
+            previousImport.scope = .previousImport(id: latestImport)
+            _ = try gridFetch(previousImport, "Previous Import fetch + identifiers")
+        }
+
         // Sidebar: the folder tree and counts.
         _ = try record("Sidebar: folder counts (grouped fetch)", { "\($0) folders" }) { () -> Int in
             let count = NSExpressionDescription()
@@ -263,6 +273,8 @@ enum SyntheticCatalog {
             try context.save()
 
             let base = Date(timeIntervalSince1970: 1_300_000_000)
+            // Imports of 500 photos an hour apart.
+            let importIDs = (0...(photos / 500)).map { _ in UUID() }
             let cameras = ["Canon EOS 5D", "Canon EOS R5", "Apple iPhone 5", "NIKON D850"]
             for index in 0..<photos {
                 let photo = Photo(context: context)
@@ -274,6 +286,7 @@ enum SyntheticCatalog {
                 photo.folder = folder
                 photo.captureDate = base.addingTimeInterval(Double(index) * 600)
                 photo.importDate = base.addingTimeInterval(Double(index / 500) * 3_600)
+                photo.importID = importIDs[index / 500]
                 photo.editDate = photo.importDate
                 photo.rating = index % 25 == 0 ? Int16(1 + (index / 25) % 5) : 0
                 photo.flag = index % 400 == 0 ? 1 : 0
@@ -311,7 +324,16 @@ extension LargeCatalogPerformanceTests {
             try SyntheticCatalog.make(at: directory.url.appending(path: "Synthetic.pixelloupe", directoryHint: .isDirectory))
         }
         let (_, opened) = LibraryTimings.time("Open catalog") { () -> Int in (try? store.viewContext.count(for: Photo.fetchRequest())) ?? 0 }
-        let measurements = [built, opened] + (try LibraryTimings.run(store: store)) + (try LibraryTimings.runViews(store: store))
+        var measurements = [built, opened] + (try LibraryTimings.run(store: store)) + (try LibraryTimings.runViews(store: store))
+        // A catalog from before import ids were recorded: finding it has no Previous Import is as quick.
+        let clear = NSBatchUpdateRequest(entityName: "Photo")
+        clear.propertiesToUpdate = [#keyPath(Photo.importID): NSExpression(forConstantValue: nil)]
+        try store.viewContext.execute(clear)
+        let (latest, noImports) = LibraryTimings.time("Sidebar: no Previous Import (no import ids)") {
+            Photo.latestImportID(in: store.viewContext)
+        }
+        #expect(latest == nil)
+        measurements.append(noImports)
         print(LibraryTimings.format(measurements))
         if let output = ProcessInfo.processInfo.environment["PIXELLOUPE_PERF_REPORT"] {
             try LibraryTimings.format(measurements).write(toFile: output + ".synthetic", atomically: true, encoding: .utf8)
@@ -327,6 +349,9 @@ extension LargeCatalogPerformanceTests {
         #expect(try seconds("Smart collection fetch: Five Stars") < 0.3)
         #expect(try seconds("Smart collection count: Without Keywords") < 0.3)
         #expect(try seconds("Sidebar: folder counts") < 0.3)
+        #expect(try seconds("Sidebar: Previous Import") < 0.3)
+        #expect(try seconds("Previous Import fetch") < 0.3)
+        #expect(try seconds("Sidebar: no Previous Import") < 0.3)
         #expect(try seconds("Filter: rating") < 0.3)
         #expect(try seconds("Set rating on") < 1.0)
         #expect(try seconds("Grid: create + load view") < 1.0)

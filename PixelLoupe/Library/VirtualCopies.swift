@@ -66,6 +66,7 @@ nonisolated extension Photo {
         fileSize = source.fileSize
         captureDate = source.captureDate
         importDate = source.importDate
+        importID = source.importID
         editDate = Date()
         rating = source.rating
         flag = source.flag

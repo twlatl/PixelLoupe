@@ -193,6 +193,7 @@ final class FilmstripViewController: NSViewController, NSCollectionViewDelegate 
     private func updateInfo() {
         let scope = switch state.filter.scope {
         case .allPhotos: "All Photographs"
+        case .previousImport: "Previous Import"
         case .folder(let path): "Folder: \((path as NSString).lastPathComponent)"
         case .collection(let id, _): "Collection: \(PhotoCollection.with(id: id, in: store.viewContext)?.name ?? "")"
         case .importDifference(let reason): "Lightroom import: \(LightroomImportReport.title(forReason: reason))"

@@ -13,6 +13,10 @@ nonisolated final class Photo: NSManagedObject {
     @NSManaged var fileSize: Int64
     @NSManaged var captureDate: Date
     @NSManaged var importDate: Date
+    /// The import that added the photo (model v15). Every photo from one import shares it, and the
+    /// newest is what Previous Import shows. `nil` for photos from before v15 and for photos made in
+    /// the app (merges, Edit In copies).
+    @NSManaged var importID: UUID?
     @NSManaged var editDate: Date
     @NSManaged var rating: Int16
     @NSManaged var flag: Int16
@@ -87,6 +91,18 @@ nonisolated final class Photo: NSManagedObject {
 
     @nonobjc class func fetchRequest() -> NSFetchRequest<Photo> {
         NSFetchRequest<Photo>(entityName: "Photo")
+    }
+
+    /// The most recent import that still has photos in the catalog (what Previous Import shows), or
+    /// `nil` when there's none.
+    static func latestImportID(in context: NSManagedObjectContext) -> UUID? {
+        let request = NSFetchRequest<NSDictionary>(entityName: "Photo")
+        request.resultType = .dictionaryResultType
+        request.predicate = NSPredicate(format: "importID != nil")
+        request.sortDescriptors = [NSSortDescriptor(key: #keyPath(Photo.importDate), ascending: false)]
+        request.propertiesToFetch = [#keyPath(Photo.importID)]
+        request.fetchLimit = 1
+        return (try? context.fetch(request))?.first?[#keyPath(Photo.importID)] as? UUID
     }
 
     var fileURL: URL { URL(filePath: filePath) }
