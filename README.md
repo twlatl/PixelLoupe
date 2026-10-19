@@ -41,10 +41,12 @@ for tags, and it uses no third-party actions. While the repository is private on
 secrets; once it's public, move them into a `release` environment that only `v*` tags can deploy from.
 
 **On a Mac:** `Scripts/release.sh 1.2.0` does the same build into `build/release`, signing with the Developer ID
-certificate in your keychain. It notarizes with `NOTARY_PROFILE` (a profile saved with `xcrun notarytool
-store-credentials`), or with an API key in `NOTARY_KEY`, `NOTARY_KEY_ID` and `NOTARY_ISSUER`. `SIGNING_IDENTITY=-
-Scripts/release.sh 1.2.0` makes an ad hoc signed, un-notarized disk image to check the packaging without a
-certificate.
+certificate in your keychain. The GitHub secrets don't reach it: it notarizes with a notarytool keychain profile named
+`PixelLoupe` (the setup script offers to save one, or run `xcrun notarytool store-credentials PixelLoupe --key
+AuthKey_<KEY ID>.p8 --key-id <KEY ID> --issuer <ISSUER ID>`). `NOTARY_PROFILE` names a different profile, and
+`NOTARY_KEY`, `NOTARY_KEY_ID` and `NOTARY_ISSUER` give it an API key instead. It signs in before building and stops if it
+can't. `NOTARIZE=0` builds a signed disk image without notarizing it, and `SIGNING_IDENTITY=-` an ad hoc signed one, to
+check the packaging without a certificate.
 
 ## Architecture
 

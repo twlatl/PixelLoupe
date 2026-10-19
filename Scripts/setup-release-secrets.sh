@@ -337,6 +337,17 @@ set_secret NOTARY_KEY_P8 "$(base64 -i "$P8_FILE")"
 set_secret NOTARY_KEY_ID "$NOTARY_KEY_ID"
 set_secret NOTARY_ISSUER_ID "$NOTARY_ISSUER_ID"
 say ""
+say "The GitHub secrets only reach the release workflow. Scripts/release.sh on this Mac notarizes with a"
+say "keychain profile named PixelLoupe instead."
+if confirm "Save the key in this Mac's keychain as that profile?"; then
+  if xcrun notarytool store-credentials PixelLoupe --key "$P8_FILE" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID"; then
+    step "Saved: Scripts/release.sh can notarize on this Mac."
+  else
+    SKIPPED+=("the PixelLoupe notarytool profile: xcrun notarytool store-credentials PixelLoupe --key <.p8> --key-id $NOTARY_KEY_ID --issuer $NOTARY_ISSUER_ID")
+    warn "Couldn't save it; the summary at the end has the command to run later."
+  fi
+fi
+say ""
 note "Keep the .p8 in a password manager and delete the download: anyone with it (and the IDs) can"
 note "notarize as your team. Revoke the key in App Store Connect if it's ever exposed."
 pause "Press Enter to continue"
@@ -349,6 +360,7 @@ say ""
 say "To release: tag a commit on main and push the tag, for example"
 note "  git tag v1.2.0 && git push origin v1.2.0"
 say "The Release workflow builds, notarizes and drafts the release; check it on GitHub, then Publish."
+say "Or build one on this Mac: Scripts/release.sh 1.2.0 (with the PixelLoupe profile saved above)."
 pause "Press Enter to finish"
 
 finish

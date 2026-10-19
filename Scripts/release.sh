@@ -16,10 +16,13 @@
 #   SIGNING_IDENTITY  The certificate to sign with (default "Developer ID Application"). "-" signs ad hoc
 #                     for a dry run on a Mac without the certificate; nothing is notarized then.
 #   KEYCHAIN          The keychain holding the certificate, when it isn't in the search list's default.
+#   NOTARY_PROFILE    The notarytool keychain profile to notarize with (default PixelLoupe). Save it once with
+#                       xcrun notarytool store-credentials PixelLoupe --key AuthKey_<ID>.p8 --key-id <ID> --issuer <issuer>
+#                     (Scripts/setup-release-secrets.sh offers to). The GitHub secrets only reach the release workflow.
 #   NOTARY_KEY, NOTARY_KEY_ID, NOTARY_ISSUER
-#                     An App Store Connect API key (the .p8 file, its ID and the issuer ID) to notarize with,
-#   NOTARY_PROFILE    or a notarytool keychain profile (xcrun notarytool store-credentials) instead.
-#                     With neither, the disk image is signed but not notarized.
+#                     Or an App Store Connect API key (the .p8 file, its ID and the issuer ID), as the workflow uses.
+#   NOTARIZE=0        Sign the disk image but don't notarize it. Otherwise the script stops before building if it
+#                     can't sign in to the notary service.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -41,6 +44,29 @@ trap 'hdiutil detach -quiet "$work/mount" 2>/dev/null || true; rm -rf "$work"' E
 mkdir -p "$output"
 dmg="$output/PixelLoupe-$name.dmg"
 step() { print "\n▸ $1" }
+
+# Sign in to the notary service before building, so missing or wrong credentials don't surface after the build.
+# (notarytool history only lists past submissions.)
+credentials=()
+if (( ! adhoc )) && [[ "${NOTARIZE:-1}" != 0 ]]; then
+  if [[ -n "${NOTARY_KEY:-}" ]]; then
+    credentials=(--key "$NOTARY_KEY" --key-id "${NOTARY_KEY_ID:-}" --issuer "${NOTARY_ISSUER:-}")
+    using="the API key in NOTARY_KEY"
+  else
+    credentials=(--keychain-profile "${NOTARY_PROFILE:-PixelLoupe}")
+    using="the keychain profile \"${NOTARY_PROFILE:-PixelLoupe}\""
+  fi
+  if ! signin=$(xcrun notarytool history "${credentials[@]}" 2>&1); then
+    print -u2 "Can't notarize: signing in to Apple's notary service with $using failed:"
+    print -r -- "$signin" | sed 's/^/  /' >&2
+    print -u2 ""
+    print -u2 "The GitHub secrets only reach the release workflow. To notarize on this Mac, save the API key in your"
+    print -u2 "keychain once (or let Scripts/setup-release-secrets.sh do it):"
+    print -u2 "  xcrun notarytool store-credentials PixelLoupe --key AuthKey_<KEY ID>.p8 --key-id <KEY ID> --issuer <ISSUER ID>"
+    print -u2 "then run this again. Add NOTARIZE=0 to build a signed disk image without notarizing it."
+    exit 1
+  fi
+fi
 
 # Developer ID signatures need a secure timestamp (notarization checks for it); ad hoc ones can't have one.
 sign_flags=()
@@ -84,13 +110,8 @@ rm -f "$dmg"
 diskutil image create from --format UDZO --volumeName "PixelLoupe $name" "$work/image" "$dmg" > /dev/null
 (( adhoc )) || codesign --sign "$identity" "${sign_flags[@]}" "$dmg"
 
-if (( ! adhoc )) && [[ -n "${NOTARY_KEY:-}" || -n "${NOTARY_PROFILE:-}" ]]; then
-  step "Notarizing (this usually takes a few minutes)"
-  if [[ -n "${NOTARY_KEY:-}" ]]; then
-    credentials=(--key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER")
-  else
-    credentials=(--keychain-profile "$NOTARY_PROFILE")
-  fi
+if (( ${#credentials} )); then
+  step "Notarizing with $using (this usually takes a few minutes)"
   xcrun notarytool submit "$dmg" "${credentials[@]}" --wait --timeout 1h --output-format json > "$work/notary.json"
   submission=$(plutil -extract id raw -o - "$work/notary.json")
   notary_status=$(plutil -extract status raw -o - "$work/notary.json")
@@ -110,7 +131,7 @@ if (( ! adhoc )) && [[ -n "${NOTARY_KEY:-}" || -n "${NOTARY_PROFILE:-}" ]]; then
   spctl --assess --type execute --verbose=2 "$work/mount/PixelLoupe.app"
   hdiutil detach -quiet "$work/mount"
 elif (( ! adhoc )); then
-  print "\nNot notarized: no NOTARY_KEY or NOTARY_PROFILE."
+  print "\nNot notarized (NOTARIZE=0): Gatekeeper will block this disk image on other Macs."
 fi
 
 (cd "$output" && shasum -a 256 "${dmg:t}" > "${dmg:t}.sha256")
