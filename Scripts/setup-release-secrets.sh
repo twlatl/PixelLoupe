@@ -198,10 +198,11 @@ finish() {
 # the whole file before the first prompt, so an edit mid-run can't break it.
 # ──────────────────────────────────────────────────────────────────────────
 
-# Sets up the GitHub secrets the release workflow (.github/workflows/release.yml) signs and notarizes with:
-# your Developer ID Application certificate and an App Store Connect API key. Values go straight to
-# GitHub as Actions secrets; nothing is written to disk. Run it again to replace them (a renewed
-# certificate, a new key).
+# Sets up the GitHub secrets the release workflow (.github/workflows/release.yml) signs, notarizes and
+# signs updates with: your Developer ID Application certificate, an App Store Connect API key, and Sparkle's
+# EdDSA update key (made in your keychain if need be; its public half goes in Config/Info.plist). Values go
+# straight to GitHub as Actions secrets; nothing is written to disk. Run it again to replace any of them (a
+# renewed certificate, a new key); steps whose secrets are already set can be skipped.
 #
 #   Scripts/setup-release-secrets.sh
 
@@ -218,6 +219,61 @@ file_path() {
 # The certificate's name from a line of 'security find-identity' output.
 identity_name() { local name="${1#*\"}"; printf '%s' "${name%\"}"; }
 
+# keep_existing NAME... offers to keep secrets the repository already has (success: skip the step).
+keep_existing() {
+  local name
+  for name in "$@"; do grep -qx "$name" <<<"$PRESENT" || return 1; done
+  step "Already set on $REPO: $*"
+  confirm "Keep them and skip this step?"
+}
+
+# Sparkle's command-line tools, which come with its Swift package (resolved by Xcode, or here).
+sparkle_tools() {
+  local bin
+  bin=$(ls -d "$HOME"/Library/Developer/Xcode/DerivedData/PixelLoupe-*/SourcePackages/artifacts/sparkle/Sparkle/bin 2>/dev/null | head -1)
+  if [[ -z "$bin" ]]; then
+    xcodebuild -resolvePackageDependencies -project PixelLoupe.xcodeproj -scheme PixelLoupe -quiet >/dev/null
+    bin=$(ls -d "$HOME"/Library/Developer/Xcode/DerivedData/PixelLoupe-*/SourcePackages/artifacts/sparkle/Sparkle/bin 2>/dev/null | head -1)
+  fi
+  printf '%s' "$bin"
+}
+
+# Whether $1 is an EdDSA (Ed25519) public key as Sparkle writes it: 32 bytes in base64.
+is_public_key() { [[ "$1" =~ ^[A-Za-z0-9+/]{43}=$ ]]; }
+
+# The public half of the keychain's Sparkle key ($SPARKLE_ACCOUNT), or nothing. generate_keys -p prints its
+# "no key" error on standard output, so neither its output nor its status alone is trusted.
+keychain_public_key() {
+  local key
+  key=$("$SPARKLE_BIN/generate_keys" --account "$SPARKLE_ACCOUNT" -p 2>/dev/null) || return 1
+  is_public_key "$key" || return 1
+  printf '%s' "$key"
+}
+
+# set_plist_key KEY [PLIST] makes SUPublicEDKey KEY in the Info.plist (default Config/Info.plist), replacing the value
+# it has or adding it after SUFeedURL, as text so the rest of the file stays as it is. Fails unless it reads back.
+set_plist_key() {
+  local key="$1" plist="${2:-Config/Info.plist}"
+  is_public_key "$key" || return 1
+  if grep -q "<key>SUPublicEDKey</key>" "$plist"; then
+    perl -0pi -e 's#(<key>SUPublicEDKey</key>\s*<string>)[^<]*(</string>)#${1}'"$key"'${2}#' "$plist"
+  else
+    perl -0pi -e 's#(\n(\s*)<key>SUFeedURL</key>\s*<string>[^<]*</string>)#$1\n$2<key>SUPublicEDKey</key>\n$2<string>'"$key"'</string>#' "$plist"
+  fi
+  [[ "$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" "$plist" 2>/dev/null)" == "$key" ]]
+}
+
+# export_checked_key DIR PUBLIC_KEY exports the keychain's Sparkle key to DIR/sparkle.key, then checks it's the private
+# half of PUBLIC_KEY by signing a small file with it and verifying that the way the app will.
+export_checked_key() {
+  local dir="$1" public_key="$2" signature
+  (umask 077 && "$SPARKLE_BIN/generate_keys" --account "$SPARKLE_ACCOUNT" -x "$dir/sparkle.key" >/dev/null 2>&1) || return 1
+  [[ -s "$dir/sparkle.key" ]] || return 1
+  printf PixelLoupe > "$dir/probe"
+  signature=$("$SPARKLE_BIN/sign_update" --ed-key-file "$dir/sparkle.key" -p "$dir/probe" 2>/dev/null) || return 1
+  xcrun swift Scripts/verify-update-signature.swift "$dir/probe" "$signature" "$public_key" >/dev/null 2>&1
+}
+
 # ask_file KEY "Prompt" asks until KEY names a file that exists.
 ask_file() {
   local key="$1" prompt="$2" value
@@ -231,20 +287,21 @@ ask_file() {
 
 run_wizard() {
 
-TOTAL_STAGES=5
+TOTAL_STAGES=6
 cd "$(dirname "$0")/.."
+SPARKLE_ACCOUNT=net.pixegen.PixelLoupe
+SECRETS=(DEVELOPER_ID_P12 DEVELOPER_ID_P12_PASSWORD NOTARY_KEY_P8 NOTARY_KEY_ID NOTARY_ISSUER_ID SPARKLE_ED_PRIVATE_KEY)
 
 banner "PixelLoupe release signing secrets"
 
 # ── 1 ──────────────────────────────────────────────────────────────────────
 stage "Before you start"
-say "Release builds are signed with your Developer ID Application certificate and notarized"
-say "with an App Store Connect API key. This sets five GitHub secrets for that:"
-note "  DEVELOPER_ID_P12, DEVELOPER_ID_P12_PASSWORD, NOTARY_KEY_P8, NOTARY_KEY_ID, NOTARY_ISSUER_ID"
+say "Release builds are signed with your Developer ID Application certificate, notarized with an App Store"
+say "Connect API key, and signed for Sparkle's updates with an EdDSA key. This sets six GitHub secrets:"
+note "  ${SECRETS[*]}"
 say ""
-say "Secrets you type are hidden, go straight to GitHub, and aren't written to disk."
-note "They're repository secrets: GitHub only offers environment secrets (limited to tags) to private"
-note "repositories on a paid plan. Once the repository is public, move them into a 'release' environment."
+say "Secrets you type are hidden, go straight to GitHub, and aren't written to disk. They're repository"
+say "secrets, read only by the release workflow, which runs only for version tags."
 say ""
 if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
   warn "The GitHub CLI isn't signed in. Run 'gh auth login' first, then run this again."
@@ -254,6 +311,7 @@ fi
 # remotes this clone has.
 REPO=$(gh repo view "$(git remote get-url origin)" --json nameWithOwner --jq .nameWithOwner)
 export GH_REPO="$REPO"
+PRESENT=$(gh secret list --repo "$REPO" --json name --jq '.[].name')
 step "Secrets will be set on ${BOLD}$REPO${RESET} (this clone's origin)."
 TEAM=$(sed -nE 's/^[[:space:]]*DEVELOPMENT_TEAM = ([A-Z0-9]+);/\1/p' PixelLoupe.xcodeproj/project.pbxproj | head -1)
 step "The project's team is ${BOLD}$TEAM${RESET}; the certificate must belong to it."
@@ -261,105 +319,184 @@ pause "Press Enter to continue"
 
 # ── 2 ──────────────────────────────────────────────────────────────────────
 stage "Developer ID Application certificate"
-IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null | grep "Developer ID Application" | grep "($TEAM)" | head -1 || true)
-if [[ -n "$IDENTITY" ]]; then
-  step "Found it in your keychain:"
-  note "  $(identity_name "$IDENTITY")"
-  say ""
-  say "Use this one unless it's about to expire. Otherwise make a new one as below."
+KEEP_CERTIFICATE=0
+if keep_existing DEVELOPER_ID_P12 DEVELOPER_ID_P12_PASSWORD; then
+  KEEP_CERTIFICATE=1
 else
-  warn "There's no Developer ID Application certificate for $TEAM in your keychain."
-  say "Make one (only the Account Holder of the developer account can). The quickest way is Xcode ▸"
-  say "Settings ▸ Accounts ▸ your team ▸ Manage Certificates… ▸ + ▸ Developer ID Application. Or on the web:"
-  open_url "https://developer.apple.com/account/resources/certificates/add"
-  step "Choose 'Developer ID', then 'Developer ID Application' (the G2 Sub-CA), and Continue."
-  step "It asks for a certificate signing request: in Keychain Access, choose Keychain Access ▸"
-  step "  Certificate Assistant ▸ Request a Certificate From a Certificate Authority…, enter your email,"
-  step "  choose 'Saved to disk', and upload that file."
-  step "Download the certificate and double-click it to add it to your login keychain."
+  IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null | grep "Developer ID Application" | grep "($TEAM)" | head -1 || true)
+  if [[ -n "$IDENTITY" ]]; then
+    step "Found it in your keychain:"
+    note "  $(identity_name "$IDENTITY")"
+    say ""
+    say "Use this one unless it's about to expire. Otherwise make a new one as below."
+  else
+    warn "There's no Developer ID Application certificate for $TEAM in your keychain."
+    say "Make one (only the Account Holder of the developer account can). The quickest way is Xcode ▸"
+    say "Settings ▸ Accounts ▸ your team ▸ Manage Certificates… ▸ + ▸ Developer ID Application. Or on the web:"
+    open_url "https://developer.apple.com/account/resources/certificates/add"
+    step "Choose 'Developer ID', then 'Developer ID Application' (the G2 Sub-CA), and Continue."
+    step "It asks for a certificate signing request: in Keychain Access, choose Keychain Access ▸"
+    step "  Certificate Assistant ▸ Request a Certificate From a Certificate Authority…, enter your email,"
+    step "  choose 'Saved to disk', and upload that file."
+    step "Download the certificate and double-click it to add it to your login keychain."
+  fi
+  pause "Press Enter when the certificate is in your keychain"
 fi
-pause "Press Enter when the certificate is in your keychain"
 
 # ── 3 ──────────────────────────────────────────────────────────────────────
 stage "Export the certificate for GitHub"
-say "GitHub needs the certificate with its private key, as a password-protected .p12 file."
-step "Open Keychain Access ▸ login ▸ My Certificates."
-step "Control-click 'Developer ID Application: … ($TEAM)' (one with a key under it) ▸ Export…"
-step "Save as 'Personal Information Exchange (.p12)', and choose a strong password."
-note "  Export only that one certificate: a .p12 of several would give GitHub all of them."
-open -a "Keychain Access" >/dev/null 2>&1 || true
-say ""
-ask_file P12_FILE "Path to the .p12 (drag it here):"
-ask_secret P12_PASSWORD "Its export password:"
-# Import it into a throwaway keychain, as the release workflow does, to check it before uploading.
-CHECK_DIR=$(mktemp -d)
-CHECK_KEYCHAIN="$CHECK_DIR/check.keychain-db"
-CHECK_PASSWORD=$(openssl rand -base64 24)
-security create-keychain -p "$CHECK_PASSWORD" "$CHECK_KEYCHAIN" >/dev/null 2>&1
-if security import "$P12_FILE" -k "$CHECK_KEYCHAIN" -P "$P12_PASSWORD" >/dev/null 2>&1 \
-   && FOUND=$(security find-identity -p codesigning "$CHECK_KEYCHAIN" | grep "Developer ID Application" | head -1) \
-   && [[ -n "$FOUND" ]]; then
-  security delete-keychain "$CHECK_KEYCHAIN" >/dev/null 2>&1 || true; rm -rf "$CHECK_DIR"
-  step "It holds: $(identity_name "$FOUND")"
-  [[ "$FOUND" == *"($TEAM)"* ]] || warn "That isn't team $TEAM's certificate. Signing will fail; export the right one."
+if (( KEEP_CERTIFICATE )); then
+  note "Kept the certificate already on $REPO."
 else
-  security delete-keychain "$CHECK_KEYCHAIN" >/dev/null 2>&1 || true; rm -rf "$CHECK_DIR"
-  warn "Couldn't open it as a Developer ID certificate with that password."
-  warn "Check the password, and that you exported the certificate with its key, then run this again."
-  exit 1
+  say "GitHub needs the certificate with its private key, as a password-protected .p12 file."
+  step "Open Keychain Access ▸ login ▸ My Certificates."
+  step "Control-click 'Developer ID Application: … ($TEAM)' (one with a key under it) ▸ Export…"
+  step "Save as 'Personal Information Exchange (.p12)', and choose a strong password."
+  note "  Export only that one certificate: a .p12 of several would give GitHub all of them."
+  open -a "Keychain Access" >/dev/null 2>&1 || true
+  say ""
+  ask_file P12_FILE "Path to the .p12 (drag it here):"
+  ask_secret P12_PASSWORD "Its export password:"
+  # Import it into a throwaway keychain, as the release workflow does, to check it before uploading.
+  CHECK_DIR=$(mktemp -d)
+  CHECK_KEYCHAIN="$CHECK_DIR/check.keychain-db"
+  CHECK_PASSWORD=$(openssl rand -base64 24)
+  security create-keychain -p "$CHECK_PASSWORD" "$CHECK_KEYCHAIN" >/dev/null 2>&1
+  if security import "$P12_FILE" -k "$CHECK_KEYCHAIN" -P "$P12_PASSWORD" >/dev/null 2>&1 \
+     && FOUND=$(security find-identity -p codesigning "$CHECK_KEYCHAIN" | grep "Developer ID Application" | head -1) \
+     && [[ -n "$FOUND" ]]; then
+    security delete-keychain "$CHECK_KEYCHAIN" >/dev/null 2>&1 || true; rm -rf "$CHECK_DIR"
+    step "It holds: $(identity_name "$FOUND")"
+    [[ "$FOUND" == *"($TEAM)"* ]] || warn "That isn't team $TEAM's certificate. Signing will fail; export the right one."
+  else
+    security delete-keychain "$CHECK_KEYCHAIN" >/dev/null 2>&1 || true; rm -rf "$CHECK_DIR"
+    warn "Couldn't open it as a Developer ID certificate with that password."
+    warn "Check the password, and that you exported the certificate with its key, then run this again."
+    exit 1
+  fi
+  set_secret DEVELOPER_ID_P12 "$(base64 -i "$P12_FILE")"
+  set_secret DEVELOPER_ID_P12_PASSWORD "$P12_PASSWORD"
+  say ""
+  if confirm "Delete $P12_FILE now? (The certificate stays in your keychain.)"; then
+    rm -f "$P12_FILE" && step "Deleted."
+  else
+    note "Keep it somewhere safe (a password manager), or delete it: it signs software as you."
+  fi
+  pause "Press Enter to continue"
 fi
-set_secret DEVELOPER_ID_P12 "$(base64 -i "$P12_FILE")"
-set_secret DEVELOPER_ID_P12_PASSWORD "$P12_PASSWORD"
-say ""
-if confirm "Delete $P12_FILE now? (The certificate stays in your keychain.)"; then
-  rm -f "$P12_FILE" && step "Deleted."
-else
-  note "Keep it somewhere safe (a password manager), or delete it: it signs software as you."
-fi
-pause "Press Enter to continue"
 
 # ── 4 ──────────────────────────────────────────────────────────────────────
 stage "App Store Connect API key for notarizing"
-say "notarytool signs in to Apple with an API key. Give it the Developer role, the least that notarizes."
-open_url "https://appstoreconnect.apple.com/access/integrations/api"
-step "Under Team Keys, click + (the first time, Request Access and accept the terms)."
-step "Name it 'PixelLoupe notarization', choose Access: Developer, and click Generate."
-step "Copy the Issuer ID shown above the list of keys, and the new key's Key ID."
-step "Click Download for the key's .p8 file. Apple only lets you download it once."
+if ! keep_existing NOTARY_KEY_P8 NOTARY_KEY_ID NOTARY_ISSUER_ID; then
+  say "notarytool signs in to Apple with an API key. Give it the Developer role, the least that notarizes."
+  open_url "https://appstoreconnect.apple.com/access/integrations/api"
+  step "Under Team Keys, click + (the first time, Request Access and accept the terms)."
+  step "Name it 'PixelLoupe notarization', choose Access: Developer, and click Generate."
+  step "Copy the Issuer ID shown above the list of keys, and the new key's Key ID."
+  step "Click Download for the key's .p8 file. Apple only lets you download it once."
+  say ""
+  ask NOTARY_ISSUER_ID "Issuer ID (a UUID):"
+  ask NOTARY_KEY_ID "Key ID (10 characters):"
+  ask_file P8_FILE "Path to the AuthKey_….p8 file (drag it here):"
+  if ! grep -q "BEGIN PRIVATE KEY" "$P8_FILE"; then
+    warn "That doesn't look like an App Store Connect key (.p8). Run this again with the right file."
+    exit 1
+  fi
+  [[ "$NOTARY_ISSUER_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || warn "The Issuer ID is usually a 36-character UUID; check it if notarizing fails."
+  [[ "$(basename "$P8_FILE")" == *"$NOTARY_KEY_ID"* ]] || warn "The file name doesn't mention key $NOTARY_KEY_ID; check they match."
+  set_secret NOTARY_KEY_P8 "$(base64 -i "$P8_FILE")"
+  set_secret NOTARY_KEY_ID "$NOTARY_KEY_ID"
+  set_secret NOTARY_ISSUER_ID "$NOTARY_ISSUER_ID"
+  say ""
+  say "The GitHub secrets only reach the release workflow. Scripts/release.sh on this Mac notarizes with a"
+  say "keychain profile named PixelLoupe instead."
+  if confirm "Save the key in this Mac's keychain as that profile?"; then
+    if xcrun notarytool store-credentials PixelLoupe --key "$P8_FILE" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID"; then
+      step "Saved: Scripts/release.sh can notarize on this Mac."
+    else
+      SKIPPED+=("the PixelLoupe notarytool profile: xcrun notarytool store-credentials PixelLoupe --key <.p8> --key-id $NOTARY_KEY_ID --issuer $NOTARY_ISSUER_ID")
+      warn "Couldn't save it; the summary at the end has the command to run later."
+    fi
+  fi
+  say ""
+  note "Keep the .p8 in a password manager and delete the download: anyone with it (and the IDs) can"
+  note "notarize as your team. Revoke the key in App Store Connect if it's ever exposed."
+  pause "Press Enter to continue"
+fi
+
+# ── 5 ──────────────────────────────────────────────────────────────────────
+stage "Sparkle update signing key"
+say "Updates are signed with an EdDSA key, so copies of PixelLoupe only install updates you made. The private"
+say "key lives in your login keychain (account $SPARKLE_ACCOUNT) and, for the release workflow, in the"
+say "SPARKLE_ED_PRIVATE_KEY secret; its public half is SUPublicEDKey in Config/Info.plist."
 say ""
-ask NOTARY_ISSUER_ID "Issuer ID (a UUID):"
-ask NOTARY_KEY_ID "Key ID (10 characters):"
-ask_file P8_FILE "Path to the AuthKey_….p8 file (drag it here):"
-if ! grep -q "BEGIN PRIVATE KEY" "$P8_FILE"; then
-  warn "That doesn't look like an App Store Connect key (.p8). Run this again with the right file."
+SPARKLE_BIN=$(sparkle_tools)
+if [[ ! -x "$SPARKLE_BIN/generate_keys" ]]; then
+  warn "Couldn't find Sparkle's tools. Open the project in Xcode once (it fetches the Sparkle package), then run this again."
   exit 1
 fi
-[[ "$NOTARY_ISSUER_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || warn "The Issuer ID is usually a 36-character UUID; check it if notarizing fails."
-[[ "$(basename "$P8_FILE")" == *"$NOTARY_KEY_ID"* ]] || warn "The file name doesn't mention key $NOTARY_KEY_ID; check they match."
-set_secret NOTARY_KEY_P8 "$(base64 -i "$P8_FILE")"
-set_secret NOTARY_KEY_ID "$NOTARY_KEY_ID"
-set_secret NOTARY_ISSUER_ID "$NOTARY_ISSUER_ID"
-say ""
-say "The GitHub secrets only reach the release workflow. Scripts/release.sh on this Mac notarizes with a"
-say "keychain profile named PixelLoupe instead."
-if confirm "Save the key in this Mac's keychain as that profile?"; then
-  if xcrun notarytool store-credentials PixelLoupe --key "$P8_FILE" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID"; then
-    step "Saved: Scripts/release.sh can notarize on this Mac."
+PLIST_KEY=$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" Config/Info.plist 2>/dev/null || true)
+if [[ -n "$PLIST_KEY" ]] && ! is_public_key "$PLIST_KEY"; then
+  warn "Config/Info.plist's SUPublicEDKey isn't a public key (\"$PLIST_KEY\"), so it'll be replaced."
+  PLIST_KEY=""
+fi
+KEYCHAIN_KEY=$(keychain_public_key || true)
+if [[ -z "$KEYCHAIN_KEY" ]]; then
+  if [[ -n "$PLIST_KEY" ]]; then
+    warn "Config/Info.plist has a key ($PLIST_KEY), but its private half isn't in this Mac's keychain."
+    warn "Import it from the Mac or backup that has it:"
+    warn "  $SPARKLE_BIN/generate_keys --account $SPARKLE_ACCOUNT -f <exported key file>"
+    warn "A new key would stop installed copies from accepting updates, so this won't make one."
+    exit 1
+  fi
+  say "There's no key yet. macOS may ask to let generate_keys use your keychain: allow it."
+  confirm "Make the key now?" || exit 1
+  "$SPARKLE_BIN/generate_keys" --account "$SPARKLE_ACCOUNT" >/dev/null 2>&1 || true
+  if ! KEYCHAIN_KEY=$(keychain_public_key); then
+    warn "generate_keys didn't make the key, or it can't be read back. If macOS asked for keychain access,"
+    warn "allow it; then run this again."
+    exit 1
+  fi
+fi
+step "Public key: $KEYCHAIN_KEY"
+if [[ -z "$PLIST_KEY" ]]; then
+  if set_plist_key "$KEYCHAIN_KEY"; then
+    step "Put it in Config/Info.plist as SUPublicEDKey. ${BOLD}Commit that change.${RESET}"
   else
-    SKIPPED+=("the PixelLoupe notarytool profile: xcrun notarytool store-credentials PixelLoupe --key <.p8> --key-id $NOTARY_KEY_ID --issuer $NOTARY_ISSUER_ID")
-    warn "Couldn't save it; the summary at the end has the command to run later."
+    warn "Couldn't put it in Config/Info.plist; set SUPublicEDKey to $KEYCHAIN_KEY there by hand."
+    SKIPPED+=("SUPublicEDKey in Config/Info.plist: $KEYCHAIN_KEY")
+  fi
+elif [[ "$PLIST_KEY" != "$KEYCHAIN_KEY" ]]; then
+  warn "Config/Info.plist has a different key ($PLIST_KEY) from your keychain's."
+  warn "Installed copies only accept updates signed with Info.plist's key; import that one instead."
+  exit 1
+else
+  step "Config/Info.plist already has it."
+fi
+if ! keep_existing SPARKLE_ED_PRIVATE_KEY; then
+  say "Exporting the key for GitHub and checking it signs for that public key…"
+  EXPORT_DIR=$(mktemp -d)
+  if export_checked_key "$EXPORT_DIR" "$KEYCHAIN_KEY"; then
+    set_secret SPARKLE_ED_PRIVATE_KEY "$(cat "$EXPORT_DIR/sparkle.key")"
+    rm -rf "$EXPORT_DIR"
+  else
+    rm -rf "$EXPORT_DIR"
+    warn "Couldn't export the key, or it doesn't sign for $KEYCHAIN_KEY. If macOS asked for keychain"
+    warn "access, allow it; then run this again."
+    exit 1
   fi
 fi
 say ""
-note "Keep the .p8 in a password manager and delete the download: anyone with it (and the IDs) can"
-note "notarize as your team. Revoke the key in App Store Connect if it's ever exposed."
+note "Back the key up, for example in a password manager:"
+note "  $SPARKLE_BIN/generate_keys --account $SPARKLE_ACCOUNT -x <file>"
+note "If it's lost, installed copies can't be updated: people would have to download a new version by hand."
 pause "Press Enter to continue"
 
-# ── 5 ──────────────────────────────────────────────────────────────────────
+# ── 6 ──────────────────────────────────────────────────────────────────────
 stage "Check"
 PRESENT=$(gh secret list --repo "$REPO" --json name --jq '.[].name')
 MISSING=()
-for NAME in DEVELOPER_ID_P12 DEVELOPER_ID_P12_PASSWORD NOTARY_KEY_P8 NOTARY_KEY_ID NOTARY_ISSUER_ID; do
+for NAME in "${SECRETS[@]}"; do
   grep -qx "$NAME" <<<"$PRESENT" || MISSING+=("$NAME")
 done
 if (( ${#MISSING[@]} )); then
@@ -368,11 +505,12 @@ if (( ${#MISSING[@]} )); then
   warn "variables ▸ Actions ▸ Repository secrets (the .p12 and .p8 as base64: base64 -i <file> | pbcopy)."
   exit 1
 fi
-step "All five secrets are on $REPO."
+step "All ${#SECRETS[@]} secrets are on $REPO."
 say ""
 say "To release: tag a commit on main and push the tag, for example"
-note "  git tag v1.2.0 && git push origin v1.2.0"
-say "The Release workflow builds, notarizes and drafts the release; check it on GitHub, then Publish."
+note "  git fetch origin && git tag v1.2.0 origin/main && git push origin v1.2.0"
+say "The Release workflow builds, notarizes and drafts the release. Check it on GitHub, edit its notes (they're"
+say "what Sparkle shows), then Publish: that offers it to everyone's copy of PixelLoupe."
 say "Or build one on this Mac: Scripts/release.sh 1.2.0 (with the PixelLoupe profile saved above)."
 pause "Press Enter to finish"
 

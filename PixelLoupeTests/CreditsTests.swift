@@ -12,4 +12,12 @@ struct CreditsTests {
         let license = try String(contentsOf: try #require(bundle.url(forResource: "LensFun-LICENSE", withExtension: "txt")), encoding: .utf8)
         #expect(license.contains("COMMONS PUBLIC LICENSE"))
     }
+
+    @Test func theAboutWindowCreditsSparkleAndItsLicenseShips() throws {
+        let bundle = Bundle(for: Photo.self)
+        let credits = try String(contentsOf: try #require(bundle.url(forResource: "Credits", withExtension: "html")), encoding: .utf8)
+        #expect(credits.contains("Sparkle"))
+        let license = try String(contentsOf: try #require(bundle.url(forResource: "Sparkle-LICENSE", withExtension: "txt")), encoding: .utf8)
+        #expect(license.contains("Andy Matuschak") && license.contains("Permission is hereby granted"))
+    }
 }

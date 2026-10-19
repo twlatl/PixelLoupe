@@ -3,6 +3,7 @@ import AppKit
 /// Selectors handled along the responder chain by the catalog window and Library views.
 @objc protocol PixelLoupeActions {
     @objc optional func newCatalog(_ sender: Any?)
+    @objc optional func checkForUpdates(_ sender: Any?)
     @objc optional func openCatalogDocument(_ sender: Any?)
     @objc optional func openRecentCatalog(_ sender: Any?)
     @objc optional func clearRecentCatalogs(_ sender: Any?)
@@ -181,6 +182,7 @@ enum MainMenu {
     private static func appMenu() -> NSMenu {
         let menu = NSMenu(title: "PixelLoupe")
         menu.addItem(item("About PixelLoupe", #selector(NSApplication.orderFrontStandardAboutPanel(_:))))
+        menu.addItem(item("Check for Updates…", #selector(PixelLoupeActions.checkForUpdates(_:))))
         menu.addItem(.separator())
         menu.addItem(item("Settings…", #selector(PixelLoupeActions.showSettings(_:)), ","))
         menu.addItem(item("Edit Watermarks…", #selector(PixelLoupeActions.showWatermarkEditor(_:))))

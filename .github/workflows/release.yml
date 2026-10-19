@@ -1,11 +1,13 @@
 # Builds a signed, notarized PixelLoupe-<version>.dmg when a version tag is pushed, and attaches it (with its
-# SHA-256 checksum) to a draft GitHub Release to check and publish. See README ▸ Releasing.
+# SHA-256 checksum, and the .appcast.json the update feed is made from) to a draft GitHub Release to check and
+# publish. Publishing it runs the Publish Appcast workflow (appcast.yml), which offers it to the app through Sparkle.
+# See README ▸ Releasing.
 #
 #   git tag v1.2.0 && git push origin v1.2.0          a release
 #   git tag v1.2.0-beta.1 && git push origin v1.2.0-beta.1   a prerelease (the app says 1.2.0)
 #
-# The signing certificate and notarization key come from repository secrets (Scripts/setup-release-secrets.sh
-# sets them). Only this tag-triggered job reads them, and it uses no third-party actions: actions/checkout is
+# The signing certificate, notarization key and Sparkle's update signing key come from repository secrets
+# (Scripts/setup-release-secrets.sh sets them). Only this tag-triggered job reads them, and it uses no third-party actions: actions/checkout is
 # pinned to a commit, and signing and notarizing use Apple's own tools.
 name: Release
 
@@ -53,9 +55,10 @@ jobs:
           NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
         run: |
           missing=()
-          for name in DEVELOPER_ID_P12 DEVELOPER_ID_P12_PASSWORD NOTARY_KEY_P8 NOTARY_KEY_ID NOTARY_ISSUER_ID; do
+          for name in DEVELOPER_ID_P12 DEVELOPER_ID_P12_PASSWORD NOTARY_KEY_P8 NOTARY_KEY_ID NOTARY_ISSUER_ID SPARKLE_ED_PRIVATE_KEY; do
             [[ -n "${!name}" ]] || missing+=("$name")
           done
           if (( ${#missing[@]} )); then
@@ -100,6 +103,13 @@ jobs:
           printf '%s' "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/notary-key.p8"
           echo "NOTARY_KEY=$RUNNER_TEMP/notary-key.p8" >> "$GITHUB_ENV"
 
+      - name: Install Sparkle's update signing key
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          (umask 077 && printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > "$RUNNER_TEMP/sparkle.key")
+          echo "SPARKLE_KEY_FILE=$RUNNER_TEMP/sparkle.key" >> "$GITHUB_ENV"
+
       - name: Build, sign, package and notarize
         env:
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
@@ -117,11 +127,12 @@ jobs:
           flags=(--draft --verify-tag --generate-notes --title "PixelLoupe $NAME")
           [[ "$PRERELEASE" == true ]] && flags+=(--prerelease)
           gh release create "$GITHUB_REF_NAME" "${flags[@]}" \
-            "build/release/PixelLoupe-$NAME.dmg" "build/release/PixelLoupe-$NAME.dmg.sha256"
+            "build/release/PixelLoupe-$NAME.dmg" "build/release/PixelLoupe-$NAME.dmg.sha256" \
+            "build/release/PixelLoupe-$NAME.appcast.json"
           echo "Draft release: $(gh release view "$GITHUB_REF_NAME" --json url --jq .url)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove the certificate and key
         if: always()
         run: |
           [[ -n "${KEYCHAIN:-}" ]] && security delete-keychain "$KEYCHAIN" || true
-          rm -f "$RUNNER_TEMP/notary-key.p8" "$RUNNER_TEMP/developer-id.p12"
+          rm -f "$RUNNER_TEMP/notary-key.p8" "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/sparkle.key"

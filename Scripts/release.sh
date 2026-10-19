@@ -7,7 +7,8 @@
 #
 # <version> is the app's version (CFBundleShortVersionString), such as 1.2.0. <name> labels the disk
 # image, PixelLoupe-<name>.dmg (default: the version; a prerelease tag's 1.2.0-beta.1). The output
-# folder (default build/release) gets the disk image and its SHA-256 checksum.
+# folder (default build/release) gets the disk image, its SHA-256 checksum and, when it's notarized,
+# PixelLoupe-<name>.appcast.json for the update feed (below).
 #
 # The build number (CFBundleVersion) is the UTC time of the build to the minute, such as 202610181432, so
 # each build's is higher than every earlier one's, whatever happens to the repository or CI.
@@ -23,6 +24,13 @@
 #                     Or an App Store Connect API key (the .p8 file, its ID and the issuer ID), as the workflow uses.
 #   NOTARIZE=0        Sign the disk image but don't notarize it. Otherwise the script stops before building if it
 #                     can't sign in to the notary service.
+#
+# Updates (Sparkle): a notarized disk image is also signed with the EdDSA key whose public half is SUPublicEDKey in
+# Config/Info.plist, which Sparkle checks before installing it. PixelLoupe-<name>.appcast.json records its version,
+# size and signature, for the Publish Appcast workflow (.github/workflows/appcast.yml) to write the update feed from.
+#   SPARKLE_KEY_FILE  The private key, as generate_keys -x exports it (the release workflow's). Otherwise it's read
+#                     from the keychain (account net.pixegen.PixelLoupe), where Scripts/setup-release-secrets.sh
+#                     makes it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -68,6 +76,39 @@ if (( ! adhoc )) && [[ "${NOTARIZE:-1}" != 0 ]]; then
   fi
 fi
 
+# Sparkle's tools (sign_update) come with its Swift package, resolved into this build's own DerivedData. A notarized
+# build is an update, so check the Sparkle key before building too: sign a small file and verify it with SUPublicEDKey.
+sparkle_bin="$work/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin"
+sparkle_account=net.pixegen.PixelLoupe
+public_key=$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" Config/Info.plist 2>/dev/null || true)
+sparkle_key=()
+if (( ${#credentials} )); then
+  if [[ -z "$public_key" ]]; then
+    print -u2 "Can't sign the update for Sparkle: Config/Info.plist has no SUPublicEDKey."
+    print -u2 "Scripts/setup-release-secrets.sh makes the key and adds it (then commit Config/Info.plist)."
+    exit 1
+  fi
+  if [[ -n "${SPARKLE_KEY_FILE:-}" ]]; then
+    [[ -s "$SPARKLE_KEY_FILE" ]] || { print -u2 "SPARKLE_KEY_FILE ($SPARKLE_KEY_FILE) is missing or empty."; exit 1 }
+    sparkle_key=(--ed-key-file "$SPARKLE_KEY_FILE")
+    key_source="SPARKLE_KEY_FILE"
+  else
+    sparkle_key=(--account "$sparkle_account")
+    key_source="the keychain's $sparkle_account key"
+  fi
+  xcodebuild -resolvePackageDependencies -project PixelLoupe.xcodeproj -scheme PixelLoupe \
+    -derivedDataPath "$work/DerivedData" -quiet
+  print PixelLoupe > "$work/probe"
+  if ! probe=$("$sparkle_bin/sign_update" "${sparkle_key[@]}" -p "$work/probe" 2>&1) \
+     || ! xcrun swift Scripts/verify-update-signature.swift "$work/probe" "$probe" "$public_key" > /dev/null 2>&1; then
+    print -u2 "Can't sign the update for Sparkle with $key_source: it's missing, or it isn't the key whose public half"
+    print -u2 "is SUPublicEDKey in Config/Info.plist ($public_key)."
+    [[ "$probe" == *[[:space:]]* ]] && print -r -- "$probe" | sed 's/^/  /' >&2
+    print -u2 "Scripts/setup-release-secrets.sh makes the key, or exports it for the release workflow."
+    exit 1
+  fi
+fi
+
 # Developer ID signatures need a secure timestamp (notarization checks for it); ad hoc ones can't have one.
 sign_flags=()
 (( adhoc )) || sign_flags+=(--timestamp)
@@ -84,13 +125,26 @@ xcodebuild archive \
   -quiet
 app="$work/PixelLoupe.xcarchive/Products/Applications/PixelLoupe.app"
 
+# Sparkle's helpers come signed ad hoc, so they're signed again with the app's identity (notarization needs every
+# executable signed with Developer ID, a timestamp and the hardened runtime), innermost first, then the app. The XPC
+# services are only for sandboxed apps, which PixelLoupe isn't, so they're left out.
+step "Signing Sparkle"
+sparkle="$app/Contents/Frameworks/Sparkle.framework"
+rm -rf "$sparkle/XPCServices" "$sparkle/Versions/B/XPCServices"
+resign() { codesign --force --sign "$identity" --options runtime "${sign_flags[@]}" "$@" }
+resign "$sparkle/Versions/B/Autoupdate"
+resign "$sparkle/Versions/B/Updater.app"
+resign "$sparkle"
+resign --preserve-metadata=entitlements,requirements,flags "$app"
+
 step "Checking the app's signature"
 codesign --verify --deep --strict --verbose=2 "$app"
 if (( ! adhoc )); then
-  details=$(codesign --display --verbose=2 "$app" 2>&1)
-  [[ "$details" == *"Authority=Developer ID Application"* ]] || { print -u2 "Not signed with Developer ID:\n$details"; exit 1 }
-  [[ "$details" == *"Timestamp="* ]] || { print -u2 "The signature has no secure timestamp."; exit 1 }
-  [[ "$(codesign --display --verbose=4 "$app" 2>&1)" == *"(runtime)"* ]] || { print -u2 "The hardened runtime is off."; exit 1 }
+  for code in "$app" "$sparkle" "$sparkle/Versions/B/Autoupdate" "$sparkle/Versions/B/Updater.app"; do
+    details=$(codesign --display --verbose=4 "$code" 2>&1)
+    [[ "$details" == *"Authority=Developer ID Application"* && "$details" == *"Timestamp="* && "$details" == *"(runtime)"* ]] \
+      || { print -u2 "${code#$work/} isn't signed with Developer ID, a timestamp and the hardened runtime:\n$details"; exit 1 }
+  done
 fi
 # A debugger entitlement would fail notarization (and shouldn't ship).
 if codesign --display --entitlements - --xml "$app" 2>/dev/null | grep -q get-task-allow; then
@@ -107,7 +161,8 @@ mkdir "$work/image"
 ditto "$app" "$work/image/PixelLoupe.app"
 ln -s /Applications "$work/image/Applications"
 rm -f "$dmg"
-diskutil image create from --format UDZO --volumeName "PixelLoupe $name" "$work/image" "$dmg" > /dev/null
+# APFS with LZFSE compression (ULFO), which Sparkle recommends: quicker to open than zlib's UDZO.
+diskutil image create from --format ULFO --volumeName "PixelLoupe $name" "$work/image" "$dmg" > /dev/null
 (( adhoc )) || codesign --sign "$identity" "${sign_flags[@]}" "$dmg"
 
 if (( ${#credentials} )); then
@@ -130,6 +185,24 @@ if (( ${#credentials} )); then
   hdiutil attach -quiet -nobrowse -readonly -mountpoint "$work/mount" "$dmg"
   spctl --assess --type execute --verbose=2 "$work/mount/PixelLoupe.app"
   hdiutil detach -quiet "$work/mount"
+
+  # After stapling, which changes the file: the signature is over the disk image as it's downloaded.
+  step "Signing the update for Sparkle"
+  signature=$("$sparkle_bin/sign_update" "${sparkle_key[@]}" -p "$dmg")
+  # The check Sparkle makes before installing it.
+  xcrun swift Scripts/verify-update-signature.swift "$dmg" "$signature" "$public_key"
+  minimum=$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$app/Contents/Info.plist")
+  [[ "$minimum" == *.*.* ]] || minimum+=".0"
+  cat > "$output/PixelLoupe-$name.appcast.json" <<JSON
+{
+  "shortVersion": "$version",
+  "version": "$build",
+  "minimumSystemVersion": "$minimum",
+  "file": "${dmg:t}",
+  "length": $(stat -f %z "$dmg"),
+  "edSignature": "$signature"
+}
+JSON
 elif (( ! adhoc )); then
   print "\nNot notarized (NOTARIZE=0): Gatekeeper will block this disk image on other Macs."
 fi
@@ -138,3 +211,4 @@ fi
 step "Done"
 print "$dmg"
 cat "$dmg.sha256"
+if [[ -f "$output/PixelLoupe-$name.appcast.json" ]]; then print "$output/PixelLoupe-$name.appcast.json"; fi

@@ -18,35 +18,59 @@ Open `PixelLoupe.xcodeproj` and run the **PixelLoupe** scheme, or from the comma
 xcodebuild -project PixelLoupe.xcodeproj -scheme PixelLoupe -destination 'platform=macOS' test
 ```
 
+## Updates
+
+PixelLoupe updates itself with [Sparkle](https://sparkle-project.org). **PixelLoupe ▸ Check for Updates…** checks now; at
+the second launch Sparkle asks whether to check automatically (daily) and whether to download and install updates by
+itself, and **Settings ▸ General** changes those answers later. An update window shows what's new in the version on
+offer (its GitHub release notes) before anything is installed. Development builds don't check (Debug builds would
+always find the release newer), and neither do the tests.
+
+The app looks for `appcast.xml` on the latest published release
+(`https://github.com/twlatl/PixelLoupe/releases/latest/download/appcast.xml`, `SUFeedURL`). Only stable releases are
+offered: drafts and prereleases never are. Sparkle installs an update only if it's signed with PixelLoupe's EdDSA key
+(whose public half is `SUPublicEDKey` in `Config/Info.plist`) and with the same Developer ID as the app.
+
 ## Releasing
 
 Pushing a version tag builds a release on GitHub (`.github/workflows/release.yml`): a Release build signed with Developer
 ID, in a disk image (`PixelLoupe-1.2.0.dmg`, with an Applications shortcut) that is notarized and stapled, so it opens
-without warnings. It's attached, with its SHA-256 checksum and notes generated from the merged pull requests, to a
-**draft** release. Check the draft on GitHub, then publish it.
+without warnings, and signed for Sparkle. It's attached, with its SHA-256 checksum, its `.appcast.json` (version, size
+and update signature) and notes generated from the merged pull requests, to a **draft** release.
 
 ```sh
-git tag v1.2.0 && git push origin v1.2.0
+git fetch origin && git tag v1.2.0 origin/main && git push origin v1.2.0
 ```
+
+Check the draft on GitHub and edit its notes: they're what the update window shows. **Publishing it offers the update to
+everyone**: the Publish Appcast workflow (`.github/workflows/appcast.yml`) writes `appcast.xml` from the release's notes
+and the `.appcast.json` (`Scripts/appcast.sh`) and attaches it to the release, usually within a minute. Editing a
+published release's notes writes it again.
 
 The tag sets the app's version (1.2.0). A tag with a suffix, such as `v1.2.0-beta.1`, makes a prerelease: the disk image
 is named after the whole tag, and the app says 1.2.0. The build number is the time of the build (UTC, to the minute,
 such as `202610181432`), so each build's is higher than every earlier one's.
 
-**One-time setup:** `Scripts/setup-release-secrets.sh` walks through exporting the Developer ID Application certificate
-and making an App Store Connect API key (Developer role) for notarizing, and stores them as the repository's Actions
-secrets (`DEVELOPER_ID_P12`, `DEVELOPER_ID_P12_PASSWORD`, `NOTARY_KEY_P8`, `NOTARY_KEY_ID`, `NOTARY_ISSUER_ID`). Run it
-again to replace them, for example when the certificate is renewed. Only the release workflow reads them. It runs only
-for tags, and it uses no third-party actions. While the repository is private on GitHub Free they have to be repository
-secrets; once it's public, move them into a `release` environment that only `v*` tags can deploy from.
+**One-time setup:** `Scripts/setup-release-secrets.sh` walks through exporting the Developer ID Application certificate,
+making an App Store Connect API key (Developer role) for notarizing, and making Sparkle's EdDSA update key (in your
+login keychain, account `net.pixegen.PixelLoupe`; it adds the public half to `Config/Info.plist`, to commit). It stores
+them as the repository's Actions secrets (`DEVELOPER_ID_P12`, `DEVELOPER_ID_P12_PASSWORD`, `NOTARY_KEY_P8`,
+`NOTARY_KEY_ID`, `NOTARY_ISSUER_ID`, `SPARKLE_ED_PRIVATE_KEY`). Run it again to replace any of them, for example when the
+certificate is renewed; steps whose secrets are already set can be skipped. Only the release workflow reads them. It
+runs only for tags, and it uses no third-party actions. **Back up the Sparkle key** (`generate_keys --account
+net.pixegen.PixelLoupe -x <file>`, from Sparkle's `bin` folder): if it's lost, installed copies can't be updated.
 
 **On a Mac:** `Scripts/release.sh 1.2.0` does the same build into `build/release`, signing with the Developer ID
 certificate in your keychain. The GitHub secrets don't reach it: it notarizes with a notarytool keychain profile named
 `PixelLoupe` (the setup script offers to save one, or run `xcrun notarytool store-credentials PixelLoupe --key
 AuthKey_<KEY ID>.p8 --key-id <KEY ID> --issuer <ISSUER ID>`). `NOTARY_PROFILE` names a different profile, and
-`NOTARY_KEY`, `NOTARY_KEY_ID` and `NOTARY_ISSUER` give it an API key instead. It signs in before building and stops if it
-can't. `NOTARIZE=0` builds a signed disk image without notarizing it, and `SIGNING_IDENTITY=-` an ad hoc signed one, to
-check the packaging without a certificate.
+`NOTARY_KEY`, `NOTARY_KEY_ID` and `NOTARY_ISSUER` give it an API key instead. It signs the update with the Sparkle key in
+your keychain (or `SPARKLE_KEY_FILE`), and checks both before building, stopping if either is missing or the Sparkle key
+isn't `SUPublicEDKey`'s. `NOTARIZE=0` builds a signed disk image without notarizing it (or signing it for Sparkle), and
+`SIGNING_IDENTITY=-` an ad hoc signed one, to check the packaging without a certificate.
+
+Release builds leave out Sparkle's XPC services (only sandboxed apps use them) and sign its helpers with the app's
+Developer ID, as notarization requires. The disk image is APFS with LZFSE compression, as Sparkle recommends.
 
 ## Architecture
 

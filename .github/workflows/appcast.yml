@@ -1,0 +1,52 @@
+# Attaches appcast.xml, Sparkle's update feed, to a release when it's published, and again when its notes are edited,
+# so the app finds the newest version at https://github.com/twlatl/PixelLoupe/releases/latest/download/appcast.xml
+# (SUFeedURL). The feed carries the release's notes as published, which Sparkle's update window shows.
+#
+# Only stable releases are offered: drafts and prereleases are skipped, and "latest" never points at them anyway. The
+# disk image's version and update signature come from the .appcast.json the Release workflow attached, so this needs
+# no secrets.
+name: Publish Appcast
+
+on:
+  release:
+    types: [published, edited]
+
+permissions:
+  contents: write # to attach appcast.xml to the release
+
+concurrency:
+  group: appcast-${{ github.event.release.tag_name }}
+  cancel-in-progress: true
+
+jobs:
+  appcast:
+    name: Attach appcast.xml
+    if: ${{ !github.event.release.draft && !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Write appcast.xml from the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+          NOTES: ${{ github.event.release.body }}
+          PUBLISHED: ${{ github.event.release.published_at }}
+        run: |
+          mkdir -p build
+          if ! gh release download "$TAG" --pattern '*.appcast.json' --dir build; then
+            echo "::error::$TAG has no .appcast.json (it comes from the Release workflow), so it can't be offered as an update."
+            exit 1
+          fi
+          printf '%s' "$NOTES" > build/notes.md
+          Scripts/appcast.sh build/*.appcast.json "$TAG" build/notes.md "$PUBLISHED" > build/appcast.xml
+          cat build/appcast.xml
+
+      - name: Attach it to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release upload "$TAG" build/appcast.xml --clobber
+          echo "Feed: https://github.com/$GITHUB_REPOSITORY/releases/latest/download/appcast.xml" >> "$GITHUB_STEP_SUMMARY"
