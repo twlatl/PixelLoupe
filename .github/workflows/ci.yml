@@ -41,7 +41,8 @@ jobs:
         run: xcodebuild -downloadComponent MetalToolchain
 
       - name: Build and run the unit tests
-        # - Ad-hoc signed ("Sign to Run Locally"): no signing identity is needed.
+        # - Ad-hoc signed ("Sign to Run Locally"): no signing identity is needed. The project's development team (for
+        #   signed, notarized builds) is cleared, since the runner has no certificate for it.
         # - Warnings fail the build (SKILLS.md: no build warnings).
         # - UI tests are left out: they need an interactive session and are flaky in CI.
         # - Left out because CI's virtual machines can't run them reliably: the large-catalog performance test (it
@@ -67,6 +68,7 @@ jobs:
             -test-timeouts-enabled YES \
             -default-test-execution-time-allowance 120 \
             -maximum-test-execution-time-allowance 240 \
+            DEVELOPMENT_TEAM= \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=YES GCC_TREAT_WARNINGS_AS_ERRORS=YES \
             -quiet
 
