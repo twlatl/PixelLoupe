@@ -250,8 +250,11 @@ if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
   warn "The GitHub CLI isn't signed in. Run 'gh auth login' first, then run this again."
   exit 1
 fi
-REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
-step "Secrets will be set on ${BOLD}$REPO${RESET}."
+# origin's repository, pinned with GH_REPO so every gh call below (set_secret included) goes there, whatever other
+# remotes this clone has.
+REPO=$(gh repo view "$(git remote get-url origin)" --json nameWithOwner --jq .nameWithOwner)
+export GH_REPO="$REPO"
+step "Secrets will be set on ${BOLD}$REPO${RESET} (this clone's origin)."
 TEAM=$(sed -nE 's/^[[:space:]]*DEVELOPMENT_TEAM = ([A-Z0-9]+);/\1/p' PixelLoupe.xcodeproj/project.pbxproj | head -1)
 step "The project's team is ${BOLD}$TEAM${RESET}; the certificate must belong to it."
 pause "Press Enter to continue"
@@ -354,8 +357,18 @@ pause "Press Enter to continue"
 
 # ── 5 ──────────────────────────────────────────────────────────────────────
 stage "Check"
-say "Secrets on $REPO now:"
-gh secret list --repo "$REPO" | sed 's/^/    /'
+PRESENT=$(gh secret list --repo "$REPO" --json name --jq '.[].name')
+MISSING=()
+for NAME in DEVELOPER_ID_P12 DEVELOPER_ID_P12_PASSWORD NOTARY_KEY_P8 NOTARY_KEY_ID NOTARY_ISSUER_ID; do
+  grep -qx "$NAME" <<<"$PRESENT" || MISSING+=("$NAME")
+done
+if (( ${#MISSING[@]} )); then
+  warn "These secrets aren't on $REPO: ${MISSING[*]}"
+  warn "The release workflow will stop until they are. Run this again, or add them in Settings ▸ Secrets and"
+  warn "variables ▸ Actions ▸ Repository secrets (the .p12 and .p8 as base64: base64 -i <file> | pbcopy)."
+  exit 1
+fi
+step "All five secrets are on $REPO."
 say ""
 say "To release: tag a commit on main and push the tag, for example"
 note "  git tag v1.2.0 && git push origin v1.2.0"
