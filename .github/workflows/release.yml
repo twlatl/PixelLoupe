@@ -1,0 +1,116 @@
+# Builds a signed, notarized PixelLoupe-<version>.dmg when a version tag is pushed, and attaches it (with its
+# SHA-256 checksum) to a draft GitHub Release to check and publish. See README ▸ Releasing.
+#
+#   git tag v1.2.0 && git push origin v1.2.0          a release
+#   git tag v1.2.0-beta.1 && git push origin v1.2.0-beta.1   a prerelease (the app says 1.2.0)
+#
+# The signing certificate and notarization key come from repository secrets (Scripts/setup-release-secrets.sh
+# sets them). Only this tag-triggered job reads them, and it uses no third-party actions: actions/checkout is
+# pinned to a commit, and signing and notarizing use Apple's own tools.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # to create the draft release
+
+# One release build per tag at a time; a second push of the same tag waits rather than cancelling a notarization.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # The Xcode the project is developed with (README: Xcode 27.2 or later), as in ci.yml.
+  XCODE: /Applications/Xcode_27.2.app
+
+jobs:
+  release:
+    name: Build, notarize and draft the release
+    runs-on: xcode-27
+    # Archiving takes about 10 minutes; notarizing usually a few more, occasionally much longer.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Read the version from the tag
+        id: version
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+(\.[0-9]+)?)(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::$GITHUB_REF_NAME isn't a version tag like v1.2.0 or v1.2.0-beta.1"
+            exit 1
+          fi
+          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo "name=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$([[ -n "${BASH_REMATCH[3]}" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Install the Metal Toolchain
+        # Photo Merge's Core Image kernels (.ci.metal) need it; the image doesn't include it.
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      - name: Install the signing certificate
+        # Into a temporary keychain with a random password, deleted at the end of the job.
+        env:
+          DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          if [[ -z "$DEVELOPER_ID_P12" || -z "$DEVELOPER_ID_P12_PASSWORD" ]]; then
+            echo "::error::The DEVELOPER_ID_P12 secrets aren't set: run Scripts/setup-release-secrets.sh"
+            exit 1
+          fi
+          keychain="$RUNNER_TEMP/release.keychain-db"
+          password=$(openssl rand -base64 32)
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$DEVELOPER_ID_P12" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
+          security import "$RUNNER_TEMP/developer-id.p12" -k "$keychain" -P "$DEVELOPER_ID_P12_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/developer-id.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$keychain" | grep -q "Developer ID Application" \
+            || { echo "::error::The certificate isn't a Developer ID Application certificate"; exit 1; }
+          echo "KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+
+      - name: Install the notarization key
+        env:
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+        run: |
+          if [[ -z "$NOTARY_KEY_P8" ]]; then
+            echo "::error::The NOTARY_KEY_P8 secret isn't set: run Scripts/setup-release-secrets.sh"
+            exit 1
+          fi
+          printf '%s' "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/notary-key.p8"
+          echo "NOTARY_KEY=$RUNNER_TEMP/notary-key.p8" >> "$GITHUB_ENV"
+
+      - name: Build, sign, package and notarize
+        env:
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER_ID }}
+          VERSION: ${{ steps.version.outputs.version }}
+          NAME: ${{ steps.version.outputs.name }}
+        run: Scripts/release.sh "$VERSION" "$NAME" build/release
+
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ steps.version.outputs.name }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          flags=(--draft --verify-tag --generate-notes --title "PixelLoupe $NAME")
+          [[ "$PRERELEASE" == true ]] && flags+=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" "${flags[@]}" \
+            "build/release/PixelLoupe-$NAME.dmg" "build/release/PixelLoupe-$NAME.dmg.sha256"
+          echo "Draft release: $(gh release view "$GITHUB_REF_NAME" --json url --jq .url)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove the certificate and key
+        if: always()
+        run: |
+          [[ -n "${KEYCHAIN:-}" ]] && security delete-keychain "$KEYCHAIN" || true
+          rm -f "$RUNNER_TEMP/notary-key.p8" "$RUNNER_TEMP/developer-id.p12"

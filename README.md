@@ -18,6 +18,36 @@ Open `PixelLoupe.xcodeproj` and run the **PixelLoupe** scheme, or from the comma
 xcodebuild -project PixelLoupe.xcodeproj -scheme PixelLoupe -destination 'platform=macOS' test
 ```
 
+## Releasing
+
+Pushing a version tag builds a release on GitHub (`.github/workflows/release.yml`): a Release build signed with Developer
+ID, in a disk image (`PixelLoupe-1.2.0.dmg`, with an Applications shortcut) that is notarized and stapled, so it opens
+without warnings. It's attached, with its SHA-256 checksum and notes generated from the merged pull requests, to a
+**draft** release. Check the draft on GitHub, then publish it.
+
+```sh
+git tag v1.2.0 && git push origin v1.2.0
+```
+
+The tag sets the app's version (1.2.0). A tag with a suffix, such as `v1.2.0-beta.1`, makes a prerelease: the disk image
+is named after the whole tag, and the app says 1.2.0. The build number is the time of the build (UTC, to the minute,
+such as `202610181432`), so each build's is higher than every earlier one's.
+
+**One-time setup:** `Scripts/setup-release-secrets.sh` walks through exporting the Developer ID Application certificate
+and making an App Store Connect API key (Developer role) for notarizing, and stores them as the repository's Actions
+secrets (`DEVELOPER_ID_P12`, `DEVELOPER_ID_P12_PASSWORD`, `NOTARY_KEY_P8`, `NOTARY_KEY_ID`, `NOTARY_ISSUER_ID`). Run it
+again to replace them, for example when the certificate is renewed. Only the release workflow reads them. It runs only
+for tags, and it uses no third-party actions. While the repository is private on GitHub Free they have to be repository
+secrets; once it's public, move them into a `release` environment that only `v*` tags can deploy from.
+
+**On a Mac:** `Scripts/release.sh 1.2.0` does the same build into `build/release`, signing with the Developer ID
+certificate in your keychain. The GitHub secrets don't reach it: it notarizes with a notarytool keychain profile named
+`PixelLoupe` (the setup script offers to save one, or run `xcrun notarytool store-credentials PixelLoupe --key
+AuthKey_<KEY ID>.p8 --key-id <KEY ID> --issuer <ISSUER ID>`). `NOTARY_PROFILE` names a different profile, and
+`NOTARY_KEY`, `NOTARY_KEY_ID` and `NOTARY_ISSUER` give it an API key instead. It signs in before building and stops if it
+can't. `NOTARIZE=0` builds a signed disk image without notarizing it, and `SIGNING_IDENTITY=-` an ad hoc signed one, to
+check the packaging without a certificate.
+
 ## Architecture
 
 - **UI:** AppKit, built in code (no storyboards). The photo grid is an `NSCollectionView` with layer-backed
