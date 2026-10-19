@@ -151,11 +151,16 @@ struct EditInTests {
         #expect(!PhotoEditing.asksWhatToEdit(copy))
         #expect(PhotoEditing.externalEditMode(for: copy, choice: .original) == .copyWithAdjustments)
 
-        let bracket = try Bracket(width: 64, height: 48, stops: [0])
-        _ = try await ImportService(store: setup.store).importPhotos(from: bracket.sources.map(\.url))
-        let request = Photo.fetchRequest()
-        request.predicate = NSPredicate(format: "fileType == %@", "DNG")
-        let raw = try #require(try setup.store.viewContext.fetch(request).first)
+        // Edit In knows a raw file by its extension, so a catalog row is enough. (Importing a real one decodes it for a
+        // thumbnail, which on CI's virtual machines can take longer than the test's two minutes.)
+        let raw = Photo(context: setup.store.viewContext)
+        raw.id = UUID()
+        raw.fileName = "IMG_2.DNG"
+        raw.filePath = setup.photo.fileURL.deletingLastPathComponent().appending(path: raw.fileName).path(percentEncoded: false)
+        raw.fileType = "DNG"
+        raw.captureDate = Date()
+        raw.importDate = Date()
+        raw.editDate = Date()
         #expect(!PhotoEditing.asksWhatToEdit(raw))
         #expect(PhotoEditing.externalEditMode(for: raw, choice: .copy) == .copyWithAdjustments)
     }
