@@ -17,6 +17,18 @@ material from others.
 - **Not used:** LensFun's code (LGPL). PixelLoupe reads the database itself and implements the published lens models
   (distortion, chromatic aberration, vignetting) in its own code.
 
+### Sparkle
+
+- **What:** `Sparkle.framework`, which checks for, downloads and installs new versions of PixelLoupe (PixelLoupe ▸ Check
+  for Updates…).
+- **From:** the [Sparkle project](https://sparkle-project.org) ([source](https://github.com/sparkle-project/Sparkle)), a
+  Swift package pinned in `Package.resolved`. © Andy Matuschak, Elgato Systems, Kornel Lesiński, Mayur Pawashe and the
+  other Sparkle contributors.
+- **License:** the MIT License, with bundled components under BSD (bsdiff), MIT (sais), zlib (ed25519) and similar
+  permissive licenses. The full text ships in the app as `Sparkle-LICENSE.txt`.
+- **Changes:** none to Sparkle itself. Release builds leave out its XPC services, which only sandboxed apps use, and
+  re-sign its helpers with PixelLoupe's Developer ID (`Scripts/release.sh`).
+
 ## Used but not bundled
 
 - **Adobe camera profiles and presets:** PixelLoupe reads profiles and Lightroom / Camera Raw presets that the user

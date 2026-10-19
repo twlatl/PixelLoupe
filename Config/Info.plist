@@ -106,5 +106,7 @@
 			</dict>
 		</dict>
 	</array>
+	<key>SUFeedURL</key>
+	<string>https://github.com/twlatl/PixelLoupe/releases/latest/download/appcast.xml</string>
 </dict>
 </plist>

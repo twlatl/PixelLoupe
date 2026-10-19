@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		0A000000000000000000000E /* PixelLoupeIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 0A000000000000000000000D /* PixelLoupeIcon.icon */; };
+		0A0000000000000000000061 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 0A0000000000000000000062 /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -58,6 +59,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0A0000000000000000000061 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -136,6 +138,7 @@
 			);
 			name = PixelLoupe;
 			packageProductDependencies = (
+				0A0000000000000000000062 /* Sparkle */,
 			);
 			productName = PixelLoupe;
 			productReference = 0A0000000000000000000011 /* PixelLoupe.app */;
@@ -219,6 +222,9 @@
 			);
 			mainGroup = 0A0000000000000000000002;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				0A0000000000000000000063 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 0A0000000000000000000003 /* Products */;
 			projectDirPath = "";
@@ -526,6 +532,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		0A0000000000000000000063 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.10.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		0A0000000000000000000062 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0A0000000000000000000063 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 0A0000000000000000000001 /* Project object */;
 }

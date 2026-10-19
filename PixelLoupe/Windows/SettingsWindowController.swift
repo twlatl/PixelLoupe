@@ -119,14 +119,29 @@ final class ScrollingSettingsPane: NSViewController {
 
 struct GeneralSettingsView: View {
     @Bindable private var settings = AppSettings.shared
+    @Bindable var updates = Updates.shared
 
     var body: some View {
         Form {
             Toggle("Confirm when quitting PixelLoupe", isOn: $settings.confirmsQuit)
                 .accessibilityIdentifier("confirmQuitToggle")
+            Toggle("Check for updates automatically", isOn: $updates.automaticallyChecks)
+                .accessibilityIdentifier("automaticUpdateChecksToggle")
+                .disabled(!updates.isAvailable)
+                .padding(.top, 8)
+            Toggle("Download and install updates automatically", isOn: $updates.automaticallyDownloads)
+                .accessibilityIdentifier("automaticUpdateDownloadsToggle")
+                .disabled(!updates.isAvailable || !updates.automaticallyChecks)
+            Text(updates.isAvailable
+                 ? "PixelLoupe ▸ Check for Updates… checks now. Each update shows what's changed before it's installed."
+                 : "This build doesn't update itself (a development build). Release builds check for updates.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(20)
         .frame(width: 460)
+        .onAppear { updates.refresh() }
     }
 }
 

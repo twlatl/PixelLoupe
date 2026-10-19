@@ -113,6 +113,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    /// PixelLoupe ▸ Check for Updates… (see ``Updates``).
+    @objc func checkForUpdates(_ sender: Any?) {
+        Updates.shared.checkForUpdates()
+    }
+
     @objc func showSettings(_ sender: Any?) {
         if settingsWindowController == nil {
             settingsWindowController = SettingsWindowController()
@@ -246,5 +251,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         welcomeWindowController?.showWindow(nil)
         welcomeWindowController?.window?.center()
+    }
+}
+
+extension AppDelegate: NSMenuItemValidation {
+    /// Check for Updates… is unavailable while a check is under way, and in builds that don't update.
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(checkForUpdates(_:)) { return Updates.shared.canCheckForUpdates }
+        return true
     }
 }
