@@ -1,14 +1,16 @@
 import AppKit
 import CoreData
 
-/// Source list showing "All Photographs", the catalog's folder tree and its collections, with
-/// photo counts.
+/// Source list showing "All Photographs", "Previous Import", the catalog's folder tree and its
+/// collections, with photo counts.
 final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate,
                                    NSSearchFieldDelegate {
     final class Item: NSObject {
         enum Kind {
             case header
             case allPhotos
+            /// The most recent import, or nil (a dimmed row) when there's none.
+            case previousImport(id: UUID?)
             case folder(path: String)
             /// The Collections header, with its + menu.
             case collectionsHeader
@@ -40,6 +42,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             switch kind {
             case .header, .collectionsHeader, .collectionFilter: nil
             case .allPhotos: .allPhotos
+            case .previousImport(let id): id.map { .previousImport(id: $0) }
             case .folder(let path): .folder(path: path)
             case .collection(let id, _): content.map { .collection(id: id, content: $0) }
             }
@@ -269,8 +272,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
         let all = Item(kind: .allPhotos, title: "All Photographs")
         all.count = (try? context.count(for: Photo.fetchRequest())) ?? 0
+        let latestImport = Photo.latestImportID(in: context)
+        let previousImport = Item(kind: .previousImport(id: latestImport), title: "Previous Import")
+        previousImport.count = latestImport.map { id in
+            let photos = Photo.fetchRequest()
+            photos.predicate = NSPredicate(format: "importID == %@", id as CVarArg)
+            return (try? context.count(for: photos)) ?? 0
+        }
         let catalogHeader = Item(kind: .header, title: "Catalog")
-        catalogHeader.children = [all]
+        catalogHeader.children = [all, previousImport]
         let foldersHeader = Item(kind: .header, title: "Folders")
         foldersHeader.children = rootFolders.map(makeItem)
 
@@ -301,6 +311,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         if !isCollectionsCollapsed { outlineView.expandItem(collectionsHeader) }
         if !isCollectionsCollapsed { expandSets(in: collectionsHeader.children) }
         refreshCollectionScope(in: collectionsHeader.children)
+        // Previous Import moves on to a new import as it comes in (and back to the one before when
+        // every photo of the last is removed).
+        if case .previousImport(let id) = state.filter.scope, id != latestImport {
+            state.filter.scope = latestImport.map { .previousImport(id: $0) } ?? .allPhotos
+        }
         selectItem(matching: state.filter.scope)
         isReloading = false
     }
@@ -785,6 +800,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             ?? SidebarCellView(identifier: identifier)
         let symbol = switch item.kind {
         case .allPhotos: "photo.on.rectangle"
+        case .previousImport: "square.and.arrow.down"
         case .collection(_, .collection): "rectangle.stack"
         case .collection(_, .smart): "gearshape.2"
         case .collection(_, .set): "archivebox"
@@ -793,10 +809,21 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         // Lightroom marks the target collection with a +.
         var isOffline = false
         if case .folder(let path) = item.kind { isOffline = store.availability.isOffline(folderPath: path) }
+        // Previous Import is dimmed until there's an import to show.
+        var isEnabled = true
+        if case .previousImport(nil) = item.kind { isEnabled = false }
         cell.configure(
             title: item.isTarget ? "\(item.title) +" : item.title, symbolName: isOffline ? "questionmark.folder" : symbol,
-            count: item.count, isOffline: isOffline, warning: item.warning, isFavorite: item.isFavorite, label: item.label)
-        if let id = item.collectionID { cell.setAccessibilityIdentifier("collection.\(id.uuidString)") }
+            count: item.count, isOffline: isOffline, isEnabled: isEnabled, warning: item.warning, isFavorite: item.isFavorite,
+            label: item.label)
+        // Cells are reused from row to row, so each row sets (or clears) its identifier.
+        let accessibilityIdentifier: String? = switch item.kind {
+        case .collection(let id, _): "collection.\(id.uuidString)"
+        case .previousImport: "previousImport"
+        default: nil
+        }
+        cell.setAccessibilityIdentifier(accessibilityIdentifier)
+        if !isEnabled { cell.toolTip = "The photos of your next import will appear here." }
         return cell
     }
 
@@ -938,8 +965,8 @@ final class SidebarCellView: NSTableCellView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    func configure(title: String, symbolName: String, count: Int?, isOffline: Bool = false, warning: String? = nil,
-                   isFavorite: Bool = false, label: ColorLabel = .none) {
+    func configure(title: String, symbolName: String, count: Int?, isOffline: Bool = false, isEnabled: Bool = true,
+                   warning: String? = nil, isFavorite: Bool = false, label: ColorLabel = .none) {
         self.label = label
         favoriteBadge.isHidden = !isFavorite
         warningView.isHidden = warning == nil
@@ -949,9 +976,11 @@ final class SidebarCellView: NSTableCellView {
         imageView?.setAccessibilityElement(false)
         updateIconTint()
         countLabel.stringValue = count?.formatted() ?? ""
-        // Folders whose directory can't be found are dimmed, with a question mark on the icon.
-        textField?.textColor = isOffline ? .tertiaryLabelColor : .labelColor
-        imageView?.alphaValue = isOffline ? 0.5 : 1
+        // Folders whose directory can't be found are dimmed, with a question mark on the icon, as are
+        // rows with nothing to show.
+        textField?.textColor = isOffline || !isEnabled ? .tertiaryLabelColor : .labelColor
+        imageView?.alphaValue = isOffline || !isEnabled ? 0.5 : 1
+        setAccessibilityEnabled(isEnabled)
         toolTip = isOffline ? "This folder can’t be found. Control-click it and choose Find Missing Folder…" : warning
         let details = [isOffline ? "Missing" : nil, isFavorite ? "Favorite" : nil, label == .none ? nil : "\(label.title) label"]
             .compactMap { $0 }

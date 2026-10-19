@@ -25,11 +25,15 @@ nonisolated final class LightroomPhotosPhase: LightroomImportPhase {
     /// Virtual copies come after every master, so each copy's master is already in the catalog.
     private var copyCursor: LightroomRowCursor<LRPhotoRecord>?
     private var readingCopies = false
+    /// Lightroom's Previous Import (image `id_local`s), which becomes the new catalog's, under one import id.
+    private var previousImport: Set<Int> = []
+    private let previousImportID = UUID()
 
     func prepare(_ context: LightroomImportContext) async throws -> Int {
         try await makeFolders(context)
         cursor = try context.catalog.photoCursor()
         copyCursor = try context.catalog.photoCursor(virtualCopies: true)
+        previousImport = try context.catalog.previousImportImages()
         return try context.catalog.scalar("SELECT COUNT(*) FROM Adobe_images")
     }
 
@@ -68,6 +72,8 @@ nonisolated final class LightroomPhotosPhase: LightroomImportPhase {
         let reads = await Self.readFiles(jobs)
         let folderIDs = folderIDs
         let importDate = context.importDate
+        let previousImport = previousImport
+        let previousImportID = previousImportID
         let managed = context.managedObjectContext
         let report = context.report
         // Each copy's master, by the Photo id the master was given.
@@ -90,6 +96,10 @@ nonisolated final class LightroomPhotosPhase: LightroomImportPhase {
                 guard let folderID = folderIDs[job.record.folder], let folder = try? managed.existingObject(with: folderID) as? Folder else { continue }
                 let photo = Photo(context: managed)
                 Self.fill(photo, from: job, read: read, folder: folder, importedAt: importDate, report: report)
+                // A virtual copy goes with its master, as one made in PixelLoupe does.
+                if previousImport.contains(job.record.image.masterImage ?? job.record.image.id) {
+                    photo.importID = previousImportID
+                }
                 if let masterID = masters[job.record.image.id], let master = masterPhotos[masterID] {
                     photo.master = master
                     photo.copyName = job.record.image.copyName?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Copy"

@@ -259,6 +259,34 @@ struct LightroomPhotosPhaseTests {
         #expect(report.warnings.contains { $0.contains("1 photo is missing on disk") })
     }
 
+    @Test("Lightroom's most recent import becomes Previous Import, with its photos' virtual copies")
+    func carriesOverPreviousImport() async throws {
+        let fixture = try PhotosFixture()
+        let (store, _) = try await fixture.importAll(phases: [{ LightroomPhotosPhase() }])
+        let all = try store.viewContext.fetch(Photo.fetchRequest())
+        let id = try #require(Photo.latestImportID(in: store.viewContext))
+        // Import 1 holds A (and so its virtual copy), B and D; C and E have no import record.
+        #expect(all.filter { $0.importID == id }.map(\.fileName).sorted() == ["A.jpg", "A.jpg", "B.jpg", "D.cr2"])
+        #expect(all.filter { $0.importID == nil }.map(\.fileName).sorted() == ["C.mov", "E.jpg"])
+    }
+
+    @Test("Only the newest of several Lightroom imports becomes Previous Import")
+    func newestLightroomImportOnly() async throws {
+        let fixture = try PhotosFixture()
+        try fixture.run("""
+            INSERT INTO AgLibraryImport VALUES (2, 2, '2020-06-01T10:00:00-04:00', 'Import 2');
+            INSERT INTO AgLibraryImportImage (image, import) VALUES (15, 2), (12, 2);
+            """)
+        let (store, _) = try await fixture.importAll(phases: [{ LightroomPhotosPhase() }])
+        let id = try #require(Photo.latestImportID(in: store.viewContext))
+        var filter = LibraryFilter()
+        filter.scope = .previousImport(id: id)
+        let request = Photo.fetchRequest()
+        request.predicate = filter.predicate
+        #expect(try store.viewContext.fetch(request).map(\.fileName).sorted() == ["C.mov", "E.jpg"])
+        #expect(try store.viewContext.fetch(Photo.fetchRequest()).filter { $0.importID != nil }.count == 2)
+    }
+
     @Test("Builds the folder tree from paths when Lightroom leaves parentId empty")
     func folderTreeWithoutParentIDs() async throws {
         let fixture = try PhotosFixture()

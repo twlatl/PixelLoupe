@@ -166,6 +166,7 @@ back. The right panel's **Destination** section sets the folder, an optional sub
 date (`2026/2026-10-15`, `2026/10-15`, `2026/10/15`, `2026-10-15`, `2026/October/15`, or into one folder).
 
 **Import N Photos** imports the checked photos, with progress in the catalog window's bottom bar, and closes the window.
+The left sidebar's **Previous Import** then shows them.
 
 ## Slideshow
 
@@ -238,6 +239,20 @@ Lightroom). Survey is a Library view: pressing `N` in Develop switches to Librar
 - Point at a photo and click its close button to drop it from the survey (it's deselected). Selecting photos in the
   filmstrip changes what's surveyed.
 - `⇧N` (Window ▸ Secondary Display ▸ Survey) shows a survey of the selection in the secondary window.
+
+## Catalog
+
+The Catalog section of the left sidebar (below the Navigator) has, as in Lightroom:
+
+- **All Photographs:** every photo in the catalog.
+- **Previous Import:** the photos of the most recent import, with their count. One run of the import window is one
+  import, and so are the new photos Synchronize Folder adds; photos made in PixelLoupe (Photo Merge results, Edit In
+  copies) aren't imports, and a virtual copy goes with the photo it copies. While it's showing, a new import takes its
+  place as the photos come in; if every photo of the last import is removed, it shows the one before. It's dimmed
+  until something is imported, which includes catalogs made before PixelLoupe kept track of imports (until their next
+  import). A catalog imported from Lightroom Classic starts with Lightroom's own previous import.
+
+The grid's source (a Catalog item, folder or collection) is restored when the catalog is opened again.
 
 ## Folders
 

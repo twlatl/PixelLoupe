@@ -263,6 +263,16 @@ nonisolated final class LightroomCatalog {
             """) { $0.int(at: 0) ?? 0 })
     }
 
+    /// The photos of the most recent import that still has any (Lightroom's Previous Import), by
+    /// image `id_local`. Lightroom numbers rows as it creates them, so the newest import has the
+    /// highest id. Empty when the catalog keeps no import records.
+    func previousImportImages() throws -> Set<Int> {
+        guard try database.hasTable("AgLibraryImportImage") else { return [] }
+        return Set(try collect("""
+            SELECT image FROM AgLibraryImportImage WHERE import = (SELECT MAX(import) FROM AgLibraryImportImage)
+            """) { $0.int(at: 0) ?? 0 })
+    }
+
     func keywords() throws -> [LRKeyword] {
         let type = try column("AgLibraryKeyword", "keywordType")
         let onExport = try column("AgLibraryKeyword", "includeOnExport", fallback: "1")

@@ -167,6 +167,8 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
     private static func restoreSelection(_ viewState: CatalogViewState, into state: LibraryState, context: NSManagedObjectContext) {
         if let id = viewState.collectionID, let collection = PhotoCollection.with(id: id, in: context) {
             state.filter.scope = .collection(id: id, content: collection.content)
+        } else if viewState.showsPreviousImport, let id = Photo.latestImportID(in: context) {
+            state.filter.scope = .previousImport(id: id)
         } else if let path = viewState.folderPath {
             let request = Folder.fetchRequest()
             request.predicate = NSPredicate(format: "path == %@", path)
@@ -194,6 +196,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         var viewState = store.viewState
         if case .folder(let path) = state.filter.scope { viewState.folderPath = path } else { viewState.folderPath = nil }
         viewState.collectionID = state.filter.scope.collectionID
+        if case .previousImport = state.filter.scope { viewState.showsPreviousImport = true } else { viewState.showsPreviousImport = false }
         viewState.selectedPhotos = state.selectedPhotoIDs.prefix(CatalogViewState.maximumSavedSelection).compactMap {
             (try? store.viewContext.existingObject(with: $0) as? Photo)?.id
         }

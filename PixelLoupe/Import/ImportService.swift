@@ -72,6 +72,8 @@ final class ImportService {
         guard count > 0 else { return summary }
 
         let context = store.newBackgroundContext()
+        // Every photo this import adds shares it, so Previous Import can show them together.
+        let importID = UUID()
         var seenKeys = try await Self.existingKeys(in: context, mode: rule)
         var reservedDestinations = Set<String>()
         let thumbnailDirectory = store.thumbnails.directory
@@ -135,7 +137,7 @@ final class ImportService {
                 }
             }
 
-            try await Self.insert(ready, into: context)
+            try await Self.insert(ready, importID: importID, into: context)
             summary.imported += ready.count
             completed += range.count
             progress(ImportProgress(completed: completed, total: count))
@@ -449,7 +451,7 @@ final class ImportService {
         }
     }
 
-    nonisolated private static func insert(_ items: [PlannedImport], into context: NSManagedObjectContext) async throws {
+    nonisolated private static func insert(_ items: [PlannedImport], importID: UUID, into context: NSManagedObjectContext) async throws {
         guard !items.isEmpty else { return }
         try await context.perform {
             var folders: [String: Folder] = [:]
@@ -466,6 +468,7 @@ final class ImportService {
                 photo.fileSize = item.fileSize
                 photo.captureDate = item.captureDate
                 photo.importDate = now
+                photo.importID = importID
                 photo.editDate = now
                 photo.cameraMake = item.metadata.cameraMake
                 photo.cameraModel = item.metadata.cameraModel
