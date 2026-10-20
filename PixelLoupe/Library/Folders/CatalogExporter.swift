@@ -12,6 +12,9 @@ enum CatalogExporter {
         /// "Include available previews": copies the thumbnails, so the catalog opens without
         /// redrawing them.
         var includesPreviews = true
+        /// "Build / Include Smart Previews": copies the photos' Smart Previews, building those that
+        /// are missing or out of date, so the catalog can be edited without the originals.
+        var includesSmartPreviews = false
     }
 
     struct Result: Sendable {
@@ -19,6 +22,8 @@ enum CatalogExporter {
         var photoCount: Int
         /// Files that couldn't be copied.
         var failures: [String] = []
+        /// The photos' files that have a Smart Preview in the new catalog.
+        var smartPreviewCount = 0
     }
 
     /// Exports into a new folder at `directory`, named like it: `Trip/Trip.pixelloupe`, and with
@@ -53,6 +58,13 @@ enum CatalogExporter {
         if options.includesPreviews {
             await copyPreviews(manifest.photoIDs, from: store.thumbnails.directory, to: target.thumbnails.directory)
         }
+        if options.includesSmartPreviews {
+            await store.smartPreviews.load()
+            result.smartPreviewCount = await includeSmartPreviews(
+                manifest.photoFiles, existing: store.smartPreviews.files, from: store.smartPreviews.directory,
+                to: target.smartPreviews.directory
+            )
+        }
         try CatalogViewState(expandedFolderPaths: [newRoot], folderPath: newRoot).save(to: packageURL)
         return result
     }
@@ -60,6 +72,9 @@ enum CatalogExporter {
     private struct Manifest: Sendable {
         var photoCount = 0
         var photoIDs: [UUID] = []
+        /// Each photo file that can have a Smart Preview: the IDs of the photos sharing it (the master's first), and
+        /// where it is now.
+        var photoFiles: [(ids: [UUID], path: String)] = []
         /// Every file to copy: photos (once, though virtual copies share them) and their sidecars.
         var files: [String] = []
         var folders: [String] = []
@@ -108,6 +123,9 @@ enum CatalogExporter {
             }
 
             var manifest = Manifest(photoCount: photos.count, photoIDs: photos.map(\.id), folders: folders.map(\.path))
+            manifest.photoFiles = photos.filter { $0.master == nil && !$0.isVideo }.map { photo in
+                (photo.photosSharingFile.map(\.id), photo.filePath)
+            }
             var files = Set<String>()
             for photo in photos {
                 files.insert(photo.filePath)
@@ -169,6 +187,38 @@ enum CatalogExporter {
             }
         }
         return failures
+    }
+
+    /// Copies each file's Smart Preview, or builds it from the original when there's none or it's out of date (in the
+    /// new catalog, with the source catalog's white-balance tables). Returns how many files have one.
+    @concurrent
+    private static func includeSmartPreviews(
+        _ files: [(ids: [UUID], path: String)], existing: [UUID: URL], from source: URL, to destination: URL
+    ) async -> Int {
+        let fileManager = FileManager.default
+        let tables = SmartPreviewWhiteBalance.directory(in: source)
+        if fileManager.fileExists(atPath: tables.path(percentEncoded: false)) {
+            try? fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+            try? fileManager.copyItem(at: tables, to: SmartPreviewWhiteBalance.directory(in: destination))
+        }
+        var count = 0
+        for file in files {
+            if Task.isCancelled { break }
+            let existingFile = file.ids.lazy.compactMap { existing[$0] }.first
+            let built = try? await SmartPreviewBuilder.write(
+                URL(filePath: file.path), existing: existingFile, as: file.ids[0], in: destination
+            )
+            if built != nil {
+                count += 1
+            } else if let existingFile {
+                // Current, or its original is missing: the one there is.
+                try? fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+                if (try? fileManager.copyItem(at: existingFile, to: destination.appending(path: existingFile.lastPathComponent))) != nil {
+                    count += 1
+                }
+            }
+        }
+        return count
     }
 
     @concurrent
