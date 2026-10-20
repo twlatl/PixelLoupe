@@ -9,6 +9,8 @@ import UniformTypeIdentifiers
 /// - A camera RAW file, or one of PixelLoupe's own merges, becomes a Linear DNG: the RAW engine's linear decode in
 ///   Rec. 2020 with the neutral at D65, as 16-bit JPEG XL tiles. The original's as-shot white balance goes in
 ///   `AsShotNeutral`, so Temperature and Tint mean the same on the proxy, and the RAW-stage controls still work.
+/// - A DNG from another app that's already demosaiced (iPhone ProRAW, `LinearRaw`) becomes a downsized copy of
+///   itself, keeping its own color profile, tone curve and gain map (see `SmartPreviewWriter+DNGCopy.swift`).
 /// - Any other photo becomes a HEIC in its own color space, which Develop opens as it opens the original.
 ///
 /// Each proxy carries a ``SmartPreviewInfo`` about its original. Videos get none.
@@ -62,7 +64,8 @@ nonisolated enum SmartPreviewWriter {
         switch recipe(for: original) {
         case .linearDNG?: return try writeLinearDNG(original, fingerprint: fingerprint, to: destination)
         case .image?: return try writeImage(original, fingerprint: fingerprint, to: destination)
-        case .dngCopy?, nil: throw WriteError.unsupported
+        case .dngCopy?: return try writeDNGCopy(original, fingerprint: fingerprint, to: destination)
+        case nil: throw WriteError.unsupported
         }
     }
 
@@ -175,7 +178,7 @@ nonisolated enum SmartPreviewWriter {
 
     /// The tiles of `samples`, each a JPEG XL codestream, with their offsets from the first one's start (each padded
     /// to an even length). Tiles at the right and bottom edges repeat the last column and row.
-    private static func encodeTiles(_ samples: [UInt16], width: Int, height: Int) throws -> (data: [Data], offsets: [UInt32]) {
+    static func encodeTiles(_ samples: [UInt16], width: Int, height: Int) throws -> (data: [Data], offsets: [UInt32]) {
         let tile = LinearDNGWriter.tileSize
         let across = (width + tile - 1) / tile, down = (height + tile - 1) / tile
         let results = Tiles(count: across * down)
@@ -283,7 +286,7 @@ nonisolated enum SmartPreviewWriter {
 
     /// Writes `data` to a temporary file next to `destination`, then moves it into place, so a reader never sees a
     /// half-written proxy.
-    private static func replace(_ destination: URL, with data: Data) throws {
+    static func replace(_ destination: URL, with data: Data) throws {
         let temporary = destination.deletingLastPathComponent()
             .appending(path: ".\(UUID().uuidString)-\(destination.lastPathComponent)")
         do {
