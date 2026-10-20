@@ -251,12 +251,12 @@ final class FileAvailability {
                 group.addTask {
                     var missing: [UUID] = [], changed: [UUID] = []
                     for (id, path) in files {
-                        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path) else {
+                        guard let file = FileManager.default.sizeAndModificationDate(atPath: path) else {
                             missing.append(id)
                             continue
                         }
                         if !videos.contains(id), let thumbnail = thumbnailDates[id],
-                           let modified = attributes[.modificationDate] as? Date, isChanged(file: modified, thumbnail: thumbnail) {
+                           let modified = file.modified, isChanged(file: modified, thumbnail: thumbnail) {
                             changed.append(id)
                         }
                     }

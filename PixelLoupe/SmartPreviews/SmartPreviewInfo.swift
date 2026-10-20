@@ -82,15 +82,9 @@ nonisolated struct SmartPreviewInfo: Codable, Sendable, Equatable {
         return try? JSONDecoder().decode(SmartPreviewInfo.self, from: Data((json as String).utf8))
     }
 
-    /// The original's size and modification date, for ``isCurrent(for:)``. Read from the file system each time
-    /// (`URL.resourceValues` would otherwise keep answering from its cache after the file changes), and only these
-    /// two: `FileManager.attributesOfItem` reads the file's extended attributes too, which can block for minutes.
+    /// The original's size and modification date, for ``isCurrent(for:)``, read from the file system each time.
     static func fingerprint(of original: URL) -> (modified: Date?, size: Int64)? {
-        var url = original
-        url.removeAllCachedResourceValues()
-        guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
-              let size = values.fileSize else { return nil }
-        return (values.contentModificationDate, Int64(size))
+        FileManager.default.sizeAndModificationDate(atPath: original.path(percentEncoded: false)).map { ($0.modified, $0.size) }
     }
 
     /// Whether the proxy still matches `original`: same writer version, and the file hasn't changed since. An
