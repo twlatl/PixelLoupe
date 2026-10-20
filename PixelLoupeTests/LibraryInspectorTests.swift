@@ -210,8 +210,8 @@ struct LibraryInspectorTests {
     }
 
     @Test func presetsSaveAndApply() throws {
-        let saved = Defaults.store.object(forKey: LibraryInspectorViewController.presetsKey)
-        defer { Defaults.store.set(saved, forKey: LibraryInspectorViewController.presetsKey) }
+        let saved = Defaults.store.object(forKey: MetadataPreset.storageKey)
+        defer { Defaults.store.set(saved, forKey: MetadataPreset.storageKey) }
         let (store, photos, directory) = try makeCatalog()
         defer { _ = directory }
         photos[0].metadata[.copyright] = "© Alex"
@@ -219,10 +219,12 @@ struct LibraryInspectorTests {
         let (controller, state) = inspector(store, selecting: [photos[0]])
         let values = controller.currentPresetValues()
         #expect(values["copyright"] == "© Alex" && values["creator"] == "Ted")
-        LibraryInspectorViewController.presets["Mine"] = values
+        var preset = MetadataPreset(name: "Mine")
+        preset.fields = values
+        LibraryInspectorViewController.presets = [preset]
 
         state.selectedPhotoIDs = [photos[1].objectID]
-        controller.applyPreset(named: "Mine")
+        controller.applyPreset(id: preset.id)
         #expect(photos[1].metadata[.copyright] == "© Alex" && photos[1].metadata[.creator] == "Ted")
     }
 

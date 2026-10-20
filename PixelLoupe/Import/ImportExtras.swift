@@ -34,38 +34,3 @@ nonisolated struct ImportExtras: Sendable {
         return root.appending(path: name, directoryHint: .isDirectory)
     }
 }
-
-/// A named set of text fields filled in on photos as they're imported (Apply During Import ▸
-/// Metadata): who made them and the copyright, and optionally a title and caption. Empty fields are
-/// left as the file has them.
-nonisolated struct MetadataPreset: Codable, Equatable, Sendable, Identifiable {
-    var id = UUID()
-    var name: String
-    var creator = ""
-    var copyright = ""
-    var title = ""
-    var caption = ""
-
-    /// The presets, in the order they were made.
-    static func all(in defaults: UserDefaults = Defaults.store) -> [MetadataPreset] {
-        defaults.data(forKey: key).flatMap { try? JSONDecoder().decode([MetadataPreset].self, from: $0) } ?? []
-    }
-
-    static func save(_ presets: [MetadataPreset], in defaults: UserDefaults = Defaults.store) {
-        defaults.set(try? JSONEncoder().encode(presets), forKey: key)
-    }
-
-    private static let key = "MetadataPresets"
-
-    /// Fills in the preset's non-empty fields on `photo`.
-    func apply(to photo: Photo) {
-        func value(_ text: String) -> String? {
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
-        }
-        if let creator = value(creator) { photo.creatorText = creator }
-        if let copyright = value(copyright) { photo.copyrightText = copyright }
-        if let title = value(title) { photo.titleText = title }
-        if let caption = value(caption) { photo.captionText = caption }
-    }
-}
