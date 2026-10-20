@@ -40,7 +40,7 @@ nonisolated enum FileRelinking {
             guard fileManager.fileExists(atPath: candidate) else { continue }
             preview.found += 1
             if row.size > 0,
-               let size = (try? fileManager.attributesOfItem(atPath: candidate))?[.size] as? Int64, size != row.size {
+               let size = fileManager.sizeAndModificationDate(atPath: candidate)?.size, size != row.size {
                 preview.sizeMismatches += 1
             }
         }
@@ -106,7 +106,7 @@ nonisolated enum FileRelinking {
         request.predicate = NSPredicate(format: "filePath == %@", oldPath)
         let sharing = Set((try? context.fetch(request)) ?? []).union([photo])
         let newPath = url.standardizedFileURL.path(percentEncoded: false)
-        let size = (try? FileManager.default.attributesOfItem(atPath: newPath))?[.size] as? Int64
+        let size = FileManager.default.sizeAndModificationDate(atPath: newPath)?.size
         for sharer in sharing {
             sharer.filePath = newPath
             sharer.fileName = url.lastPathComponent

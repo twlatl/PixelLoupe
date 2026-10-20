@@ -3,7 +3,7 @@ import Foundation
 /// Reads the structure of a TIFF or DNG file: its image file directories and their entries, in either byte order,
 /// without decoding any pixels. Smart Previews use it to tell what kind of DNG an original is, to copy an original's
 /// tags, and to read back what they recorded about themselves.
-nonisolated struct TIFFFile {
+nonisolated struct TIFFFile: Sendable {
     /// One entry of a directory: where its value is, not the value itself.
     struct Entry: Sendable {
         let tag: UInt16
