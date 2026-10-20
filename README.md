@@ -230,6 +230,12 @@ The right panel's **File Handling** section:
 - **Make a Second Copy** (Copy only: a backup of each file in an "Imported on 2026-10-15" folder in the chosen folder)
 - **Add to Collection** (an existing collection, or a new one; left unnamed, it's "Import 2026-10-15")
 
+**File Renaming** (Copy only) names the copies by a template: Date - Filename (`2026-10-15-DSC00112.ARW`),
+Filename, Shoot Name - Sequence (`California Adventure-0001`), Custom Text - Sequence, Custom Text - Filename or Date -
+Sequence, with a Start Number and Extensions (Leave As-Is, lowercase, UPPERCASE). Shoot Name follows the destination's
+subfolder until it's typed; the Example line shows the first checked photo's new name; sidecars follow their photo's
+new name, and second copies keep the original names.
+
 **Apply During Import** sets a **Develop Settings** preset (applied to each photo it suits, as in Develop), a
 **Metadata** preset (creator, copyright, title and caption; the … menu makes and edits them; empty fields leave each
 photo's own) and **Keywords** (completed from the catalog's keywords). A file's own rating comes in too: stars as its

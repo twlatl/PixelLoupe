@@ -149,4 +149,5 @@ nonisolated struct ImportHandling: Codable, Equatable, Sendable {
     /// The develop preset's file, or `nil` for None.
     var developPresetPath: String?
     var metadataPresetID: UUID?
+    var renaming: ImportRenaming?
 }

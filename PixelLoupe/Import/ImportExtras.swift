@@ -17,6 +17,8 @@ nonisolated struct ImportExtras: Sendable {
     var developPreset: DevelopPreset?
     /// The collection the imported photos are added to.
     var collection: CollectionChoice?
+    /// File Renaming: how copies are named (`nil` keeps their names).
+    var renaming: ImportRenaming?
 
     enum CollectionChoice: Sendable, Equatable {
         case existing(UUID)

@@ -752,6 +752,8 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     private func updateCounts() {
         options.duplicateCount = selection.duplicateCount
+        let example = selection.shown.first { selection.isChecked($0) } ?? selection.shown.first
+        options.exampleFile = example.map { (selection.files[$0].candidate.source.url.lastPathComponent, selection.files[$0].captureDate) }
         options.rejectedCount = selection.files.indices.count(where: selection.isRejected)
         selectedLabel.stringValue = selection.files.isEmpty ? "" : "\(selection.checkedCount) of \(selection.files.count) selected"
         let count = selection.checkedCount
