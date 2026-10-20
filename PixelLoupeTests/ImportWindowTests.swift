@@ -478,7 +478,9 @@ struct ImportWindowTests {
 
         let (first, button) = try open()
         #expect(button.accessibilityValue() as? String == "Ascending")
-        #expect(button.image != nil)
+        let image = try #require(button.image)
+        let textSized = try #require(NSImage(systemSymbolName: "arrow.up.arrow.down.circle.fill", accessibilityDescription: nil))
+        #expect(image.size.height > textSized.size.height + 4, "drawn larger, with no Sort label beside it")
         button.performClick(nil)
         #expect(button.accessibilityValue() as? String == "Descending")
         first.close()
