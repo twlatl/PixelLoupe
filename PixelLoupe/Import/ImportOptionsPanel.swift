@@ -13,17 +13,48 @@ final class ImportOptionsModel {
     /// Why Add can't be used for the current source (a memory card), or `nil` when it can.
     var addUnavailableReason: String? { didSet { if addUnavailableReason != oldValue { changed() } } }
 
-    /// What the import will do: the chosen transfer, unless Add isn't available for this source, when
-    /// it copies (without forgetting that Add was chosen, for the next source).
-    var effectiveTransfer: ImportTransfer {
-        addUnavailableReason == nil ? transfer : .copy
-    }
+    // File Handling
+    /// Don't Import Suspected Duplicates (on by default).
+    var skipsDuplicates: Bool { didSet { changed() } }
+    /// Don't Import Rejected Images.
+    var skipsRejected: Bool { didSet { changed() } }
+    var makesSecondCopy: Bool { didSet { changed() } }
+    var secondCopy: URL? { didSet { changed() } }
+    var addsToCollection: Bool { didSet { changed() } }
+    /// The collection to add to: an existing one, or `nil` for a new one named `newCollectionName`.
+    var collectionID: UUID? { didSet { changed() } }
+    var newCollectionName = "" { didSet { changed() } }
+
+    // Apply During Import
+    var developPresetPath: String? { didSet { changed() } }
+    var metadataPresetID: UUID? { didSet { changed() } }
+    /// Not remembered: they're usually for one shoot.
+    var keywords: [String] = [] { didSet { changed() } }
+
+    // What the panel offers, filled in by the window.
+    var collections: [(id: UUID, path: String)] = []
+    var presetGroups: [(name: String, presets: [DevelopPreset])] = []
+    var metadataPresets: [MetadataPreset] = MetadataPreset.all()
+    var keywordSuggestions: [String] = []
+    var duplicateCount = 0
+    var rejectedCount = 0
+
+    var fileHandlingExpanded = true
+    var applyExpanded = true
     var destinationExpanded = true
 
     /// Called after any choice changes.
     @ObservationIgnored var onChange: (() -> Void)?
     /// Called by Choose… to pick the destination folder.
     @ObservationIgnored var onChooseRoot: (() -> Void)?
+    /// Called by Make a Second Copy's Choose… to pick its folder.
+    @ObservationIgnored var onChooseSecondCopy: (() -> Void)?
+
+    /// What the import will do: the chosen transfer, unless Add isn't available for this source, when
+    /// it copies (without forgetting that Add was chosen, for the next source).
+    var effectiveTransfer: ImportTransfer {
+        addUnavailableReason == nil ? transfer : .copy
+    }
 
     init(settings: ImportSettings) {
         transfer = settings.transfer
@@ -31,14 +62,73 @@ final class ImportOptionsModel {
         usesSubfolder = settings.destination.subfolder != nil
         subfolderName = settings.destination.subfolder ?? ""
         layout = settings.destination.layout
+        let handling = settings.handling ?? ImportHandling()
+        skipsDuplicates = !handling.allowsDuplicates
+        skipsRejected = handling.skipsRejected
+        makesSecondCopy = handling.makesSecondCopy
+        secondCopy = handling.secondCopy
+        addsToCollection = handling.addsToCollection
+        collectionID = handling.collectionID
+        developPresetPath = handling.developPresetPath
+        metadataPresetID = handling.metadataPresetID
     }
 
     var settings: ImportSettings {
-        ImportSettings(transfer: transfer, destination: destination)
+        ImportSettings(transfer: transfer, destination: destination, handling: ImportHandling(
+            allowsDuplicates: !skipsDuplicates, skipsRejected: skipsRejected, makesSecondCopy: makesSecondCopy,
+            secondCopy: secondCopy, addsToCollection: addsToCollection, collectionID: collectionID,
+            developPresetPath: developPresetPath, metadataPresetID: metadataPresetID))
     }
 
     var destination: ImportDestination {
         ImportDestination(root: root, subfolder: usesSubfolder ? subfolderName : nil, layout: layout)
+    }
+
+    var developPreset: DevelopPreset? {
+        guard let developPresetPath else { return nil }
+        return presetGroups.lazy.flatMap(\.presets).first { $0.url.path(percentEncoded: false) == developPresetPath }
+    }
+
+    var metadataPreset: MetadataPreset? {
+        metadataPresets.first { $0.id == metadataPresetID }
+    }
+
+    /// What the import does besides bringing files in.
+    var extras: ImportExtras {
+        var extras = ImportExtras()
+        extras.allowsDuplicates = !skipsDuplicates
+        extras.skipsRejected = skipsRejected
+        extras.secondCopy = makesSecondCopy && effectiveTransfer == .copy ? secondCopy : nil
+        extras.keywords = keywords
+        extras.metadata = metadataPreset
+        extras.developPreset = developPreset
+        if addsToCollection {
+            if let collectionID {
+                extras.collection = .existing(collectionID)
+            } else {
+                // Left empty, it's named for the day: "Import 2026-10-15".
+                let name = newCollectionName.trimmingCharacters(in: .whitespacesAndNewlines)
+                extras.collection = .new(name: name.isEmpty ? "Import \(Date().formatted(.iso8601.year().month().day()))" : name)
+            }
+        }
+        return extras
+    }
+
+    /// Saves a new or edited metadata preset, choosing it.
+    func saveMetadataPreset(_ preset: MetadataPreset) {
+        if let index = metadataPresets.firstIndex(where: { $0.id == preset.id }) {
+            metadataPresets[index] = preset
+        } else {
+            metadataPresets.append(preset)
+        }
+        MetadataPreset.save(metadataPresets)
+        metadataPresetID = preset.id
+    }
+
+    func deleteMetadataPreset(_ preset: MetadataPreset) {
+        metadataPresets.removeAll { $0.id == preset.id }
+        MetadataPreset.save(metadataPresets)
+        if metadataPresetID == preset.id { metadataPresetID = nil }
     }
 
     private func changed() {
@@ -46,50 +136,279 @@ final class ImportOptionsModel {
     }
 }
 
-/// The right panel. File Handling, File Renaming and Apply During Import join Destination in later
-/// parts of the import work (RAW-80, RAW-82).
+/// The import window's right panel, as in RAW-76's mockups. (File Renaming joins it with RAW-82.)
 struct ImportOptionsPanel: View {
     @Bindable var model: ImportOptionsModel
+    @State private var editingMetadata: MetadataPreset?
+
+    /// Switches follow Monochrome Mode, like the rest of the window. (Only switches: a tint on buttons
+    /// and pop-ups would make them look disabled.)
+    private var switchTint: Color {
+        AppSettings.shared.isMonochrome ? Color(nsColor: Accent.monochrome) : .accentColor
+    }
 
     var body: some View {
         Form {
-            Section(isExpanded: $model.destinationExpanded) {
-                LabeledContent("Folder") {
-                    HStack(spacing: 6) {
-                        Text(FileManager.default.displayName(atPath: model.root.path(percentEncoded: false)))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .help(model.root.path(percentEncoded: false))
-                        Button("Choose…") { model.onChooseRoot?() }
-                            .accessibilityIdentifier("importChooseDestination")
-                    }
-                }
-                Toggle("Into Subfolder", isOn: $model.usesSubfolder)
-                    // Switches follow Monochrome Mode, like the rest of the window. (Only switches: a tint
-                    // on buttons and pop-ups would make them look disabled.)
-                    .tint(AppSettings.shared.isMonochrome ? Color(nsColor: Accent.monochrome) : .accentColor)
-                    .accessibilityIdentifier("importIntoSubfolder")
-                TextField("Subfolder", text: $model.subfolderName, prompt: Text("Name"))
-                    .disabled(!model.usesSubfolder)
-                    .accessibilityIdentifier("importSubfolderName")
-                Picker("Organize", selection: $model.layout) {
-                    ForEach(ImportFolderLayout.allCases, id: \.self) { layout in
-                        Text(layout.title).tag(layout)
-                    }
-                }
-                .accessibilityIdentifier("importOrganize")
-                if model.effectiveTransfer == .add {
-                    Text("Add leaves photos where they are, so they aren't copied to a destination.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-            } header: {
-                Text("Destination")
-            }
-            .disabled(model.effectiveTransfer == .add)
+            fileHandling
+            applyDuringImport
+            destination
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
+        .sheet(item: $editingMetadata) { preset in
+            MetadataPresetEditor(
+                preset: preset, isNew: !model.metadataPresets.contains { $0.id == preset.id },
+                onSave: { model.saveMetadataPreset($0) }, onDelete: { model.deleteMetadataPreset($0) })
+        }
+    }
+
+    // MARK: File Handling
+
+    private var fileHandling: some View {
+        Section(isExpanded: $model.fileHandlingExpanded) {
+            Toggle(isOn: $model.skipsDuplicates) {
+                Text("Don't Import Suspected Duplicates")
+                if model.duplicateCount > 0 {
+                    Text(model.duplicateCount == 1 ? "1 photo already in library" : "\(model.duplicateCount) photos already in library")
+                }
+            }
+            .tint(switchTint)
+            .accessibilityIdentifier("importSkipsDuplicates")
+            Toggle(isOn: $model.skipsRejected) {
+                Text("Don't Import Rejected Images")
+                if model.rejectedCount > 0 {
+                    Text(model.rejectedCount == 1 ? "1 photo rated as rejected" : "\(model.rejectedCount) photos rated as rejected")
+                }
+            }
+            .tint(switchTint)
+            .accessibilityIdentifier("importSkipsRejected")
+            Toggle("Make a Second Copy", isOn: $model.makesSecondCopy)
+                .tint(switchTint)
+                .disabled(model.effectiveTransfer == .add)
+                .help(model.effectiveTransfer == .add ? "Only when copying" : "Also copies each photo to a backup folder")
+                .accessibilityIdentifier("importSecondCopy")
+            if model.makesSecondCopy, model.effectiveTransfer == .copy {
+                folderRow("Copy To", url: model.secondCopy, placeholder: "Choose a folder") { model.onChooseSecondCopy?() }
+                    .accessibilityIdentifier("importSecondCopyFolder")
+            }
+            Toggle("Add to Collection", isOn: $model.addsToCollection)
+                .tint(switchTint)
+                .accessibilityIdentifier("importAddsToCollection")
+            if model.addsToCollection {
+                Picker("Collection", selection: $model.collectionID) {
+                    Text("New Collection").tag(UUID?.none)
+                    if !model.collections.isEmpty { Divider() }
+                    ForEach(model.collections, id: \.id) { collection in
+                        Text(collection.path).tag(Optional(collection.id))
+                    }
+                }
+                .accessibilityIdentifier("importCollection")
+                if model.collectionID == nil {
+                    TextField("Name", text: $model.newCollectionName, prompt: Text("Import \(Date().formatted(.iso8601.year().month().day()))"))
+                        .accessibilityIdentifier("importNewCollectionName")
+                }
+            }
+        } header: {
+            Text("File Handling")
+        }
+    }
+
+    // MARK: Apply During Import
+
+    private var applyDuringImport: some View {
+        Section(isExpanded: $model.applyExpanded) {
+            Picker("Develop Settings", selection: $model.developPresetPath) {
+                Text("None").tag(String?.none)
+                ForEach(model.presetGroups, id: \.name) { group in
+                    Section(group.name) {
+                        ForEach(group.presets) { preset in
+                            Text(preset.name).tag(Optional(preset.url.path(percentEncoded: false)))
+                        }
+                    }
+                }
+            }
+            .help("Applied to every photo it suits, as in Develop")
+            .accessibilityIdentifier("importDevelopPreset")
+            LabeledContent("Metadata") {
+                HStack(spacing: 6) {
+                    Picker("Metadata", selection: $model.metadataPresetID) {
+                        Text("None").tag(UUID?.none)
+                        ForEach(model.metadataPresets) { preset in
+                            Text(preset.name).tag(Optional(preset.id))
+                        }
+                    }
+                    .labelsHidden()
+                    .accessibilityIdentifier("importMetadataPreset")
+                    Menu {
+                        Button("New Preset…") { editingMetadata = MetadataPreset(name: "") }
+                        if let preset = model.metadataPreset {
+                            Button("Edit “\(preset.name)”…") { editingMetadata = preset }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .accessibilityLabel("Metadata presets")
+                    .accessibilityIdentifier("importMetadataPresetMenu")
+                }
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Keywords")
+                KeywordTokenField(keywords: $model.keywords, suggestions: model.keywordSuggestions)
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("importKeywords")
+            }
+        } header: {
+            Text("Apply During Import")
+        }
+    }
+
+    // MARK: Destination
+
+    private var destination: some View {
+        Section(isExpanded: $model.destinationExpanded) {
+            folderRow("Folder", url: model.root, placeholder: "") { model.onChooseRoot?() }
+                .accessibilityIdentifier("importChooseDestination")
+            Toggle("Into Subfolder", isOn: $model.usesSubfolder)
+                .tint(switchTint)
+                .accessibilityIdentifier("importIntoSubfolder")
+            TextField("Subfolder", text: $model.subfolderName, prompt: Text("Name"))
+                .disabled(!model.usesSubfolder)
+                .accessibilityIdentifier("importSubfolderName")
+            Picker("Organize", selection: $model.layout) {
+                ForEach(ImportFolderLayout.allCases, id: \.self) { layout in
+                    Text(layout.title).tag(layout)
+                }
+            }
+            .accessibilityIdentifier("importOrganize")
+            if model.effectiveTransfer == .add {
+                Text("Add leaves photos where they are, so they aren't copied to a destination.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Destination")
+        }
+        .disabled(model.effectiveTransfer == .add)
+    }
+
+    private func folderRow(_ title: String, url: URL?, placeholder: String, choose: @escaping () -> Void) -> some View {
+        LabeledContent(title) {
+            HStack(spacing: 6) {
+                Text(url.map { FileManager.default.displayName(atPath: $0.path(percentEncoded: false)) } ?? placeholder)
+                    .foregroundStyle(url == nil ? .secondary : .primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(url?.path(percentEncoded: false) ?? "")
+                Button("Choose…", action: choose)
+            }
+        }
+    }
+}
+
+/// A token field for keywords, completing from the catalog's keywords as you type.
+struct KeywordTokenField: NSViewRepresentable {
+    @Binding var keywords: [String]
+    var suggestions: [String]
+
+    func makeNSView(context: Context) -> NSTokenField {
+        let field = NSTokenField()
+        field.delegate = context.coordinator
+        field.placeholderString = "Add keywords"
+        field.tokenizingCharacterSet = CharacterSet(charactersIn: ",\n")
+        field.completionDelay = 0.1
+        field.setAccessibilityLabel("Keywords")
+        return field
+    }
+
+    func updateNSView(_ field: NSTokenField, context: Context) {
+        context.coordinator.parent = self
+        let current = (field.objectValue as? [String]) ?? []
+        if current != keywords { field.objectValue = keywords }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
+
+    final class Coordinator: NSObject, NSTokenFieldDelegate {
+        var parent: KeywordTokenField
+
+        init(parent: KeywordTokenField) {
+            self.parent = parent
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            update(notification)
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            update(notification)
+        }
+
+        private func update(_ notification: Notification) {
+            guard let field = notification.object as? NSTokenField else { return }
+            let tokens = ((field.objectValue as? [Any]) ?? []).compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            let keywords = tokens.filter { !$0.isEmpty }.reduce(into: [String]()) { list, keyword in
+                if !list.contains(where: { $0.caseInsensitiveCompare(keyword) == .orderedSame }) { list.append(keyword) }
+            }
+            if keywords != parent.keywords { parent.keywords = keywords }
+        }
+
+        func tokenField(
+            _ tokenField: NSTokenField, completionsForSubstring substring: String, indexOfToken tokenIndex: Int,
+            indexOfSelectedItem selectedIndex: UnsafeMutablePointer<Int>?
+        ) -> [Any]? {
+            parent.suggestions.filter { $0.range(of: substring, options: [.caseInsensitive, .anchored]) != nil }.prefix(20).map { $0 }
+        }
+    }
+}
+
+/// Makes or edits a metadata preset (Apply During Import ▸ Metadata).
+struct MetadataPresetEditor: View {
+    @State var preset: MetadataPreset
+    let isNew: Bool
+    let onSave: (MetadataPreset) -> Void
+    let onDelete: (MetadataPreset) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(isNew ? "New Metadata Preset" : "Edit Metadata Preset")
+                .font(.headline)
+            Form {
+                TextField("Preset Name", text: $preset.name)
+                    .accessibilityIdentifier("metadataPresetName")
+                TextField("Creator", text: $preset.creator)
+                TextField("Copyright", text: $preset.copyright, prompt: Text("© 2026 Your Name"))
+                TextField("Title", text: $preset.title)
+                TextField("Caption", text: $preset.caption, axis: .vertical)
+                    .lineLimit(2...4)
+            }
+            Text("Empty fields are left as each photo has them.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            HStack {
+                if !isNew {
+                    Button("Delete Preset", role: .destructive) {
+                        onDelete(preset)
+                        dismiss()
+                    }
+                }
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button(isNew ? "Create" : "Save") {
+                    onSave(preset)
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(preset.name.trimmingCharacters(in: .whitespaces).isEmpty)
+                .accessibilityIdentifier("metadataPresetSave")
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
     }
 }
 

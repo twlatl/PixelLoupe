@@ -941,8 +941,8 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         let controller = ImportWindowController(
             service: ImportService(store: store), catalogURL: store.packageURL, info: store.info, source: source)
         controller.window?.title = "Import Photos into “\(store.info.name)”"
-        controller.onImport = { [weak self] candidates, transfer, destination, card in
-            self?.runImport(candidates, transfer: transfer, destination: destination, eject: card)
+        controller.onImport = { [weak self] candidates, transfer, destination, extras, card in
+            self?.runImport(candidates, transfer: transfer, destination: destination, extras: extras, eject: card)
         }
         controller.onClose = { [weak self] in self?.importWindowController = nil }
         importWindowController = controller
@@ -950,7 +950,8 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
     }
 
     func runImport(
-        _ candidates: [ImportService.Candidate], transfer: ImportTransfer, destination: ImportDestination, eject card: URL? = nil
+        _ candidates: [ImportService.Candidate], transfer: ImportTransfer, destination: ImportDestination,
+        extras: ImportExtras = ImportExtras(), eject card: URL? = nil
     ) {
         let service = ImportService(store: store)
         importTask = Task { [weak self] in
@@ -959,7 +960,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
                 self?.state.importStatus = nil
             }
             do {
-                let summary = try await service.importPhotos(candidates, transfer: transfer, destination: destination) { progress in
+                let summary = try await service.importPhotos(candidates, transfer: transfer, destination: destination, extras: extras) { progress in
                     self?.state.importStatus = LibraryState.ImportStatus(
                         completed: progress.completed, total: progress.total
                     )

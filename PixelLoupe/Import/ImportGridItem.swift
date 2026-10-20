@@ -38,15 +38,19 @@ final class ImportGridItem: NSCollectionViewItem {
         cell.setImage(nil, animated: false)
     }
 
-    func configure(with file: ImportService.ScannedFile, number: Int, isChecked: Bool, isDuplicate: Bool, previews: ImportPreviewLoader) {
+    func configure(with file: ImportService.ScannedFile, number: Int, check: ImportSelection.Check, previews: ImportPreviewLoader) {
         let url = file.candidate.source.url
         cell.fileName.stringValue = url.lastPathComponent
         cell.placeholder.stringValue = url.pathExtension.uppercased()
         cell.info.stringValue = Self.info(for: file) ?? ""
         cell.info.isHidden = cell.info.stringValue.isEmpty
         cell.number.stringValue = "\(number)"
-        cell.toolTip = isDuplicate ? "\(url.lastPathComponent) is already in this catalog" : url.path(percentEncoded: false)
-        setChecked(isChecked, isDuplicate: isDuplicate)
+        cell.toolTip = switch check.badge {
+        case "In Library"?: "\(url.lastPathComponent) is already in this catalog"
+        case "Rejected"?: "\(url.lastPathComponent) is rated as rejected"
+        default: url.path(percentEncoded: false)
+        }
+        setCheck(check)
 
         guard representedURL != url else { return }
         representedURL = url
@@ -62,13 +66,14 @@ final class ImportGridItem: NSCollectionViewItem {
         }
     }
 
-    func setChecked(_ isChecked: Bool, isDuplicate: Bool) {
-        cell.checkbox.state = isChecked ? .on : .off
-        cell.checkbox.isEnabled = !isDuplicate
-        cell.isDuplicate = isDuplicate
+    func setCheck(_ check: ImportSelection.Check) {
+        cell.checkbox.state = check.isChecked ? .on : .off
+        cell.checkbox.isEnabled = check.isCheckable
+        cell.badgeText = check.badge
         let name = cell.fileName.stringValue
-        cell.checkbox.setAccessibilityLabel(isDuplicate ? "\(name), in library" : "Import \(name)")
-        cell.setAccessibilityLabel(isDuplicate ? "\(name), in library" : name)
+        let label = check.badge.map { "\(name), \($0.lowercased())" }
+        cell.checkbox.setAccessibilityLabel(label ?? "Import \(name)")
+        cell.setAccessibilityLabel(label ?? name)
     }
 
     /// A movie's length, or "+ JPG" for a raw file with its JPEG.
@@ -88,12 +93,14 @@ final class ImportGridItem: NSCollectionViewItem {
 final class ImportGridCellView: NSView {
     var isSelected = false { didSet { needsDisplay = true } }
     var isHighlighted = false { didSet { needsDisplay = true } }
-    var isDuplicate = false {
+    /// "In Library" or "Rejected" in place of the number, with the photo dimmed.
+    var badgeText: String? {
         didSet {
-            badge.isHidden = !isDuplicate
-            number.isHidden = isDuplicate
-            imageLayer.opacity = isDuplicate ? 0.45 : 1
-            fileName.textColor = isDuplicate ? .tertiaryLabelColor : .secondaryLabelColor
+            badge.stringValue = badgeText ?? ""
+            badge.isHidden = badgeText == nil
+            number.isHidden = badgeText != nil
+            imageLayer.opacity = badgeText != nil ? 0.45 : 1
+            fileName.textColor = badgeText != nil ? .tertiaryLabelColor : .secondaryLabelColor
         }
     }
 
@@ -313,9 +320,9 @@ final class ImportEnlargedView: NSView {
         if event.clickCount == 2 { onDoubleClick?() }
     }
 
-    func show(_ file: ImportService.ScannedFile, number: Int, isChecked: Bool, isDuplicate: Bool, previews: ImportPreviewLoader) {
+    func show(_ file: ImportService.ScannedFile, number: Int, check: ImportSelection.Check, previews: ImportPreviewLoader) {
         let url = file.candidate.source.url
-        setChecked(isChecked, isDuplicate: isDuplicate)
+        setCheck(check)
         caption.stringValue = "\(number). \(url.lastPathComponent) — \(file.captureDate.formatted(date: .abbreviated, time: .shortened))"
         setAccessibilityLabel(url.lastPathComponent)
         guard url != shownURL else { return }
@@ -331,10 +338,10 @@ final class ImportEnlargedView: NSView {
         }
     }
 
-    func setChecked(_ isChecked: Bool, isDuplicate: Bool) {
-        checkbox.state = isChecked ? .on : .off
-        checkbox.isEnabled = !isDuplicate
-        checkbox.title = isDuplicate ? "In Library" : "Import"
+    func setCheck(_ check: ImportSelection.Check) {
+        checkbox.state = check.isChecked ? .on : .off
+        checkbox.isEnabled = check.isCheckable
+        checkbox.title = check.badge ?? "Import"
     }
 
     func clear() {

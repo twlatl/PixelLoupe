@@ -253,7 +253,7 @@ struct ImportWindowTests {
         let controller = ImportWindowController(service: ImportService(store: store), catalogURL: catalog, info: info, source: .init(urls: [card]))
         var imported: [ImportService.Candidate] = []
         var importedTo: ImportDestination?
-        controller.onImport = { candidates, _, destination, _ in
+        controller.onImport = { candidates, _, destination, _, _ in
             imported = candidates
             importedTo = destination
         }
@@ -290,7 +290,7 @@ struct ImportWindowTests {
         let store = try CatalogStore.inMemory(info: info, packageURL: catalog)
         let controller = ImportWindowController(service: ImportService(store: store), catalogURL: catalog, info: info)
         let window = try #require(controller.window)
-        controller.showWindow(nil)
+        // Not shown: tests run in parallel, and a window brought to the front covers other tests' windows.
         window.setFrame(NSRect(x: 0, y: 0, width: 1240, height: 800), display: true)
         window.layoutIfNeeded()
         let content = try #require(window.contentView)

@@ -224,6 +224,17 @@ photo, or click the loupe button, to see it filling the grid's space; `←` / `�
 back. The right panel's **Destination** section sets the folder, an optional subfolder, and how photos are organized by
 date (`2026/2026-10-15`, `2026/10-15`, `2026/10/15`, `2026-10-15`, `2026/October/15`, or into one folder).
 
+The right panel's **File Handling** section:
+- **Don't Import Suspected Duplicates** (on by default; turned off, photos in the library can be checked and imported again)
+- **Don't Import Rejected Images** (files rated as rejected, `xmp:Rating` −1, can't be checked)
+- **Make a Second Copy** (Copy only: a backup of each file in an "Imported on 2026-10-15" folder in the chosen folder)
+- **Add to Collection** (an existing collection, or a new one; left unnamed, it's "Import 2026-10-15")
+
+**Apply During Import** sets a **Develop Settings** preset (applied to each photo it suits, as in Develop), a
+**Metadata** preset (creator, copyright, title and caption; the … menu makes and edits them; empty fields leave each
+photo's own) and **Keywords** (completed from the catalog's keywords). A file's own rating comes in too: stars as its
+rating, −1 as Rejected. All of these except the keywords are remembered for each catalog.
+
 **Import N Photos** imports the checked photos, with progress in the catalog window's bottom bar, and closes the window.
 The left sidebar's **Previous Import** then shows them.
 

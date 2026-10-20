@@ -108,6 +108,9 @@ nonisolated struct ImportDestination: Codable, Equatable, Sendable {
 nonisolated struct ImportSettings: Codable, Equatable, Sendable {
     var transfer: ImportTransfer
     var destination: ImportDestination
+    /// File Handling and Apply During Import (keywords aren't remembered). Missing in settings saved
+    /// before those existed.
+    var handling: ImportHandling? = nil
 
     private static let key = "ImportSettingsByCatalog"
 
@@ -133,4 +136,17 @@ nonisolated struct ImportSettings: Codable, Equatable, Sendable {
         all[catalog.standardizedFileURL.path(percentEncoded: false)] = data
         defaults.set(all, forKey: Self.key)
     }
+}
+
+/// The import window's remembered File Handling and Apply During Import choices.
+nonisolated struct ImportHandling: Codable, Equatable, Sendable {
+    var allowsDuplicates = false
+    var skipsRejected = false
+    var makesSecondCopy = false
+    var secondCopy: URL?
+    var addsToCollection = false
+    var collectionID: UUID?
+    /// The develop preset's file, or `nil` for None.
+    var developPresetPath: String?
+    var metadataPresetID: UUID?
 }

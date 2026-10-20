@@ -9,7 +9,7 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     /// Called with the checked files, where they go, and the card to eject afterwards (Eject After
     /// Import) when Import is clicked. The window closes itself.
-    var onImport: (([ImportService.Candidate], ImportTransfer, ImportDestination, _ eject: URL?) -> Void)?
+    var onImport: (([ImportService.Candidate], ImportTransfer, ImportDestination, ImportExtras, _ eject: URL?) -> Void)?
     /// Called when the window closes, imported or not.
     var onClose: (() -> Void)?
 
@@ -95,6 +95,10 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
 
         options.onChange = { [weak self] in self?.optionsChanged() }
         options.onChooseRoot = { [weak self] in self?.chooseDestination() }
+        options.onChooseSecondCopy = { [weak self] in self?.chooseSecondCopy() }
+        options.collections = service.collections()
+        options.keywordSuggestions = service.keywordNames()
+
         sources.onSelect = { [weak self] source in self?.scan(source) }
         sources.onChooseFolder = { [weak self] in self?.chooseFolder() }
         sources.hasNewPhotos = { [service] card in (try? await service.hasNewPhotos(in: [card])) ?? false }
@@ -121,6 +125,23 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func showWindow(_ sender: Any?) {
+        super.showWindow(sender)
+        loadPresetsIfNeeded()
+    }
+
+    /// The develop presets for Apply During Import, read from disk once the window is on screen.
+    private func loadPresetsIfNeeded() {
+        guard options.presetGroups.isEmpty, !isLoadingPresets else { return }
+        isLoadingPresets = true
+        Task { [weak self] in
+            await PresetLibrary.shared.load()
+            self?.options.presetGroups = PresetLibrary.shared.groups
+        }
+    }
+
+    private var isLoadingPresets = false
 
     /// Shows `source`, from a drop on the catalog window while the import window is open.
     func open(_ source: Source) {
@@ -577,6 +598,21 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         chooseDestination()
     }
 
+    private func chooseSecondCopy() {
+        guard let window else { return }
+        let panel = NSOpenPanel()
+        panel.message = "Choose the folder for second copies. Each import goes in an “Imported on” folder in it."
+        panel.prompt = "Choose"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.directoryURL = options.secondCopy
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let self, let url = panel.url else { return }
+            options.secondCopy = url
+        }
+    }
+
     private func chooseDestination() {
         guard let window else { return }
         let panel = NSOpenPanel()
@@ -596,6 +632,8 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         options.settings.save(for: catalogURL)
         selection.setTransfer(options.effectiveTransfer)
         selection.setDestination(options.destination)
+        selection.setAllowsDuplicates(!options.skipsDuplicates)
+        selection.setSkipsRejected(options.skipsRejected)
         if enlargedIndex == nil { collectionView.reloadData() } else { refreshChecks() }
         updateTopBar()
         updateCounts()
@@ -632,7 +670,7 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         checkAnchor = nil
         selection = ImportSelection(
             files: files, transfer: options.effectiveTransfer, sort: selection.sort, filter: selection.filter,
-            destination: options.destination)
+            destination: options.destination, allowsDuplicates: !options.skipsDuplicates, skipsRejected: options.skipsRejected)
         collectionView.reloadData()
         updateCounts()
     }
@@ -713,6 +751,8 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     // MARK: - Checking
 
     private func updateCounts() {
+        options.duplicateCount = selection.duplicateCount
+        options.rejectedCount = selection.files.indices.count(where: selection.isRejected)
         selectedLabel.stringValue = selection.files.isEmpty ? "" : "\(selection.checkedCount) of \(selection.files.count) selected"
         let count = selection.checkedCount
         let photos = count == 1 ? "1 photo" : "\(count) photos"
@@ -727,10 +767,10 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         for indexPath in collectionView.indexPathsForVisibleItems() {
             let index = selection.index(at: indexPath)
             (collectionView.item(at: indexPath) as? ImportGridItem)?
-                .setChecked(selection.isChecked(index), isDuplicate: selection.isDuplicate(index))
+                .setCheck(selection.check(index))
         }
         if let enlargedIndex {
-            enlargedView.setChecked(selection.isChecked(enlargedIndex), isDuplicate: selection.isDuplicate(enlargedIndex))
+            enlargedView.setCheck(selection.check(enlargedIndex))
         }
         updateCounts()
     }
@@ -792,8 +832,7 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     private func enlarge(_ index: Int) {
         enlargedIndex = index
         enlargedView.show(
-            selection.files[index], number: selection.number(of: index), isChecked: selection.isChecked(index),
-            isDuplicate: selection.isDuplicate(index), previews: previews)
+            selection.files[index], number: selection.number(of: index), check: selection.check(index), previews: previews)
         enlargedView.isHidden = false
         gridScrollView.isHidden = true
         viewControl.selectedSegment = 1
@@ -864,7 +903,7 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         }
         options.settings.save(for: catalogURL)
         let card = ejectAfterImport.state == .on ? currentSource.flatMap { ImportCards.isOnCard($0.urls) ? ImportCards.card(containing: $0.urls[0]) : nil } : nil
-        onImport?(candidates, options.effectiveTransfer, options.destination, card)
+        onImport?(candidates, options.effectiveTransfer, options.destination, options.extras, card)
         close()
     }
 }
@@ -883,8 +922,7 @@ extension ImportWindowController: NSCollectionViewDataSource, PhotoCollectionVie
         if let item = item as? ImportGridItem {
             let index = selection.index(at: indexPath)
             item.configure(
-                with: selection.files[index], number: selection.number(of: index), isChecked: selection.isChecked(index),
-                isDuplicate: selection.isDuplicate(index), previews: previews)
+                with: selection.files[index], number: selection.number(of: index), check: selection.check(index), previews: previews)
             item.onToggle = { [weak self] extendsRange in self?.checkboxClicked(index, extendsRange: extendsRange) }
         }
         return item
