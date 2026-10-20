@@ -19,6 +19,8 @@ nonisolated struct ImportExtras: Sendable {
     var collection: CollectionChoice?
     /// File Renaming: how copies are named (`nil` keeps their names).
     var renaming: ImportRenaming?
+    /// Build Smart Previews: the imported photos are queued for Smart Previews once they're in.
+    var buildsSmartPreviews = false
 
     enum CollectionChoice: Sendable, Equatable {
         case existing(UUID)
