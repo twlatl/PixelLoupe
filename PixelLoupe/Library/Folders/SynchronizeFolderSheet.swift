@@ -95,6 +95,7 @@ struct SynchronizeFolderView: View {
 final class ExportCatalogAccessory: NSView {
     let copiesFilesCheckbox = NSButton(checkboxWithTitle: "Export negative files", target: nil, action: nil)
     let previewsCheckbox = NSButton(checkboxWithTitle: "Include available previews", target: nil, action: nil)
+    let smartPreviewsCheckbox = NSButton(checkboxWithTitle: "Build / Include Smart Previews", target: nil, action: nil)
 
     init(photoCount: Int) {
         super.init(frame: .zero)
@@ -102,7 +103,10 @@ final class ExportCatalogAccessory: NSView {
         copiesFilesCheckbox.state = .on
         copiesFilesCheckbox.toolTip = "Copies the photos’ files next to the new catalog. Otherwise it refers to the files where they are."
         previewsCheckbox.state = .on
-        let checks = NSStackView(views: [copiesFilesCheckbox, previewsCheckbox])
+        smartPreviewsCheckbox.state = .off
+        smartPreviewsCheckbox.toolTip = "Includes the photos’ Smart Previews, building any that are missing, so the catalog can be edited without the original files."
+        // In Lightroom's order.
+        let checks = NSStackView(views: [copiesFilesCheckbox, smartPreviewsCheckbox, previewsCheckbox])
         checks.orientation = .vertical
         checks.alignment = .leading
         checks.spacing = 6
@@ -125,6 +129,9 @@ final class ExportCatalogAccessory: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     var options: CatalogExporter.Options {
-        CatalogExporter.Options(copiesFiles: copiesFilesCheckbox.state == .on, includesPreviews: previewsCheckbox.state == .on)
+        CatalogExporter.Options(
+            copiesFiles: copiesFilesCheckbox.state == .on, includesPreviews: previewsCheckbox.state == .on,
+            includesSmartPreviews: smartPreviewsCheckbox.state == .on
+        )
     }
 }

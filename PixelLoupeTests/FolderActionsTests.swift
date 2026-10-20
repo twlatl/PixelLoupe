@@ -293,6 +293,37 @@ struct FolderActionsTests {
         }
     }
 
+    @Test("Build / Include Smart Previews copies the photos' Smart Previews and builds the missing ones")
+    func exportsCatalogWithSmartPreviews() async throws {
+        let setup = try makeSetup()
+        // A has one already (its virtual copy shares it); B and C don't.
+        let a = try #require(setup.photos["A.jpg"])
+        let smartPreviews = setup.store.smartPreviews
+        try FileManager.default.createDirectory(at: smartPreviews.directory, withIntermediateDirectories: true)
+        let existing = SmartPreviewStore.url(for: a.id, fileExtension: "heic", in: smartPreviews.directory)
+        try SmartPreviewWriter.write(original: a.fileURL, to: existing)
+        smartPreviews.didWrite(existing, for: a.id)
+
+        var options = CatalogExporter.Options()
+        let without = try await CatalogExporter.export(
+            folder: setup.trip, from: setup.store, to: setup.directory.url.appending(path: "Without", directoryHint: .isDirectory), options: options
+        )
+        #expect(without.smartPreviewCount == 0)
+        #expect(!setup.exists(Self.path(CatalogPackage.smartPreviewsURL(in: without.catalogURL))), "off unless asked for")
+
+        options.includesSmartPreviews = true
+        let result = try await CatalogExporter.export(
+            folder: setup.trip, from: setup.store, to: setup.directory.url.appending(path: "With", directoryHint: .isDirectory), options: options
+        )
+        #expect(result.smartPreviewCount == 3)
+        let exported = try CatalogStore.open(at: result.catalogURL)
+        await exported.smartPreviews.load()
+        let photos = try exported.viewContext.fetch(Photo.fetchRequest())
+        #expect(photos.count == 4 && photos.allSatisfy(exported.smartPreviews.contains), "the virtual copy shares A's")
+        let copied = try #require(exported.smartPreviews.files[a.id])
+        #expect(try Data(contentsOf: copied) == Data(contentsOf: existing), "A's is copied")
+    }
+
     // MARK: - Sidebar
 
     @Test("The folder's context menu lists Lightroom's folder actions and the row shows the star and label")

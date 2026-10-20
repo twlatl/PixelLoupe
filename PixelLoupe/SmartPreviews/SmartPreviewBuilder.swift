@@ -119,10 +119,11 @@ final class SmartPreviewBuilder {
         }
     }
 
-    /// Writes the Smart Preview of `original` named by `id`, unless `existing` is current or the original is missing.
-    /// Returns where it went, or nil when there was nothing to do.
+    /// Writes the Smart Preview of `original` named by `id` into `directory` (a catalog's Smart Previews folder),
+    /// unless `existing` is current or the original is missing. Returns where it went, or nil when there was nothing to
+    /// do.
     @concurrent
-    nonisolated private static func write(_ original: URL, existing: URL?, as id: UUID, in directory: URL) async throws -> URL? {
+    nonisolated static func write(_ original: URL, existing: URL?, as id: UUID, in directory: URL) async throws -> URL? {
         guard FileManager.default.fileExists(atPath: original.path(percentEncoded: false)) else { return nil }
         if let existing, SmartPreviewInfo.read(from: existing)?.isCurrent(for: original) == true { return nil }
         guard let fileExtension = SmartPreviewWriter.fileExtension(for: original) else { return nil }
