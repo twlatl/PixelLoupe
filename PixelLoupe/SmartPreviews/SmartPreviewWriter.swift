@@ -57,12 +57,13 @@ nonisolated enum SmartPreviewWriter {
     }
 
     /// Writes the Smart Preview of `original` to `destination`, replacing what's there, and returns what it records.
-    /// Slow (a RAW decode and an encode): call it off the main thread.
+    /// `whiteBalance` is the camera model's table, for a Linear DNG. Slow (a RAW decode and an encode): call it off
+    /// the main thread.
     @discardableResult
-    static func write(original: URL, to destination: URL) throws -> SmartPreviewInfo {
+    static func write(original: URL, to destination: URL, whiteBalance: SmartPreviewWhiteBalance? = nil) throws -> SmartPreviewInfo {
         guard let fingerprint = SmartPreviewInfo.fingerprint(of: original) else { throw WriteError.unreadable }
         switch recipe(for: original) {
-        case .linearDNG?: return try writeLinearDNG(original, fingerprint: fingerprint, to: destination)
+        case .linearDNG?: return try writeLinearDNG(original, fingerprint: fingerprint, whiteBalance: whiteBalance, to: destination)
         case .image?: return try writeImage(original, fingerprint: fingerprint, to: destination)
         case .dngCopy?: return try writeDNGCopy(original, fingerprint: fingerprint, to: destination)
         case nil: throw WriteError.unsupported
@@ -77,7 +78,7 @@ nonisolated enum SmartPreviewWriter {
     private static let d65 = CGPoint(x: 0.3127, y: 0.3290)
 
     private static func writeLinearDNG(
-        _ original: URL, fingerprint: (modified: Date?, size: Int64), to destination: URL
+        _ original: URL, fingerprint: (modified: Date?, size: Int64), whiteBalance: SmartPreviewWhiteBalance?, to destination: URL
     ) throws -> SmartPreviewInfo {
         guard let raw = CIRAWFilter(imageURL: original), let full = raw.outputImage,
               !full.extent.isEmpty, !full.extent.isInfinite else { throw WriteError.unreadable }
@@ -92,6 +93,7 @@ nonisolated enum SmartPreviewWriter {
             sourceSize: fingerprint.size, shadowBias: raw.shadowBias, localToneMapAmount: raw.localToneMapAmount,
             hasBuiltInLensProfile: hasLensProfile, isBuiltInLensProfileApplied: lensProfileApplied
         )
+        info.whiteBalance = whiteBalance
 
         // The linear decode: no look (exposure, tone boost, shadow bias, local tone mapping, gamut mapping), no
         // engine sharpening (the pipeline sharpens), and no white balance. The camera's default noise reduction
