@@ -27,7 +27,8 @@ struct CapsulePicker<Value: Hashable & Sendable>: View {
     let title: (Value) -> String
     let identifier: (Value) -> String
     let onSelect: (Value) -> Void
-    /// Options shown but not available, with why (a tooltip).
+    /// Options shown dimmed because they aren't available, with why (a tooltip). They can still be
+    /// chosen, for whoever shows the reason.
     var unavailable: [Value: String] = [:]
     @Namespace private var namespace
 
@@ -57,7 +58,7 @@ struct CapsulePicker<Value: Hashable & Sendable>: View {
                             .contentShape(.capsule)
                     }
                     .buttonStyle(.plain)
-                    .disabled(unavailable[option] != nil)
+                    // Dimmed but still clickable, so choosing it can say why it isn't available.
                     .opacity(unavailable[option] != nil ? 0.45 : 1)
                     .help(unavailable[option] ?? "")
                     // Monochrome Mode wants the exact color (black in Light Mode); a glass tint is translucent.

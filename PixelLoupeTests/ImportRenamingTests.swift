@@ -50,7 +50,7 @@ struct ImportRenamingTests {
 
         var extras = ImportExtras()
         extras.renaming = ImportRenaming(isOn: true, template: .shootNameSequence, shootName: "Disneyland", extensionCase: .lowercase)
-        let destination = ImportDestination(root: storage, subfolder: nil, layout: .oneFolder)
+        let destination = ImportDestination(root: storage, subfolder: nil, layout: .date, organize: .intoOneFolder)
         _ = try await service.importPhotos(files, transfer: .copy, destination: destination, extras: extras)
         let names = try FileManager.default.contentsOfDirectory(atPath: storage.path(percentEncoded: false)).sorted()
         #expect(names == ["Disneyland-0001.jpg", "Disneyland-0001.tif", "Disneyland-0002.jpg"])

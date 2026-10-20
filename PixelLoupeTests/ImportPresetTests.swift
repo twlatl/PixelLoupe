@@ -28,7 +28,7 @@ struct ImportPresetTests {
     }
 
     @Test func applyingAPresetIsOneChangeAndKeepsKeywords() {
-        let model = ImportOptionsModel(settings: settings(.oneFolder))
+        let model = ImportOptionsModel(settings: settings(.date))
         model.keywords = ["Family"]
         var changes = 0
         model.onChange = { changes += 1 }

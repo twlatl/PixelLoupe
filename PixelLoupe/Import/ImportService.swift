@@ -126,7 +126,8 @@ final class ImportService {
                     let fileName = renaming?.name(for: original, date: captureDate, index: renamed) ?? original
                     renamed += 1
                     target = Self.uniqueDestination(
-                        in: destination.folder(for: captureDate), fileName: fileName, reserved: &reservedDestinations
+                        in: destination.folder(for: captureDate, originalFolder: ImportDestination.originalFolder(of: candidate.source)),
+                        fileName: fileName, reserved: &reservedDestinations
                     )
                     // The destination's subfolders become roots in the catalog's folder tree.
                     anchor = destination.root

@@ -139,6 +139,21 @@ struct ImportOptionsTests {
         #expect(try photos(in: setup.store)[1].adjustments.light.contrast == 0)
     }
 
+    @Test func copiesCanKeepTheirOriginalFolders() async throws {
+        let directory = try TemporaryDirectory()
+        let card = try directory.subdirectory("Card")
+        let folder = try directory.subdirectory("Card/DCIM/100MSDCF")
+        let pictures = try directory.subdirectory("Pictures")
+        try Fixtures.writeJPEG(to: folder.appending(path: "A.jpg"))
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "Test.pixelloupe"))
+        let service = ImportService(store: store)
+        let files = try await service.scan([card]).files.map(\.candidate)
+        let destination = ImportDestination(root: pictures, subfolder: "Trip", layout: .date, organize: .byOriginalFolders)
+        _ = try await service.importPhotos(files, transfer: .copy, destination: destination)
+        let copied = pictures.appending(path: "Trip/DCIM/100MSDCF/A.jpg").path(percentEncoded: false)
+        #expect(FileManager.default.fileExists(atPath: copied), "the card's own folders, not the card's name")
+    }
+
     @Test func selectionFollowsFileHandling() {
         func file(_ name: String, duplicate: Bool = false, rating: Int? = nil) -> ImportService.ScannedFile {
             var metadata = ImageMetadata()

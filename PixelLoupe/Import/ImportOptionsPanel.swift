@@ -16,6 +16,7 @@ final class ImportOptionsModel {
         }
     }
     var layout: ImportFolderLayout { didSet { changed() } }
+    var organize: ImportOrganization { didSet { changed() } }
     /// Why Add can't be used for the current source (a memory card), or `nil` when it can.
     var addUnavailableReason: String? { didSet { if addUnavailableReason != oldValue { changed() } } }
 
@@ -76,6 +77,7 @@ final class ImportOptionsModel {
         usesSubfolder = settings.destination.subfolder != nil
         subfolderName = settings.destination.subfolder ?? ""
         layout = settings.destination.layout
+        organize = settings.destination.organize
         let handling = settings.handling ?? ImportHandling()
         skipsDuplicates = !handling.allowsDuplicates
         skipsRejected = handling.skipsRejected
@@ -98,7 +100,7 @@ final class ImportOptionsModel {
     }
 
     var destination: ImportDestination {
-        ImportDestination(root: root, subfolder: usesSubfolder ? subfolderName : nil, layout: layout)
+        ImportDestination(root: root, subfolder: usesSubfolder ? subfolderName : nil, layout: layout, organize: organize)
     }
 
     var developPreset: DevelopPreset? {
@@ -147,6 +149,7 @@ final class ImportOptionsModel {
         usesSubfolder = settings.destination.subfolder != nil
         subfolderName = settings.destination.subfolder ?? ""
         layout = settings.destination.layout
+        organize = settings.destination.organize
         skipsDuplicates = !handling.allowsDuplicates
         skipsRejected = handling.skipsRejected
         makesSecondCopy = handling.makesSecondCopy
@@ -383,12 +386,15 @@ struct ImportOptionsPanel: View {
             TextField("Subfolder", text: $model.subfolderName, prompt: Text("Name"))
                 .disabled(!model.usesSubfolder)
                 .accessibilityIdentifier("importSubfolderName")
-            Picker("Organize", selection: $model.layout) {
-                ForEach(ImportFolderLayout.allCases, id: \.self) { layout in
-                    Text(layout.title).tag(layout)
-                }
+            Picker("Organize", selection: $model.organize) {
+                ForEach(ImportOrganization.allCases, id: \.self) { Text($0.title).tag($0) }
             }
             .accessibilityIdentifier("importOrganize")
+            Picker("Date Format", selection: $model.layout) {
+                ForEach(ImportFolderLayout.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .disabled(model.organize != .byDate)
+            .accessibilityIdentifier("importDateFormat")
             if model.effectiveTransfer == .add {
                 Text("Add leaves photos where they are, so they aren't copied to a destination.")
                     .font(.footnote)
@@ -519,27 +525,22 @@ struct MetadataPresetEditor: View {
 }
 
 /// The middle of the import window's top bar: Copy or Add, in the Library/Develop picker's style,
-/// with what the choice does under it.
+/// with what the choice does under it. Add, where it isn't available (a card or a camera), still
+/// takes a click, which says why.
 struct ImportTransferBar: View {
     @Bindable var model: ImportOptionsModel
 
     var body: some View {
-        HStack(spacing: 16) {
-            Image(systemName: "arrow.right")
-                .foregroundStyle(.tertiary)
-            VStack(spacing: 2) {
-                CapsulePicker(
-                    options: ImportTransfer.allCases, selected: model.effectiveTransfer, title: \.title,
-                    identifier: { "importTransfer.\($0.rawValue)" }, onSelect: { model.transfer = $0 },
-                    unavailable: model.addUnavailableReason.map { [.add: $0] } ?? [:])
-                Text(model.transfer == .add ? model.addUnavailableReason ?? model.effectiveTransfer.explanation
-                                            : model.effectiveTransfer.explanation)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize()
-            }
-            Image(systemName: "arrow.right")
-                .foregroundStyle(.tertiary)
+        VStack(spacing: 2) {
+            CapsulePicker(
+                options: ImportTransfer.allCases, selected: model.effectiveTransfer, title: \.title,
+                identifier: { "importTransfer.\($0.rawValue)" }, onSelect: { model.transfer = $0 },
+                unavailable: model.addUnavailableReason.map { [.add: $0] } ?? [:])
+            Text(model.transfer == .add ? model.addUnavailableReason ?? model.effectiveTransfer.explanation
+                                        : model.effectiveTransfer.explanation)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize()
         }
         .disabled(model.isLocked)
         .accessibilityElement(children: .contain)

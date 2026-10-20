@@ -173,7 +173,7 @@ final class SmartRulesEditor: NSView {
             case .flag:
                 valueArea.addArrangedSubview(popUp(PhotoFlag.allCases.map { ($0.ruleTitle, $0.ruleValue) }, \.value))
             case .fileType:
-                valueArea.addArrangedSubview(popUp(SmartCollectionRules.fileTypes.map { ($0, $0) }, \.value))
+                valueArea.addArrangedSubview(popUp(SmartCollectionRules.fileTypes.map { ($0 == "Raw" ? "RAW" : $0, $0) }, \.value))
             case .bool:
                 valueArea.addArrangedSubview(popUp([("true", "true"), ("false", "false")], \.value))
             case .colorLabel:

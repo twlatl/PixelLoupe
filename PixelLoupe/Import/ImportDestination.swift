@@ -30,7 +30,25 @@ nonisolated enum ImportTransfer: String, Codable, Sendable, CaseIterable {
     }
 }
 
-/// How copied photos are arranged under the destination folder, by capture date.
+/// How copied photos are arranged in the destination folder (the Destination section's Organize).
+nonisolated enum ImportOrganization: String, Codable, Sendable, CaseIterable {
+    /// The folders they're in on the source, from the folder chosen ("DCIM/100MSDCF" on a card).
+    case byOriginalFolders
+    /// Folders for the day they were taken, in the Date Format.
+    case byDate
+    /// Everything in the one folder.
+    case intoOneFolder
+
+    var title: String {
+        switch self {
+        case .byOriginalFolders: "By Original Folders"
+        case .byDate: "By Date"
+        case .intoOneFolder: "Into One Folder"
+        }
+    }
+}
+
+/// The folders for a photo's capture date when organizing By Date (the Destination's Date Format).
 nonisolated enum ImportFolderLayout: String, Codable, Sendable, CaseIterable {
     /// `2026/2026-10-15`
     case yearAndDate
@@ -42,8 +60,6 @@ nonisolated enum ImportFolderLayout: String, Codable, Sendable, CaseIterable {
     case date
     /// `2026/October/15`
     case yearMonthNameDay
-    /// Everything in the one folder.
-    case oneFolder
 
     var title: String {
         switch self {
@@ -52,7 +68,6 @@ nonisolated enum ImportFolderLayout: String, Codable, Sendable, CaseIterable {
         case .yearMonthDay: "2026/10/15"
         case .date: "2026-10-15"
         case .yearMonthNameDay: "2026/October/15"
-        case .oneFolder: "Into One Folder"
         }
     }
 
@@ -70,37 +85,77 @@ nonisolated enum ImportFolderLayout: String, Codable, Sendable, CaseIterable {
         case .yearMonthNameDay:
             let name = calendar.standaloneMonthSymbols[(parts.month ?? 1) - 1]
             return [year, name, day]
-        case .oneFolder: return []
         }
     }
 }
 
-/// Where an import copies photos: a folder, optionally a named subfolder in it, then date folders.
-nonisolated struct ImportDestination: Codable, Equatable, Sendable {
+/// Where an import copies photos: a folder, optionally a named subfolder in it, then folders by the
+/// photos' original folders or their dates, or none.
+nonisolated struct ImportDestination: Equatable, Sendable {
     var root: URL
-    /// The subfolder's name, or `nil` to put the date folders straight into `root`.
+    /// The subfolder's name, or `nil` to put the photos' folders straight into `root`.
     var subfolder: String?
+    /// The Date Format, when organizing By Date.
     var layout: ImportFolderLayout
+    var organize: ImportOrganization = .byDate
 
-    /// The folder date folders go in: `root`, or its subfolder.
+    /// The folder the photos' folders go in: `root`, or its subfolder.
     var base: URL {
         guard let name = subfolder?.trimmingCharacters(in: .whitespaces), !name.isEmpty else { return root }
         // A slash in the name would make more folders than the user typed.
         return root.appending(path: name.replacingOccurrences(of: "/", with: ":"), directoryHint: .isDirectory)
     }
 
-    /// The folder a photo taken on `date` is copied into.
-    func folder(for date: Date, calendar: Calendar = .current) -> URL {
-        layout.components(for: date, calendar: calendar).reduce(base) {
-            $0.appending(path: $1, directoryHint: .isDirectory)
+    /// The folder a photo taken on `date`, in `originalFolder` on the source, is copied into.
+    func folder(for date: Date, originalFolder: [String] = [], calendar: Calendar = .current) -> URL {
+        let components = switch organize {
+        case .byDate: layout.components(for: date, calendar: calendar)
+        case .byOriginalFolders: originalFolder
+        case .intoOneFolder: [String]()
         }
+        return components.reduce(base) { $0.appending(path: $1, directoryHint: .isDirectory) }
     }
 
-    /// `folder(for:)` relative to `root`, as the import window lists destination folders.
-    func relativePath(for date: Date, calendar: Calendar = .current) -> String {
-        let folder = folder(for: date, calendar: calendar).standardizedFileURL.pathComponents
+    /// `folder(for:originalFolder:)` relative to `root`, as the import window lists destination folders.
+    func relativePath(for date: Date, originalFolder: [String] = [], calendar: Calendar = .current) -> String {
+        let folder = folder(for: date, originalFolder: originalFolder, calendar: calendar).standardizedFileURL.pathComponents
         let rootCount = root.standardizedFileURL.pathComponents.count
         return folder.dropFirst(rootCount).joined(separator: "/")
+    }
+
+    /// The folders a source file is in below the folder chosen as the source (for By Original
+    /// Folders): `DCIM/100MSDCF` for a file on a card chosen as a whole.
+    static func originalFolder(of source: ImportService.ImportSource) -> [String] {
+        let folder = source.url.deletingLastPathComponent().standardizedFileURL.pathComponents
+        let anchor = source.anchor.standardizedFileURL.pathComponents
+        guard folder.starts(with: anchor) else { return [] }
+        // The anchor is the chosen folder's parent; the chosen folder itself isn't recreated.
+        return Array(folder.dropFirst(anchor.count + 1))
+    }
+}
+
+extension ImportDestination: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case root, subfolder, layout, organize
+    }
+
+    nonisolated init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        root = try container.decode(URL.self, forKey: .root)
+        subfolder = try container.decodeIfPresent(String.self, forKey: .subfolder)
+        // Saved before Organize existed, "oneFolder" was one of the date layouts.
+        let layoutName = try container.decode(String.self, forKey: .layout)
+        layout = ImportFolderLayout(rawValue: layoutName) ?? .yearAndDate
+        organize = try container.decodeIfPresent(ImportOrganization.self, forKey: .organize)
+            ?? (layoutName == "oneFolder" ? .intoOneFolder : .byDate)
+    }
+
+    nonisolated func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(root, forKey: .root)
+        try container.encodeIfPresent(subfolder, forKey: .subfolder)
+        try container.encode(layout, forKey: .layout)
+        try container.encode(organize, forKey: .organize)
     }
 }
 

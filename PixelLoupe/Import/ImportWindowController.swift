@@ -47,6 +47,7 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     private var keyMonitor: Any?
     /// The photo filling the grid's space, if one is enlarged.
     private var enlargedIndex: Int?
+    private var currentSourceTitle: String?
     /// The checkbox clicked last, which Shift-clicking another checks or unchecks the range from.
     private var checkAnchor: Int?
 
@@ -127,6 +128,10 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
 
         NotificationCenter.default.addObserver(
             self, selector: #selector(settingsDidChange(_:)), name: AppSettings.didChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(sourceMayBeGone(_:)), name: ImportDevices.didChangeNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(sourceMayBeGone(_:)), name: NSWorkspace.didUnmountNotification, object: nil)
         sources.reload(extra: source)
         updateTopBar()
         updateCounts()
@@ -173,7 +178,7 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         options.transfer = .copy
         options.root = folder
         options.usesSubfolder = false
-        options.layout = .oneFolder
+        options.organize = .intoOneFolder
     }
 
     /// Synchronize Folder: adds the folder's new photos where they are.
@@ -196,6 +201,32 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         guard let window else { return }
         if let content = window.contentView { Accent.apply(in: content) }
         for item in window.toolbar?.items ?? [] { if let view = item.view { Accent.apply(in: view) } }
+    }
+
+    /// A card ejected or a device unplugged while its photos are showing: they're gone from the grid
+    /// too, as in Lightroom.
+    @objc private func sourceMayBeGone(_ notification: Notification) {
+        guard let currentSource, !isImporting, !Self.isAvailable(currentSource) else { return }
+        sourceWentAway(currentSource)
+    }
+
+    /// Whether a source can still be read (its device connected, or its files on disk).
+    static func isAvailable(_ source: Source) -> Bool {
+        if source.isDevice { return source.device != nil }
+        return source.urls.contains { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) }
+    }
+
+    func sourceWentAway(_ source: Source) {
+        // A device that's gone no longer has a name to look up.
+        let name = currentSourceTitle ?? source.title
+        currentSource = nil
+        scanTask?.cancel()
+        showGrid()
+        replaceSelection(with: [])
+        options.addUnavailableReason = nil
+        ejectAfterImport.isEnabled = false
+        updateTopBar()
+        showMessage("“\(name)” is no longer connected. Choose another source.")
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -620,8 +651,13 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         toPopUp.menu = toMenu
         toPopUp.isEnabled = transfer == .copy
         if transfer == .copy {
-            let sample = selection.files.first?.captureDate ?? Date()
-            toPath.stringValue = ImportWindowSource.breadcrumb(for: destination.folder(for: sample))
+            // Where the first photo goes; before any are listed, just the folder (no date to go by yet).
+            let folder = selection.shown.first.map { index in
+                let file = selection.files[index]
+                return destination.folder(
+                    for: file.captureDate, originalFolder: ImportDestination.originalFolder(of: file.candidate.source))
+            } ?? destination.base
+            toPath.stringValue = ImportWindowSource.breadcrumb(for: folder)
             toIcon.image = NSImage(systemSymbolName: ImportWindowSource(urls: [destination.root]).symbol == "externaldrive" ? "externaldrive" : "internaldrive", accessibilityDescription: nil)
         } else {
             toPath.stringValue = "Photos stay where they are"
@@ -789,7 +825,10 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         selection.setDestination(options.destination)
         selection.setAllowsDuplicates(!options.skipsDuplicates)
         selection.setSkipsRejected(options.skipsRejected)
-        if enlargedIndex == nil { collectionView.reloadData() } else { refreshChecks() }
+        // The sections can change (New Photos, Destination Folders), so the grid always reloads, even
+        // behind an enlarged photo: laying out stale sections throws.
+        collectionView.reloadData()
+        if enlargedIndex != nil { refreshChecks() }
         updateTopBar()
         updateCounts()
     }
@@ -798,6 +837,7 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     private func scan(_ source: Source) {
         currentSource = source
+        currentSourceTitle = source.title
         // A card's or a device's photos are copied: added in place, they'd be gone once it's ejected.
         let onCard = ImportCards.isOnCard(source.urls)
         options.addUnavailableReason = if source.isDevice {
@@ -948,14 +988,20 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         refreshChecks()
     }
 
+    /// A photo's checkbox clicked: with Shift, checks or unchecks everything from the last checkbox
+    /// clicked; on one of several selected photos, checks or unchecks all of them (as in Lightroom);
+    /// otherwise just that photo.
     private func checkboxClicked(_ index: Int, extendsRange: Bool) {
+        let selected = collectionView.selectionIndexPaths.map { selection.index(at: $0) }
         if extendsRange, let checkAnchor, checkAnchor != index {
             selection.checkRange(from: checkAnchor, to: index)
-            refreshChecks()
+        } else if selected.count > 1, selected.contains(index) {
+            selection.setChecked(!selection.isChecked(index), selected)
         } else {
-            toggle([index])
+            selection.toggle([index])
         }
         checkAnchor = index
+        refreshChecks()
     }
 
     /// Space: checks or unchecks the enlarged photo, or the selected photos.
