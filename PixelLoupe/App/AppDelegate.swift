@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var newCatalogController: NewCatalogWindowController?
     private var lightroomImport: LightroomImportCoordinator?
     private var settingsWindowController: SettingsWindowController?
+    private var aboutWindowController: AboutWindowController?
 
     private static let lastCatalogKey = "LastCatalogPath"
     /// Launch argument (`-PixelLoupeSkipRestore YES`) that starts at the welcome window, used by UI tests.
@@ -111,6 +112,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
         true
+    }
+
+    /// PixelLoupe ▸ About PixelLoupe (see ``AboutWindowController``): holding ⌥⌘ as it's chosen rolls the credits.
+    @objc func showAbout(_ sender: Any?) {
+        if aboutWindowController == nil {
+            aboutWindowController = AboutWindowController()
+        }
+        aboutWindowController?.show(modifiers: NSEvent.modifierFlags)
     }
 
     /// PixelLoupe ▸ Check for Updates… (see ``Updates``).

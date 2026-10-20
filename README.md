@@ -110,7 +110,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `PixelLoupe/Develop` | Develop module, adjustment model and render pipeline |
 | `PixelLoupe/Develop/Panel` | Adjust panel and its controls |
 | `PixelLoupe/Merge` | Photo Merge: the HDR and panorama merges, their sheets, and the Linear DNG writer |
-| `PixelLoupe/Windows` | Welcome, new-catalog and catalog windows |
+| `PixelLoupe/Windows` | Welcome, About, new-catalog and catalog windows |
 
 ## Keyboard shortcuts
 

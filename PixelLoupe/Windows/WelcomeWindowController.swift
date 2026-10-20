@@ -20,18 +20,7 @@ final class WelcomeWindowController: NSWindowController {
     let recentList = RecentCatalogsListView()
 
     init() {
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: Self.size),
-            styleMask: [.titled, .closable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.title = "Welcome to PixelLoupe"
-        window.isMovableByWindowBackground = true
-        window.identifier = NSUserInterfaceItemIdentifier("welcomeWindow")
-        window.isReleasedWhenClosed = false
+        let window = Self.makeWindow(title: "Welcome to PixelLoupe", identifier: "welcomeWindow")
         super.init(window: window)
         window.contentView = makeContentView()
         updateOpenRecentButton()
@@ -47,6 +36,44 @@ final class WelcomeWindowController: NSWindowController {
         let version = info?["CFBundleShortVersionString"] as? String ?? "?"
         let build = info?["CFBundleVersion"] as? String ?? "?"
         return "Version \(version) (\(build))"
+    }
+
+    /// The welcome window's frame, also used by the About window: fixed size, with the content under a
+    /// transparent title bar.
+    static func makeWindow(title: String, identifier: String) -> NSWindow {
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.title = title
+        window.isMovableByWindowBackground = true
+        window.identifier = NSUserInterfaceItemIdentifier(identifier)
+        window.isReleasedWhenClosed = false
+        return window
+    }
+
+    /// The app icon at the top of the sidebar.
+    static func makeAppIcon() -> NSImageView {
+        let icon = NSImageView(image: NSApp.applicationIconImage)
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.widthAnchor.constraint(equalToConstant: 80).isActive = true
+        icon.heightAnchor.constraint(equalToConstant: 80).isActive = true
+        icon.setAccessibilityLabel("PixelLoupe")
+        return icon
+    }
+
+    /// The version under the icon, selectable so it can be copied into a bug report.
+    static func makeVersionLabel(identifier: String) -> NSTextField {
+        let version = NSTextField(labelWithString: versionString())
+        version.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        version.textColor = .secondaryLabelColor
+        version.isSelectable = true
+        version.setAccessibilityIdentifier(identifier)
+        return version
     }
 
     @objc private func recentCatalogsDidChange(_ notification: Notification) {
@@ -81,17 +108,8 @@ final class WelcomeWindowController: NSWindowController {
     }
 
     private func makeSidebar() -> NSView {
-        let icon = NSImageView(image: NSApp.applicationIconImage)
-        icon.imageScaling = .scaleProportionallyUpOrDown
-        icon.widthAnchor.constraint(equalToConstant: 80).isActive = true
-        icon.heightAnchor.constraint(equalToConstant: 80).isActive = true
-        icon.setAccessibilityLabel("PixelLoupe")
-
-        let version = NSTextField(labelWithString: Self.versionString())
-        version.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        version.textColor = .secondaryLabelColor
-        version.isSelectable = true
-        version.setAccessibilityIdentifier("welcomeVersion")
+        let icon = Self.makeAppIcon()
+        let version = Self.makeVersionLabel(identifier: "welcomeVersion")
 
         let title = NSTextField(labelWithString: "Welcome to PixelLoupe")
         title.font = .systemFont(ofSize: 26, weight: .bold)
@@ -157,16 +175,34 @@ final class WelcomeWindowController: NSWindowController {
 }
 
 /// The welcome window's featured photo, filling its half of the window, with the caption on a dark
-/// gradient along the bottom.
+/// gradient along the bottom. The About window shows it too, or its secret photo.
 final class WelcomePhotoView: NSView {
+    enum Content {
+        /// The featured photo, with its caption.
+        case featured
+        /// The About window's secret photo (About opened with ⌥⌘ held), without a caption.
+        case secret
+    }
+
     private static let photo = NSImage(resource: .welcomeScreen)
+    private static let secretPhoto = NSImage(resource: .aboutSecret)
+
+    var content = Content.featured {
+        didSet {
+            guard content != oldValue else { return }
+            applyContent()
+            needsDisplay = true
+        }
+    }
+
+    private let shade = GradientView()
+    private var caption: NSView?
 
     init() {
         super.init(frame: .zero)
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
 
-        let shade = GradientView()
         shade.translatesAutoresizingMaskIntoConstraints = false
         addSubview(shade)
         NSLayoutConstraint.activate([
@@ -178,9 +214,9 @@ final class WelcomePhotoView: NSView {
 
         setAccessibilityElement(true)
         setAccessibilityRole(.image)
-        setAccessibilityLabel(WelcomeWindowController.FeaturedPhoto.accessibilityDescription)
         setAccessibilityIdentifier("welcomePhoto")
         addCaption()
+        applyContent()
     }
 
     @available(*, unavailable)
@@ -191,7 +227,17 @@ final class WelcomePhotoView: NSView {
     override func updateLayer() {
         layer?.masksToBounds = true
         layer?.contentsGravity = .resizeAspectFill
-        layer?.contents = Self.photo.layerContents(forContentsScale: window?.backingScaleFactor ?? 2)
+        let photo = content == .secret ? Self.secretPhoto : Self.photo
+        layer?.contents = photo.layerContents(forContentsScale: window?.backingScaleFactor ?? 2)
+    }
+
+    /// The secret photo has no caption, so no shade for one either.
+    private func applyContent() {
+        shade.isHidden = content == .secret
+        caption?.isHidden = content == .secret
+        setAccessibilityLabel(content == .secret
+            ? AboutWindowController.secretPhotoDescription
+            : WelcomeWindowController.FeaturedPhoto.accessibilityDescription)
     }
 
     /// Clear at the top to translucent black at the bottom, so the white caption reads over the sand.
@@ -232,6 +278,7 @@ final class WelcomePhotoView: NSView {
         caption.spacing = 4
         caption.translatesAutoresizingMaskIntoConstraints = false
         addSubview(caption)
+        self.caption = caption
         NSLayoutConstraint.activate([
             caption.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 28),
             caption.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -24),
