@@ -110,6 +110,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `PixelLoupe/Develop` | Develop module, adjustment model and render pipeline |
 | `PixelLoupe/Develop/Panel` | Adjust panel and its controls |
 | `PixelLoupe/Merge` | Photo Merge: the HDR and panorama merges, their sheets, and the Linear DNG writer |
+| `PixelLoupe/ContactSheet` | Contact Sheet: its window, page layout, preview and PDF writer |
 | `PixelLoupe/Windows` | Welcome, About, new-catalog and catalog windows |
 
 ## Keyboard shortcuts
@@ -165,6 +166,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `N` | Survey: every selected photo side by side; `N` or `Esc` to leave |
 | `⌘Return` | Impromptu Slideshow of the selected photos (or every photo in the grid) on this display; `Esc` or `⌘Return` stops, `Space` pauses, `←` / `→` step |
 | `⌥⇧⌘Return` | Slideshow on the secondary display while you keep working (again to stop) |
+| `⌃⌥⌘C` | Contact Sheet: a window laying out the selected photos (or every photo in the grid) on pages, saved as a PDF with Generate… (see [Contact sheets](#contact-sheets)) |
 
 Single-key shortcuts are ignored while typing in a text field.
 
@@ -278,6 +280,29 @@ next over 1 second; the slideshow repeats until you stop it. `Esc` or `⌘Return
 With a second display, Window ▸ Secondary Display ▸ Slideshow (`⌥⇧⌘Return`, also in the toolbar's display menu)
 plays the slideshow on the secondary display while the main window stays in front for you to keep working. Choose it
 again (it's then **Stop Slideshow**) to stop.
+
+## Contact sheets
+
+Window ▸ Contact Sheet (`⌃⌥⌘C`) opens a window of the selected photos when several are selected, otherwise every photo
+in the grid (the folder, collection or other source with its filters), in grid order. Videos are left out. The photos
+are fixed when the window opens, and you can open several contact sheets at once.
+
+The middle of the window shows the pages as they'll print, with the photos' Develop edits; the sidebar on the right
+sets them up, and the pages follow as you change it:
+
+- **Headline** and **Description**, at the top of every page (they start empty for each sheet).
+- **Text Color** and **Background Color**: black on white unless you choose others.
+- **Page Size** (US Letter, A4, Tabloid or A3; Letter or A4 to begin with, by region), **Orientation** and **Page
+  Numbers** ("2 of 3" at the bottom of each page).
+- **Image Size**: larger photos mean fewer across the page. It moves in whole columns, and shows how many fit
+  ("4 × 5 per page · 3 pages").
+- **Image Border** (white), **Shadow**, and **Image Caption**: one line under every photo with the field you choose
+  (Filename, Title, Caption, Capture Date, Capture Date & Time, Camera, Lens, Exposure, Rating, Creator or Copyright).
+
+The choices other than the headline and description are remembered for the next sheet. **Generate…** asks where to save
+the PDF and writes it in the background, rendering each photo at 300 pixels per inch of its cell (from its Smart
+Preview when the original is missing; a gray placeholder with its name when neither can be read). The text stays text,
+so the PDF can be searched. Cancel stops it without leaving a file behind.
 
 ## Library views
 

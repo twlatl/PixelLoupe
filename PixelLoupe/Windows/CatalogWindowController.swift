@@ -27,6 +27,8 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
     var slideshowController: SlideshowController?
     /// The Secondary Window menu's Slideshow (⌥⇧⌘Return), while it plays on the secondary display.
     var secondarySlideshowController: SlideshowController?
+    /// Window ▸ Contact Sheet windows that are open (each keeps the photos it opened with).
+    var contactSheetControllers: [ContactSheetWindowController] = []
     /// The display button (shown only with more than one display).
     private(set) var displayToolbarItem: NSMenuToolbarItem?
     private let inspectorButton = NSButton()
@@ -152,6 +154,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         importWindowController?.close()
         slideshowController?.stop()
         secondarySlideshowController?.stop()
+        for controller in contactSheetControllers { controller.close() }
         // Closed quietly, so it reopens with the next catalog.
         secondaryWindowController?.closeQuietly()
         secondaryWindowController = nil
@@ -1048,6 +1051,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
     func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
         if let valid = validateSecondaryDisplayItem(item) { return valid }
         if let valid = validateSlideshowItem(item) { return valid }
+        if let valid = validateContactSheetItem(item) { return valid }
         if let valid = validateDevelopSettingsItem(item) { return valid }
         if let valid = validateFolderItem(item) { return valid }
         if let valid = validateSmartPreviewItem(item) { return valid }
