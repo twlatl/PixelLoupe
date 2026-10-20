@@ -24,9 +24,10 @@ enum DNGFixtures {
     }
 
     /// Decodes a DNG without the RAW engine's tone boost and shadow bias, as linear Rec. 2020 RGBA,
-    /// top row first.
-    static func decodeLinear(_ url: URL) throws -> (width: Int, height: Int, pixels: [Float]) {
+    /// top row first, at `scale` (1 = full size).
+    static func decodeLinear(_ url: URL, scale: Float = 1) throws -> (width: Int, height: Int, pixels: [Float]) {
         let filter = try #require(CIRAWFilter(imageURL: url))
+        filter.scaleFactor = scale
         filter.boostAmount = 0
         filter.isGamutMappingEnabled = false
         filter.shadowBias = 0
