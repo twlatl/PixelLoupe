@@ -18,6 +18,11 @@ Open `PixelLoupe.xcodeproj` and run the **PixelLoupe** scheme, or from the comma
 xcodebuild -project PixelLoupe.xcodeproj -scheme PixelLoupe -destination 'platform=macOS' test
 ```
 
+The JPEG XL encoder Smart Previews use, libjxl, is checked in already built, as
+`Packages/JXLEncoder/libjxl.xcframework`, so building needs nothing else. `Scripts/build-libjxl.sh` rebuilds it from
+the pinned libjxl release (it needs CMake: `brew install cmake`). The build is reproducible: with the same Xcode it
+gives the same bytes, so the checked-in copy can be verified with `git diff --stat` after running it.
+
 ## Updates
 
 PixelLoupe updates itself with [Sparkle](https://sparkle-project.org). **PixelLoupe ▸ Check for Updates…** checks now; at
@@ -105,7 +110,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `PixelLoupe/Develop` | Develop module, adjustment model and render pipeline |
 | `PixelLoupe/Develop/Panel` | Adjust panel and its controls |
 | `PixelLoupe/Merge` | Photo Merge: the HDR and panorama merges, their sheets, and the Linear DNG writer |
-| `PixelLoupe/Windows` | Welcome, new-catalog and catalog windows |
+| `PixelLoupe/Windows` | Welcome, About, new-catalog and catalog windows |
 
 ## Keyboard shortcuts
 
@@ -202,25 +207,66 @@ where they are), and **TO** (the destination and the folder the first photo will
 destination are remembered for each catalog; a managed catalog starts out copying into its storage folder
 (`2026/10-15`), a referenced one adding in place.
 
-The sidebar lists **Devices** (memory cards: any disk with a `DCIM` folder, with the camera that shot it and a **New**
+The sidebar lists **Devices** (iPhones, iPads and cameras connected over USB, read with ImageCaptureCore, and memory
+cards: any disk with a `DCIM` folder, with the camera that shot it and a **New**
 badge when it has photos the catalog doesn't), **Volumes** and **Locations** (Pictures, Desktop, Downloads and the last
 ten folders imported from) as folder trees, and **Choose Folder…**. Cards and removable volumes have an eject button.
 **Include Subfolders** (on by default) decides whether a folder's subfolders are read too; **Eject After Import** (off
 by default) ejects a card once all its checked photos have come across. Choosing a source reads its photos and videos
-without importing anything, and shows the count on its row. Photos on a card are always copied (Add is unavailable:
-the catalog would point at a card that's about to be ejected). With Settings ▸ Import ▸ **Open the import window when a
-memory card is inserted** (off by default), inserting a card brings PixelLoupe forward with the card chosen.
+without importing anything, and shows the count on its row. Photos on a card are always copied (Add is dimmed, and
+choosing it says why: the catalog would point at a card that's about to be ejected). Ejecting the card being shown, or
+unplugging the device, empties the grid. With Settings ▸ Import ▸ **Open the import window when a
+memory card is inserted** (off by default), inserting a card brings PixelLoupe forward with the card chosen. A phone's or camera's
+photos show their thumbnails from the device; importing downloads the checked ones to a temporary folder, imports
+them as copies, then removes the downloads. A locked iPhone asks to be unlocked (and to trust this Mac) first.
 
 The grid numbers the photos, sorted by **Capture Time**, **File Name** or **File Type**, and can show **All Photos**,
 **New Photos** (not already in the catalog), or **Destination Folders** (in a section for each folder they'll be copied
 into). New photos start checked; ones the catalog already has show **In Library** and can't be checked (for Copy, the
-same name, size and capture time; for Add, the same file). `Space` checks or unchecks the selected photos. Double-click a
+same name, size and capture time; for Add, the same file). `Space` checks or unchecks the selected photos, as does clicking the checkbox of any one of several selected photos; Shift-clicking a checkbox gives every photo between it and the last checkbox clicked that one's state (uncheck one, Shift-click another, and all between are unchecked). Double-click a
 photo, or click the loupe button, to see it filling the grid's space; `←` / `→` step and `Esc` or a double-click goes
-back. The right panel's **Destination** section sets the folder, an optional subfolder, and how photos are organized by
-date (`2026/2026-10-15`, `2026/10-15`, `2026/10/15`, `2026-10-15`, `2026/October/15`, or into one folder).
+back. The right panel's **Destination** section sets the folder, an optional subfolder, how photos are organized (**By
+Original Folders**, recreating the folders they're in below the source chosen, such as `DCIM/100MSDCF` on a card; **By
+Date**; or **Into One Folder**) and, for By Date, the **Date Format** (`2026/2026-10-15`, `2026/10-15`, `2026/10/15`,
+`2026-10-15` or `2026/October/15`), taken from each photo's capture date.
 
-**Import N Photos** imports the checked photos, with progress in the catalog window's bottom bar, and closes the window.
-The left sidebar's **Previous Import** then shows them.
+The right panel's **File Handling** section:
+- **Build Smart Previews** (off): once the import is in, the photos get Smart Previews in the background, so they can
+  be edited while their originals are offline (as Library ▸ Previews ▸ Build Smart Previews does)
+- **Don't Import Suspected Duplicates** (on by default; turned off, photos in the library can be checked and imported again)
+- **Don't Import Rejected Images** (files rated as rejected, `xmp:Rating` −1, can't be checked)
+- **Make a Second Copy** (Copy only: a backup of each file in an "Imported on 2026-10-15" folder in the chosen folder)
+- **Add to Collection** (an existing collection, or a new one; left unnamed, it's "Import 2026-10-15")
+
+**File Renaming** (Copy only) names the copies by a template: Date - Filename (`2026-10-15-DSC00112.ARW`),
+Filename, Shoot Name - Sequence (`California Adventure-0001`), Custom Text - Sequence, Custom Text - Filename or Date -
+Sequence, with a Start Number and Extensions (Leave As-Is, lowercase, UPPERCASE). Shoot Name follows the destination's
+subfolder until it's typed; the Example line shows the first checked photo's new name; sidecars follow their photo's
+new name, and second copies keep the original names.
+
+**Apply During Import** sets a **Develop Settings** preset (applied to each photo it suits, as in Develop), a
+**Metadata** preset and **Keywords** (completed from the catalog's keywords). A file's own rating comes in too: stars as
+its rating, −1 as Rejected. All of these except the keywords are remembered for each catalog.
+
+The **Metadata** pop-up lists None and your metadata presets, then **New…** (makes a preset and chooses it once saved)
+and **Edit Presets…** (opens the editor on the chosen preset, or the first one). The editor, as in Lightroom, has the
+preset's name, a Preset pop-up to switch presets (asking whether to save unsaved changes), and sections of fields:
+Basic Info, Camera Info, IPTC Content, Copyright, Creator, Image and Status, the IPTC Extension fields, Three
+Dimensional Projection and Video. Only checked fields are applied: a checked field left empty clears that field on the
+photo, and an unchecked one is left as the photo has it. Typing in a field checks it; each section's checkbox and Check
+All / Check None / Check Filled check several at once. Delete Preset… asks first. The same presets are in the Library's
+Metadata panel (Preset pop-up), and presets made before keep working.
+
+The footer's **Import Preset** saves Copy or Add, the right panel's choices (except keywords) and the destination under
+a name (Save Current Settings as New Preset…), and applies them when chosen. Changing a choice afterwards shows the
+preset as "(edited)" until it's updated (Update Preset); presets can be renamed and deleted, are shared by every
+catalog, and each catalog remembers the one last chosen.
+
+**Import N Photos** locks the window (only Cancel works) and shows the progress in its footer. The catalog window
+switches to **Previous Import** (in the sidebar's Catalog section: the photos from the latest import) so the photos
+appear as they come in. With no failures the window closes and a pill over the photos says what happened ("Imported 34
+photos · 6 already in the catalog"); otherwise the window lists the failures until Done. Cancel (or closing the window,
+after confirming) stops the import, keeping what's in so far.
 
 ## Slideshow
 
@@ -749,9 +795,9 @@ imported collections). Drag photos in the grid to reorder them; it is undoable.
 
 ## RAW+JPEG pairs, PSD and video
 
-A raw file and a JPEG with the same name in the same folder import as **one photo** (Lightroom's default): the raw is
+A RAW file and a JPEG with the same name in the same folder import as **one photo** (Lightroom's default): the RAW is
 the photo, the JPEG is its sidecar. The Inspector's File Type shows `Raw + JPEG`, and removing the photo from disk
-moves the JPEG to the Trash with it. **Settings ▸ Import ▸ Treat JPEG files next to raw files as separate photos**
+moves the JPEG to the Trash with it. **Settings ▸ Import ▸ Treat JPEG files next to RAW files as separate photos**
 imports them as two photos instead. Photoshop (`.psd`) files import and show like any image. Video files (MOV, MP4, M4V…)
 import as view-only items: they get a poster-frame thumbnail with a play badge and duration, the viewer plays them with
 the standard controls, and Develop and Export leave them alone. A Lightroom import brings across the same kinds,

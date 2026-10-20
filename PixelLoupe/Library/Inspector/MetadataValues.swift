@@ -96,13 +96,13 @@ nonisolated struct MetadataValues: Sendable {
         }
     }
 
-    /// "Raw (CR3)", or "Raw + JPEG" for a raw file with its JPEG sidecar; "Video (MOV)" for a movie.
+    /// "RAW (CR3)", or "RAW + JPEG" for a RAW file with its JPEG sidecar; "Video (MOV)" for a movie.
     static func fileTypeName(_ type: String, imageSidecars: [String] = [], isVideo: Bool = false) -> String {
         if isVideo { return "Video (\(type.uppercased()))" }
         let name = fileTypeName(type)
         guard !imageSidecars.isEmpty else { return name }
         let sidecars = imageSidecars.map { fileTypeName($0) }.joined(separator: " + ")
-        return name.hasPrefix("Raw") ? "Raw + \(sidecars)" : "\(name) + \(sidecars)"
+        return name.hasPrefix("RAW") ? "RAW + \(sidecars)" : "\(name) + \(sidecars)"
     }
 
     static func fileTypeName(_ type: String) -> String {
@@ -113,7 +113,7 @@ nonisolated struct MetadataValues: Sendable {
         case "PNG": "PNG"
         case "DNG": "Digital Negative (DNG)"
         case "": ""
-        default: "Raw (\(type.uppercased()))"
+        default: "RAW (\(type.uppercased()))"
         }
     }
 

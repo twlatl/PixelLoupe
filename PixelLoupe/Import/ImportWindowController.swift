@@ -9,9 +9,21 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     /// Called with the checked files, where they go, and the card to eject afterwards (Eject After
     /// Import) when Import is clicked. The window closes itself.
-    var onImport: (([ImportService.Candidate], ImportTransfer, ImportDestination, _ eject: URL?) -> Void)?
+    var onImport: (([ImportService.Candidate], ImportTransfer, ImportDestination, ImportExtras, _ eject: URL?) -> Void)?
     /// Called when the window closes, imported or not.
     var onClose: (() -> Void)?
+    /// Called by Cancel (or closing the window, once confirmed) while photos are importing.
+    var onCancelImport: (() -> Void)?
+
+    /// Whether the checked photos are being imported: the window is locked except for Cancel.
+    private(set) var isImporting = false
+    /// Downloading a camera's or phone's checked photos, before they're imported.
+    private var downloadTask: Task<Void, Never>?
+    /// Where they're downloaded to; removed once the import is done.
+    private var stagingFolder: URL?
+    private let lockShield = ImportLockShield()
+    private let progressBar = NSProgressIndicator()
+    private var cancelButton: NSButton?
 
     static let thumbnailSizeRange: ClosedRange<Double> = 100...400
     /// The grid pane's narrowest: the filter and the sort pop-up, once "Sort" and the count have given way.
@@ -26,7 +38,8 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     private let service: ImportService
     private let catalogURL: URL
-    private let options: ImportOptionsModel
+    /// The choices the panel and top bar edit (internal for tests).
+    let options: ImportOptionsModel
     private let previews = ImportPreviewLoader()
     private var selection = ImportSelection(files: [])
     private var currentSource: Source?
@@ -34,6 +47,7 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     private var keyMonitor: Any?
     /// The photo filling the grid's space, if one is enlarged.
     private var enlargedIndex: Int?
+    private var currentSourceTitle: String?
     /// The checkbox clicked last, which Shift-clicking another checks or unchecks the range from.
     private var checkAnchor: Int?
 
@@ -62,6 +76,9 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     private let sizeSlider = NSSlider()
     // Footer
     private let summaryLabel = NSTextField(labelWithString: "")
+    private let presetPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    /// The Import Preset chosen in the footer, if any.
+    private var chosenPresetID: UUID?
     private let importButton = ProminentButton(label: "Import", target: nil, action: nil)
 
     init(service: ImportService, catalogURL: URL, info: CatalogInfo, source: Source? = nil) {
@@ -95,6 +112,10 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
 
         options.onChange = { [weak self] in self?.optionsChanged() }
         options.onChooseRoot = { [weak self] in self?.chooseDestination() }
+        options.onChooseSecondCopy = { [weak self] in self?.chooseSecondCopy() }
+        options.collections = service.collections()
+        options.keywordSuggestions = service.keywordNames()
+
         sources.onSelect = { [weak self] source in self?.scan(source) }
         sources.onChooseFolder = { [weak self] in self?.chooseFolder() }
         sources.hasNewPhotos = { [service] card in (try? await service.hasNewPhotos(in: [card])) ?? false }
@@ -107,6 +128,12 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
 
         NotificationCenter.default.addObserver(
             self, selector: #selector(settingsDidChange(_:)), name: AppSettings.didChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(sourceMayBeGone(_:)), name: ImportDevices.didChangeNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(sourceMayBeGone(_:)), name: NSWorkspace.didUnmountNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(deviceDidUnlock(_:)), name: ImportDevices.didUnlockNotification, object: nil)
         sources.reload(extra: source)
         updateTopBar()
         updateCounts()
@@ -122,6 +149,25 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
+    override func showWindow(_ sender: Any?) {
+        super.showWindow(sender)
+        loadPresetsIfNeeded()
+        // Cameras and phones are looked for once the window is on screen.
+        ImportDevices.shared.start()
+    }
+
+    /// The develop presets for Apply During Import, read from disk once the window is on screen.
+    private func loadPresetsIfNeeded() {
+        guard options.presetGroups.isEmpty, !isLoadingPresets else { return }
+        isLoadingPresets = true
+        Task { [weak self] in
+            await PresetLibrary.shared.load()
+            self?.options.presetGroups = PresetLibrary.shared.groups
+        }
+    }
+
+    private var isLoadingPresets = false
+
     /// Shows `source`, from a drop on the catalog window while the import window is open.
     func open(_ source: Source) {
         sources.reload(extra: source)
@@ -134,7 +180,7 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         options.transfer = .copy
         options.root = folder
         options.usesSubfolder = false
-        options.layout = .oneFolder
+        options.organize = .intoOneFolder
     }
 
     /// Synchronize Folder: adds the folder's new photos where they are.
@@ -157,6 +203,32 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         guard let window else { return }
         if let content = window.contentView { Accent.apply(in: content) }
         for item in window.toolbar?.items ?? [] { if let view = item.view { Accent.apply(in: view) } }
+    }
+
+    /// A card ejected or a device unplugged while its photos are showing: they're gone from the grid
+    /// too, as in Lightroom.
+    @objc private func sourceMayBeGone(_ notification: Notification) {
+        guard let currentSource, !isImporting, !Self.isAvailable(currentSource) else { return }
+        sourceWentAway(currentSource)
+    }
+
+    /// Whether a source can still be read (its device connected, or its files on disk).
+    static func isAvailable(_ source: Source) -> Bool {
+        if source.isDevice { return source.device != nil }
+        return source.urls.contains { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) }
+    }
+
+    func sourceWentAway(_ source: Source) {
+        // A device that's gone no longer has a name to look up.
+        let name = currentSourceTitle ?? source.title
+        currentSource = nil
+        scanTask?.cancel()
+        showGrid()
+        replaceSelection(with: [])
+        options.addUnavailableReason = nil
+        ejectAfterImport.isEnabled = false
+        updateTopBar()
+        showMessage("“\(name)” is no longer connected. Choose another source.")
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -198,6 +270,16 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         stack.orientation = .vertical
         stack.spacing = 0
         fillWidth(stack)
+        // While importing, a shield over the panes takes their clicks.
+        lockShield.isHidden = true
+        lockShield.translatesAutoresizingMaskIntoConstraints = false
+        stack.addSubview(lockShield)
+        NSLayoutConstraint.activate([
+            lockShield.leadingAnchor.constraint(equalTo: panes.view.leadingAnchor),
+            lockShield.trailingAnchor.constraint(equalTo: panes.view.trailingAnchor),
+            lockShield.topAnchor.constraint(equalTo: panes.view.topAnchor),
+            lockShield.bottomAnchor.constraint(equalTo: panes.view.bottomAnchor),
+        ])
         panes.view.setContentHuggingPriority(.init(1), for: .vertical)
         DispatchQueue.main.async {
             // Starting widths, unless the user has dragged the dividers before.
@@ -314,6 +396,7 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         enlargedView.onDoubleClick = { [weak self] in self?.showGrid() }
         emptyLabel.alignment = .center
         emptyLabel.textColor = .secondaryLabelColor
+        emptyLabel.setAccessibilityIdentifier("importMessage")
         spinner.style = .spinning
         spinner.isDisplayedWhenStopped = false
 
@@ -392,7 +475,25 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         importButton.target = self
         importButton.action = #selector(importChecked(_:))
         importButton.setAccessibilityIdentifier("importButton")
-        let footer = bar([summaryLabel, flexible(), cancel, importButton])
+        let presetLabel = NSTextField(labelWithString: "Import Preset")
+        presetLabel.textColor = .secondaryLabelColor
+        presetPopUp.setAccessibilityLabel("Import Preset")
+        presetPopUp.setAccessibilityIdentifier("importPreset")
+        presetPopUp.widthAnchor.constraint(greaterThanOrEqualToConstant: 200).isActive = true
+        chosenPresetID = ImportPreset.chosen(for: catalogURL)
+        updatePresetMenu()
+        // The preset sits in the middle of the footer, as in the mockups.
+        let left = flexible(), right = flexible()
+        cancelButton = cancel
+        progressBar.style = .bar
+        progressBar.isIndeterminate = false
+        progressBar.isHidden = true
+        progressBar.setAccessibilityLabel("Import progress")
+        progressBar.setAccessibilityIdentifier("importProgress")
+        progressBar.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        let footer = bar([summaryLabel, left, presetLabel, presetPopUp, right, progressBar, cancel, importButton])
+        left.widthAnchor.constraint(equalTo: right.widthAnchor).isActive = true
+        footer.setVisibilityPriority(.init(rawValue: 800), for: presetLabel)
         footer.edgeInsets = NSEdgeInsets(top: 10, left: 16, bottom: 12, right: 16)
         return footer
     }
@@ -553,8 +654,13 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         toPopUp.menu = toMenu
         toPopUp.isEnabled = transfer == .copy
         if transfer == .copy {
-            let sample = selection.files.first?.captureDate ?? Date()
-            toPath.stringValue = ImportWindowSource.breadcrumb(for: destination.folder(for: sample))
+            // Where the first photo goes; before any are listed, just the folder (no date to go by yet).
+            let folder = selection.shown.first.map { index in
+                let file = selection.files[index]
+                return destination.folder(
+                    for: file.captureDate, originalFolder: ImportDestination.originalFolder(of: file.candidate.source))
+            } ?? destination.base
+            toPath.stringValue = ImportWindowSource.breadcrumb(for: folder)
             toIcon.image = NSImage(systemSymbolName: ImportWindowSource(urls: [destination.root]).symbol == "externaldrive" ? "externaldrive" : "internaldrive", accessibilityDescription: nil)
         } else {
             toPath.stringValue = "Photos stay where they are"
@@ -577,6 +683,21 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         chooseDestination()
     }
 
+    private func chooseSecondCopy() {
+        guard let window else { return }
+        let panel = NSOpenPanel()
+        panel.message = "Choose the folder for second copies. Each import goes in an “Imported on” folder in it."
+        panel.prompt = "Choose"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.directoryURL = options.secondCopy
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let self, let url = panel.url else { return }
+            options.secondCopy = url
+        }
+    }
+
     private func chooseDestination() {
         guard let window else { return }
         let panel = NSOpenPanel()
@@ -592,11 +713,125 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         }
     }
 
+    // MARK: - Import presets
+
+    private var chosenPreset: ImportPreset? {
+        ImportPreset.all().first { $0.id == chosenPresetID }
+    }
+
+    /// The footer's Import Preset menu: None, the presets (the chosen one marked "edited" once its
+    /// choices are changed), and saving, updating, renaming and deleting.
+    private func updatePresetMenu() {
+        let presets = ImportPreset.all()
+        if let chosenPresetID, !presets.contains(where: { $0.id == chosenPresetID }) { self.chosenPresetID = nil }
+        let chosen = presets.first { $0.id == chosenPresetID }
+        let isEdited = chosen.map { $0.settings != options.settings } ?? false
+        let menu = NSMenu()
+        func add(_ title: String, _ action: Selector?, enabled: Bool = true) -> NSMenuItem {
+            let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.isEnabled = enabled
+            return item
+        }
+        let none = add("None", #selector(choosePreset(_:)))
+        for preset in presets {
+            let item = add(preset.id == chosenPresetID && isEdited ? "\(preset.name) (edited)" : preset.name, #selector(choosePreset(_:)))
+            item.representedObject = preset.id
+        }
+        menu.addItem(.separator())
+        _ = add("Save Current Settings as New Preset…", #selector(savePreset(_:)))
+        if let chosen {
+            _ = add("Update Preset “\(chosen.name)”", #selector(updatePreset(_:)), enabled: isEdited)
+            _ = add("Rename Preset “\(chosen.name)”…", #selector(renamePreset(_:)))
+            _ = add("Delete Preset “\(chosen.name)”…", #selector(deletePreset(_:)))
+        }
+        menu.autoenablesItems = false
+        presetPopUp.menu = menu
+        presetPopUp.select(menu.items.first { ($0.representedObject as? UUID) == chosenPresetID && chosenPresetID != nil } ?? none)
+    }
+
+    @objc private func choosePreset(_ sender: NSMenuItem) {
+        chosenPresetID = sender.representedObject as? UUID
+        ImportPreset.setChosen(chosenPresetID, for: catalogURL)
+        if let preset = chosenPreset { options.apply(preset.settings) }
+        updatePresetMenu()
+    }
+
+    @objc private func savePreset(_ sender: Any?) {
+        askForName(title: "New Import Preset", message: "Saves Copy or Add, the right panel's choices and the destination (not keywords).",
+                   initial: "", confirm: "Save") { [weak self] name in
+            guard let self else { return }
+            let preset = ImportPreset(name: name, settings: options.settings)
+            ImportPreset.save(ImportPreset.all() + [preset])
+            chosenPresetID = preset.id
+            ImportPreset.setChosen(preset.id, for: catalogURL)
+            updatePresetMenu()
+        }
+        updatePresetMenu()
+    }
+
+    @objc private func updatePreset(_ sender: Any?) {
+        guard let chosenPresetID else { return }
+        ImportPreset.save(ImportPreset.all().map { $0.id == chosenPresetID ? ImportPreset(id: $0.id, name: $0.name, settings: options.settings) : $0 })
+        updatePresetMenu()
+    }
+
+    @objc private func renamePreset(_ sender: Any?) {
+        guard let chosen = chosenPreset else { return }
+        askForName(title: "Rename Import Preset", message: nil, initial: chosen.name, confirm: "Rename") { [weak self] name in
+            ImportPreset.save(ImportPreset.all().map { $0.id == chosen.id ? ImportPreset(id: $0.id, name: name, settings: $0.settings) : $0 })
+            self?.updatePresetMenu()
+        }
+        updatePresetMenu()
+    }
+
+    @objc private func deletePreset(_ sender: Any?) {
+        guard let chosen = chosenPreset, let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Delete the import preset “\(chosen.name)”?"
+        alert.informativeText = "The window's current choices stay as they are."
+        alert.addButton(withTitle: "Delete").hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            ImportPreset.save(ImportPreset.all().filter { $0.id != chosen.id })
+            chosenPresetID = nil
+            ImportPreset.setChosen(nil, for: catalogURL)
+            updatePresetMenu()
+        }
+        updatePresetMenu()
+    }
+
+    private func askForName(title: String, message: String?, initial: String, confirm: String, then: @escaping (String) -> Void) {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message ?? ""
+        let field = NSTextField(string: initial)
+        field.placeholderString = "Preset name"
+        field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: confirm)
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { response in
+            let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard response == .alertFirstButtonReturn, !name.isEmpty else { return }
+            then(name)
+        }
+    }
+
     private func optionsChanged() {
+        updatePresetMenu()
         options.settings.save(for: catalogURL)
         selection.setTransfer(options.effectiveTransfer)
         selection.setDestination(options.destination)
-        if enlargedIndex == nil { collectionView.reloadData() } else { refreshChecks() }
+        selection.setAllowsDuplicates(!options.skipsDuplicates)
+        selection.setSkipsRejected(options.skipsRejected)
+        // The sections can change (New Photos, Destination Folders), so the grid always reloads, even
+        // behind an enlarged photo: laying out stale sections throws.
+        collectionView.reloadData()
+        if enlargedIndex != nil { refreshChecks() }
         updateTopBar()
         updateCounts()
     }
@@ -605,10 +840,17 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     private func scan(_ source: Source) {
         currentSource = source
-        // A card's photos are copied: added in place, they'd be gone once the card is ejected.
+        currentSourceTitle = source.title
+        // A card's or a device's photos are copied: added in place, they'd be gone once it's ejected.
         let onCard = ImportCards.isOnCard(source.urls)
-        options.addUnavailableReason = onCard ? "Add isn't available for memory cards; photos on them are copied" : nil
-        ejectAfterImport.isEnabled = onCard
+        options.addUnavailableReason = if source.isDevice {
+            "Add isn't available for cameras and phones; photos on them are copied"
+        } else if onCard {
+            "Add isn't available for memory cards; photos on them are copied"
+        } else {
+            nil
+        }
+        ejectAfterImport.isEnabled = onCard || source.isDevice
         scanTask?.cancel()
         showGrid()
         replaceSelection(with: [])
@@ -617,7 +859,11 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         let includeSubfolders = includeSubfolders.state == .on
         scanTask = Task { [weak self, service] in
             do {
-                let result = try await service.scan(source.urls, includeSubfolders: includeSubfolders)
+                let result = if source.isDevice, let deviceID = ImportDevices.parse(source.urls[0])?.deviceID {
+                    try await service.classify(ImportDevices.shared.candidates(on: deviceID))
+                } else {
+                    try await service.scan(source.urls, includeSubfolders: includeSubfolders)
+                }
                 guard let self, !Task.isCancelled else { return }
                 show(result, from: source)
             } catch is CancellationError {
@@ -628,11 +874,18 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         }
     }
 
+    /// A phone that said "Please unlock" is read again once it's unlocked and trusts this Mac.
+    @objc private func deviceDidUnlock(_ notification: Notification) {
+        guard let currentSource, currentSource.isDevice, !isImporting, selection.files.isEmpty,
+              ImportDevices.parse(currentSource.urls[0])?.deviceID == notification.object as? String else { return }
+        scan(currentSource)
+    }
+
     private func replaceSelection(with files: [ImportService.ScannedFile]) {
         checkAnchor = nil
         selection = ImportSelection(
             files: files, transfer: options.effectiveTransfer, sort: selection.sort, filter: selection.filter,
-            destination: options.destination)
+            destination: options.destination, allowsDuplicates: !options.skipsDuplicates, skipsRejected: options.skipsRejected)
         collectionView.reloadData()
         updateCounts()
     }
@@ -713,6 +966,10 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     // MARK: - Checking
 
     private func updateCounts() {
+        options.duplicateCount = selection.duplicateCount
+        let example = selection.shown.first { selection.isChecked($0) } ?? selection.shown.first
+        options.exampleFile = example.map { (selection.files[$0].candidate.source.url.lastPathComponent, selection.files[$0].captureDate) }
+        options.rejectedCount = selection.files.indices.count(where: selection.isRejected)
         selectedLabel.stringValue = selection.files.isEmpty ? "" : "\(selection.checkedCount) of \(selection.files.count) selected"
         let count = selection.checkedCount
         let photos = count == 1 ? "1 photo" : "\(count) photos"
@@ -727,10 +984,10 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         for indexPath in collectionView.indexPathsForVisibleItems() {
             let index = selection.index(at: indexPath)
             (collectionView.item(at: indexPath) as? ImportGridItem)?
-                .setChecked(selection.isChecked(index), isDuplicate: selection.isDuplicate(index))
+                .setCheck(selection.check(index))
         }
         if let enlargedIndex {
-            enlargedView.setChecked(selection.isChecked(enlargedIndex), isDuplicate: selection.isDuplicate(enlargedIndex))
+            enlargedView.setCheck(selection.check(enlargedIndex))
         }
         updateCounts()
     }
@@ -741,14 +998,20 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         refreshChecks()
     }
 
+    /// A photo's checkbox clicked: with Shift, checks or unchecks everything from the last checkbox
+    /// clicked; on one of several selected photos, checks or unchecks all of them (as in Lightroom);
+    /// otherwise just that photo.
     private func checkboxClicked(_ index: Int, extendsRange: Bool) {
+        let selected = collectionView.selectionIndexPaths.map { selection.index(at: $0) }
         if extendsRange, let checkAnchor, checkAnchor != index {
             selection.checkRange(from: checkAnchor, to: index)
-            refreshChecks()
+        } else if selected.count > 1, selected.contains(index) {
+            selection.setChecked(!selection.isChecked(index), selected)
         } else {
-            toggle([index])
+            selection.toggle([index])
         }
         checkAnchor = index
+        refreshChecks()
     }
 
     /// Space: checks or unchecks the enlarged photo, or the selected photos.
@@ -792,8 +1055,7 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     private func enlarge(_ index: Int) {
         enlargedIndex = index
         enlargedView.show(
-            selection.files[index], number: selection.number(of: index), isChecked: selection.isChecked(index),
-            isDuplicate: selection.isDuplicate(index), previews: previews)
+            selection.files[index], number: selection.number(of: index), check: selection.check(index), previews: previews)
         enlargedView.isHidden = false
         gridScrollView.isHidden = true
         viewControl.selectedSegment = 1
@@ -828,6 +1090,8 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     // MARK: - Keys
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
+        // Locked while importing (Escape still reaches Cancel).
+        guard !isImporting else { return false }
         guard event.window === window, window?.attachedSheet == nil,
               !((window?.firstResponder as? NSText)?.isEditable ?? false),
               event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return false }
@@ -851,8 +1115,89 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     // MARK: - Actions
 
     @objc private func cancel(_ sender: Any?) {
+        // While importing, Cancel stops the import (what's in so far stays in the catalog).
+        if isImporting {
+            if let downloadTask, !downloadTask.isCancelled {
+                downloadTask.cancel()
+            } else {
+                onCancelImport?()
+            }
+            return
+        }
         // Escape leaves the enlarged photo first (handled before this), so here it closes the window.
         window?.performClose(nil)
+    }
+
+    /// Closing the window while importing asks first, then stops the import.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard isImporting else { return true }
+        let alert = NSAlert()
+        alert.messageText = "Stop importing?"
+        alert.informativeText = "Photos already imported stay in the catalog."
+        alert.addButton(withTitle: "Stop Import")
+        alert.addButton(withTitle: "Continue Importing")
+        alert.beginSheetModal(for: sender) { [weak self] response in
+            if response == .alertFirstButtonReturn { self?.cancel(nil) }
+        }
+        return false
+    }
+
+    // MARK: - Importing
+
+    /// Locks the window (except Cancel) and shows the import's progress in the footer.
+    private func beginImporting(total: Int) {
+        isImporting = true
+        lockShield.isHidden = false
+        options.isLocked = true
+        for control in [fromPopUp, toPopUp, presetPopUp] as [NSControl] { control.isEnabled = false }
+        importButton.isHidden = true
+        progressBar.isHidden = false
+        progressBar.maxValue = Double(max(total, 1))
+        progressBar.doubleValue = 0
+        summaryLabel.stringValue = "Importing \(total == 1 ? "1 photo" : "\(total) photos")…"
+        window?.makeFirstResponder(nil)
+    }
+
+    /// The import's progress, from the catalog window running it.
+    func importDidProgress(_ progress: ImportProgress) {
+        guard isImporting else { return }
+        progressBar.maxValue = Double(max(progress.total, 1))
+        progressBar.doubleValue = Double(progress.completed)
+        summaryLabel.stringValue = "Importing \(min(progress.completed, progress.total)) of \(progress.total)…"
+    }
+
+    /// The import finished (or was stopped): with no failures the window closes; otherwise it lists them,
+    /// and Done closes it.
+    func importDidFinish(failures: [String]) {
+        isImporting = false
+        downloadTask = nil
+        // The downloads from a camera or phone are copies by now (or not wanted).
+        if let stagingFolder { try? FileManager.default.removeItem(at: stagingFolder) }
+        stagingFolder = nil
+        if failures.isEmpty, ejectAfterImport.state == .on, let device = currentSource?.device { device.eject() }
+        guard !failures.isEmpty, let window else {
+            close()
+            return
+        }
+        progressBar.isHidden = true
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = failures.count == 1 ? "1 photo couldn't be imported" : "\(failures.count) photos couldn't be imported"
+        alert.informativeText = "The others were imported."
+        let list = NSTextView()
+        list.string = failures.joined(separator: "\n")
+        list.isEditable = false
+        list.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        list.textContainerInset = NSSize(width: 4, height: 4)
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 380, height: 140))
+        scroll.documentView = list
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        list.frame = scroll.contentView.bounds
+        list.autoresizingMask = [.width]
+        alert.accessoryView = scroll
+        alert.addButton(withTitle: "Done")
+        alert.beginSheetModal(for: window) { [weak self] _ in self?.close() }
     }
 
     @objc private func importChecked(_ sender: Any?) {
@@ -864,8 +1209,32 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         }
         options.settings.save(for: catalogURL)
         let card = ejectAfterImport.state == .on ? currentSource.flatMap { ImportCards.isOnCard($0.urls) ? ImportCards.card(containing: $0.urls[0]) : nil } : nil
-        onImport?(candidates, options.effectiveTransfer, options.destination, card)
-        close()
+        beginImporting(total: candidates.count)
+        guard let currentSource, currentSource.isDevice else {
+            onImport?(candidates, options.effectiveTransfer, options.destination, options.extras, card)
+            return
+        }
+        // A camera's or phone's photos are downloaded first, then imported from there as copies.
+        let staging = FileManager.default.temporaryDirectory
+            .appending(path: "PixelLoupe Import \(UUID().uuidString)", directoryHint: .isDirectory)
+        stagingFolder = staging
+        let total = candidates.count
+        downloadTask = Task { [weak self] in
+            do {
+                let files = try await ImportDevices.shared.download(candidates.map(\.source.url), to: staging) { done in
+                    self?.summaryLabel.stringValue = "Downloading \(done) of \(total)…"
+                    self?.progressBar.doubleValue = Double(done)
+                }
+                try Task.checkCancellation()
+                let downloaded = await ImportService.readCandidates(files.map { ImportService.ImportSource(url: $0, anchor: staging) })
+                guard let self else { return }
+                onImport?(downloaded, .copy, options.destination, options.extras, nil)
+            } catch is CancellationError {
+                self?.importDidFinish(failures: [])
+            } catch {
+                self?.importDidFinish(failures: [error.localizedDescription])
+            }
+        }
     }
 }
 
@@ -883,8 +1252,7 @@ extension ImportWindowController: NSCollectionViewDataSource, PhotoCollectionVie
         if let item = item as? ImportGridItem {
             let index = selection.index(at: indexPath)
             item.configure(
-                with: selection.files[index], number: selection.number(of: index), isChecked: selection.isChecked(index),
-                isDuplicate: selection.isDuplicate(index), previews: previews)
+                with: selection.files[index], number: selection.number(of: index), check: selection.check(index), previews: previews)
             item.onToggle = { [weak self] extendsRange in self?.checkboxClicked(index, extendsRange: extendsRange) }
         }
         return item
@@ -922,4 +1290,30 @@ private final class PaneController: NSViewController {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func loadView() { view = content }
+}
+
+/// Covers the import window's panes while photos import, taking their clicks and dimming them a little.
+final class ImportLockShield: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        setAccessibilityElement(false)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.35).cgColor
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        isHidden ? nil : (frame.contains(point) ? self : nil)
+    }
+
+    override func mouseDown(with event: NSEvent) {}
+    override func rightMouseDown(with event: NSEvent) {}
+    override func scrollWheel(with event: NSEvent) {}
 }

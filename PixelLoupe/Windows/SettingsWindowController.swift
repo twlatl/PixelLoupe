@@ -150,9 +150,9 @@ struct ImportSettingsView: View {
 
     var body: some View {
         Form {
-            Toggle("Treat JPEG files next to raw files as separate photos", isOn: $settings.treatJPEGsAsSeparate)
+            Toggle("Treat JPEG files next to RAW files as separate photos", isOn: $settings.treatJPEGsAsSeparate)
                 .accessibilityIdentifier("separateJPEGsToggle")
-            Text("When this is off, a JPEG with the same name as a raw file is that photo's sidecar: it isn't a photo of its own, and removing the photo removes both files.")
+            Text("When this is off, a JPEG with the same name as a RAW file is that photo's sidecar: it isn't a photo of its own, and removing the photo removes both files.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

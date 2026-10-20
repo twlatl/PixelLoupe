@@ -273,7 +273,7 @@ final class PhotoGridCellView: NSView {
         guard let badge else { return }
         infoBadge.title = badge.symbol == nil ? badge.text : " " + badge.text
         infoBadge.image = badge.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
-        infoBadge.toolTip = badge.symbol == nil ? "A raw file and its JPEG, as one photo" : "Video"
+        infoBadge.toolTip = badge.symbol == nil ? "A RAW file and its JPEG, as one photo" : "Video"
         updateAccessibilityValue()
     }
 

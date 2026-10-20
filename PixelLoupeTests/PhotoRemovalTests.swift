@@ -160,7 +160,7 @@ struct PhotoRemovalTests {
         let unrelated = store.thumbnails.directory.appending(path: "notes.txt")
         for url in [kept, orphan, unrelated] { try Data([1]).write(to: url) }
 
-        store.pruneOrphanedThumbnails()
+        store.pruneOrphanedPreviews()
         for _ in 0..<50 where FileManager.default.fileExists(atPath: orphan.path(percentEncoded: false)) {
             try await Task.sleep(for: .milliseconds(20))
         }

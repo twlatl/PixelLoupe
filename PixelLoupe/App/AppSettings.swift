@@ -83,10 +83,12 @@ final class AppSettings {
         set { Defaults.store.set(newValue, forKey: separateJPEGsKey) }
     }
 
+    /// The setting for Settings ▸ Import's toggle. Stored (not read through to the defaults) so SwiftUI
+    /// sees it change; the toggle couldn't be turned off when it wasn't.
     var treatJPEGsAsSeparate: Bool {
-        get { Self.treatsJPEGsAsSeparate }
-        set {
-            Self.treatsJPEGsAsSeparate = newValue
+        didSet {
+            guard treatJPEGsAsSeparate != oldValue else { return }
+            Self.treatsJPEGsAsSeparate = treatJPEGsAsSeparate
             NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
         }
     }
@@ -103,6 +105,7 @@ final class AppSettings {
 
     private init() {
         confirmsQuit = Defaults.store.object(forKey: Self.confirmQuitKey) as? Bool ?? true
+        treatJPEGsAsSeparate = Self.treatsJPEGsAsSeparate
         opensImportOnCardInsert = Defaults.store.bool(forKey: Self.importOnCardKey)
         appearance = Defaults.store.string(forKey: Self.appearanceKey).flatMap(Appearance.init) ?? .system
         matte = Self.storedMatte()

@@ -86,19 +86,32 @@ struct ImportWindowTests {
         #expect(selection.checkedCount == 2, "a duplicate can't be checked")
     }
 
-    @Test func shiftClickChecksOrUnchecksTheRange() {
-        var selection = ImportSelection(files: (1...6).map { file("IMG_\($0).jpg", date: "2026-10-12T09:0\($0):00", duplicate: $0 == 4) })
+    @Test func shiftClickGivesTheRangeTheLastClickedState() {
+        var selection = ImportSelection(files: (1...8).map { file("IMG_\($0).jpg", date: "2026-10-12T09:0\($0):00", duplicate: $0 == 4) })
+        func states() -> [Bool] { selection.files.indices.map(selection.isChecked) }
+        // Everything's checked. Uncheck 6 (the anchor), then Shift-click 2: 2 through 6 are unchecked
+        // (4 is in the library and stays unchecked).
+        selection.toggle([5])
+        selection.checkRange(from: 5, to: 1)
+        #expect(states() == [true, false, false, false, false, false, true, true])
+
+        // Uncheck 8, then Shift-click 7, which is still checked: 7 and 8 end up unchecked, like 8.
+        selection.toggle([7])
+        selection.checkRange(from: 7, to: 6)
+        #expect(states() == [true, false, false, false, false, false, false, false])
+
+        // The case that went wrong: uncheck A, uncheck B, then Shift-click A (already unchecked) from B.
+        selection.setAll(true)
+        selection.toggle([2])
+        selection.toggle([6])
+        selection.checkRange(from: 6, to: 2)
+        #expect(states() == [true, true, false, false, false, false, false, true], "A through B unchecked, not checked again")
+
+        // Checking works the same way.
         selection.setAll(false)
-        // Click 2, then Shift-click 5: 2 through 5 are checked (4 is in the library and stays unchecked).
-        selection.toggle([1])
-        selection.checkRange(from: 1, to: 4)
-        #expect(selection.files.indices.map(selection.isChecked) == [false, true, true, false, true, false])
-        // Shift-click 3 (checked) from 5: 3 through 5 are unchecked.
-        selection.checkRange(from: 4, to: 2)
-        #expect(selection.files.indices.map(selection.isChecked) == [false, true, false, false, false, false])
-        // Backwards from 3 to 1 checks them.
-        selection.checkRange(from: 2, to: 0)
-        #expect(selection.files.indices.map(selection.isChecked) == [true, true, true, false, false, false])
+        selection.toggle([0])
+        selection.checkRange(from: 0, to: 4)
+        #expect(states() == [true, true, true, false, true, false, false, false])
     }
 
     @Test func folderLayouts() throws {
@@ -110,13 +123,32 @@ struct ImportWindowTests {
             .yearMonthDay: "/Pictures/Trip/2026/10/05/",
             .date: "/Pictures/Trip/2026-10-05/",
             .yearMonthNameDay: "/Pictures/Trip/2026/\(Calendar.current.standaloneMonthSymbols[9])/05/",
-            .oneFolder: "/Pictures/Trip/",
         ]
         for (layout, path) in expected {
             let destination = ImportDestination(root: root, subfolder: "Trip", layout: layout)
             #expect(destination.folder(for: date).path(percentEncoded: false) == path)
         }
         #expect(ImportDestination(root: root, subfolder: "  ", layout: .date).base == root, "a blank subfolder is no subfolder")
+
+        // Organize: by the source's own folders, or into one folder, whatever the date.
+        var byFolders = ImportDestination(root: root, subfolder: nil, layout: .date, organize: .byOriginalFolders)
+        #expect(byFolders.folder(for: date, originalFolder: ["DCIM", "100MSDCF"]).path(percentEncoded: false) == "/Pictures/DCIM/100MSDCF/")
+        byFolders.organize = .intoOneFolder
+        #expect(byFolders.folder(for: date, originalFolder: ["DCIM", "100MSDCF"]).path(percentEncoded: false) == "/Pictures/")
+
+        // A card chosen as a whole: its own name isn't a folder, the ones in it are.
+        let source = ImportService.ImportSource(url: URL(filePath: "/Volumes/Untitled/DCIM/100MSDCF/A.ARW"), anchor: URL(filePath: "/Volumes"))
+        #expect(ImportDestination.originalFolder(of: source) == ["DCIM", "100MSDCF"])
+    }
+
+    @Test func settingsSavedWithTheOldOneFolderLayoutStillLoad() throws {
+        let json = #"{"root":"file:///Pictures/","layout":"oneFolder"}"#
+        let destination = try JSONDecoder().decode(ImportDestination.self, from: Data(json.utf8))
+        #expect(destination.organize == .intoOneFolder)
+        let dated = try JSONDecoder().decode(ImportDestination.self, from: Data(#"{"root":"file:///Pictures/","layout":"date"}"#.utf8))
+        #expect(dated.organize == .byDate && dated.layout == .date)
+        let encoded = try JSONEncoder().encode(destination)
+        #expect(try JSONDecoder().decode(ImportDestination.self, from: encoded) == destination)
     }
 
     @Test func settingsAreRememberedPerCatalog() throws {
@@ -253,7 +285,7 @@ struct ImportWindowTests {
         let controller = ImportWindowController(service: ImportService(store: store), catalogURL: catalog, info: info, source: .init(urls: [card]))
         var imported: [ImportService.Candidate] = []
         var importedTo: ImportDestination?
-        controller.onImport = { candidates, _, destination, _ in
+        controller.onImport = { candidates, _, destination, _, _ in
             imported = candidates
             importedTo = destination
         }
@@ -290,7 +322,7 @@ struct ImportWindowTests {
         let store = try CatalogStore.inMemory(info: info, packageURL: catalog)
         let controller = ImportWindowController(service: ImportService(store: store), catalogURL: catalog, info: info)
         let window = try #require(controller.window)
-        controller.showWindow(nil)
+        // Not shown: tests run in parallel, and a window brought to the front covers other tests' windows.
         window.setFrame(NSRect(x: 0, y: 0, width: 1240, height: 800), display: true)
         window.layoutIfNeeded()
         let content = try #require(window.contentView)
@@ -392,4 +424,84 @@ private extension NSView {
         }
         return nil
     }
+}
+
+@Suite("Import window feedback", .serialized)
+struct ImportWindowFeedbackTests {
+    private func window(with files: Int) async throws -> (ImportWindowController, NSCollectionView, TemporaryDirectory, URL) {
+        let directory = try TemporaryDirectory()
+        let card = try directory.subdirectory("Card")
+        for index in 1...files {
+            try Fixtures.writeJPEG(to: card.appending(path: "IMG_\(index).jpg"), captureDate: "2025:06:0\(index) 09:00:00")
+        }
+        let info = Fixtures.managedInfo(storage: try directory.subdirectory("Storage"))
+        let catalog = directory.url.appending(path: "Test.pixelloupe")
+        let store = try CatalogStore.inMemory(info: info, packageURL: catalog)
+        let controller = ImportWindowController(service: ImportService(store: store), catalogURL: catalog, info: info, source: .init(urls: [card]))
+        let grid = try #require(controller.window?.contentView?.feedbackDescendant { $0.accessibilityIdentifier() == "importGrid" } as? NSCollectionView)
+        for _ in 0..<200 where grid.numberOfSections == 0 { try await Task.sleep(for: .milliseconds(20)) }
+        return (controller, grid, directory, card)
+    }
+
+    @Test func aGoneSourceEmptiesTheGrid() async throws {
+        let (controller, grid, directory, card) = try await window(with: 2)
+        defer { withExtendedLifetime(directory) {} }   // dropping it deletes the folder
+        defer { controller.close() }
+        #expect(grid.numberOfItems(inSection: 0) == 2)
+        try FileManager.default.removeItem(at: card)
+        #expect(!ImportWindowController.isAvailable(.init(urls: [card])))
+        controller.sourceWentAway(.init(urls: [card]))
+        #expect(grid.numberOfSections == 0, "the ejected card's photos aren't shown")
+    }
+
+    @Test func theDestinationShowsThePhotosYearNotToday() async throws {
+        let (controller, _, directory, _) = try await window(with: 1)
+        defer { withExtendedLifetime(directory) {} }
+        defer { controller.close() }
+        controller.options.layout = .yearAndDate
+        let path = try #require(controller.window?.toolbar?.items.compactMap(\.view).flatMap { $0.feedbackDescendants }
+            .compactMap { $0 as? NSTextField }.first { $0.stringValue.contains("2025") })
+        #expect(path.stringValue.hasSuffix("2025 › 2025-06-01"))
+    }
+
+    @Test func aCheckboxOnASelectedPhotoChecksTheWholeSelection() async throws {
+        let (controller, grid, directory, _) = try await window(with: 5)
+        defer {
+            controller.close()
+            withExtendedLifetime(directory) {}
+        }
+        grid.layoutSubtreeIfNeeded()
+        // Everything's checked; photos 2–4 are selected; unchecking 3's box unchecks 2–4.
+        grid.selectionIndexPaths = Set((1...3).map { IndexPath(item: $0, section: 0) })
+        let item = try #require(grid.item(at: IndexPath(item: 2, section: 0)) as? ImportGridItem)
+        item.onToggle?(false)
+        let summary = try #require(controller.window?.contentView?.feedbackDescendant { $0.accessibilityIdentifier() == "importSummary" } as? NSTextField)
+        #expect(summary.stringValue.hasPrefix("2 photos"))
+        // A box outside the selection is just that photo.
+        grid.selectionIndexPaths = [IndexPath(item: 0, section: 0)]
+        try #require(grid.item(at: IndexPath(item: 4, section: 0)) as? ImportGridItem).onToggle?(false)
+        #expect(summary.stringValue.hasPrefix("1 photo "))
+    }
+
+    @Test func theJPEGSettingTurnsOffAndOn() {
+        let settings = AppSettings.shared
+        let before = settings.treatJPEGsAsSeparate
+        defer { settings.treatJPEGsAsSeparate = before }
+        settings.treatJPEGsAsSeparate = true
+        #expect(AppSettings.treatsJPEGsAsSeparate)
+        settings.treatJPEGsAsSeparate = false
+        #expect(!settings.treatJPEGsAsSeparate && !AppSettings.treatsJPEGsAsSeparate)
+    }
+}
+
+private extension NSView {
+    func feedbackDescendant(_ matches: (NSView) -> Bool) -> NSView? {
+        if matches(self) { return self }
+        for subview in subviews {
+            if let match = subview.feedbackDescendant(matches) { return match }
+        }
+        return nil
+    }
+
+    var feedbackDescendants: [NSView] { [self] + subviews.flatMap(\.feedbackDescendants) }
 }

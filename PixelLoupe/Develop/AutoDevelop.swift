@@ -11,8 +11,8 @@ nonisolated enum AutoDevelop {
     /// Develop's Auto does), or `nil` when the file can't be read or the photo says nothing about
     /// the light (too dark, too bright or too colorful).
     @concurrent
-    static func whiteBalance(for url: URL, adjustments: PhotoAdjustments) async -> PhotoAdjustments.WhiteBalance? {
-        guard let source = DevelopSource(url: url) else { return nil }
+    static func whiteBalance(for location: PhotoSourceLocation, adjustments: PhotoAdjustments) async -> PhotoAdjustments.WhiteBalance? {
+        guard let source = DevelopSource.open(location) else { return nil }
         let image = source.image(with: adjustments, scale: source.scale(toFit: samplePixels, adjustments: adjustments))
         guard let color = averageColor(of: image) else { return nil }
         let asShot = source.asShotWhiteBalance
@@ -27,8 +27,8 @@ nonisolated enum AutoDevelop {
     /// muted photo. `region` (a unit rectangle of the photo, origin bottom left) limits what's
     /// measured, as for a panorama's edges. `nil` when the file can't be read.
     @concurrent
-    static func settings(for url: URL, adjustments: PhotoAdjustments, region: CGRect? = nil) async -> PhotoAdjustments? {
-        guard let source = DevelopSource(url: url) else { return nil }
+    static func settings(for location: PhotoSourceLocation, adjustments: PhotoAdjustments, region: CGRect? = nil) async -> PhotoAdjustments? {
+        guard let source = DevelopSource.open(location) else { return nil }
         var result = adjustments
         let auto = AdjustmentPipeline.autoLight(for: source, current: adjustments, context: PhotoRenderer.context, region: region)
         result.light.isEnabled = true

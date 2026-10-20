@@ -68,6 +68,7 @@ struct DevelopSidebarTests {
         #expect(panelFrame.maxY <= lineTop + 1 && lineTop - panelFrame.maxY < 20, "starts just below the line: \(panelFrame.maxY) vs \(lineTop)")
         #expect(panelFrame.height > 100)
         #expect(!lensPanel.hasAmbiguousLayout && !histogram.hasAmbiguousLayout)
-        #expect(abs(histogram.frame.height - (HistogramView.plotHeight + 6 + 16)) < 0.5)
+        // The plot, the shooting settings and what the photo is drawn from.
+        #expect(abs(histogram.frame.height - (HistogramView.plotHeight + 6 + 16 + 16)) < 0.5)
     }
 }

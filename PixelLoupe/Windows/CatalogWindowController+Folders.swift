@@ -224,6 +224,7 @@ extension CatalogWindowController {
         guard let window else { return }
         let alert = NSAlert()
         alert.messageText = "Exported \(result.photoCount.formatted()) photo\(result.photoCount == 1 ? "" : "s") as a catalog"
+            + (result.smartPreviewCount > 0 ? ", with \(result.smartPreviewCount.formatted()) Smart Preview\(result.smartPreviewCount == 1 ? "" : "s")" : "")
         alert.informativeText = result.failures.isEmpty
             ? "“\(result.catalogURL.lastPathComponent)” is ready to open."
             : "These files couldn’t be copied: " + result.failures.prefix(10).joined(separator: ", ")

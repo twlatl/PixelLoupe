@@ -96,8 +96,8 @@ extension CatalogWindowController {
     // MARK: - Auto
 
     @objc func autoWhiteBalanceSelected(_ sender: Any?) {
-        applyAuto(actionName: "Auto White Balance") { url, adjustments in
-            guard let whiteBalance = await AutoDevelop.whiteBalance(for: url, adjustments: adjustments) else { return nil }
+        applyAuto(actionName: "Auto White Balance") { location, adjustments in
+            guard let whiteBalance = await AutoDevelop.whiteBalance(for: location, adjustments: adjustments) else { return nil }
             var after = adjustments
             after.whiteBalance = whiteBalance
             return after
@@ -105,23 +105,24 @@ extension CatalogWindowController {
     }
 
     @objc func autoSettingsSelected(_ sender: Any?) {
-        applyAuto(actionName: "Auto Settings") { url, adjustments in
-            await AutoDevelop.settings(for: url, adjustments: adjustments)
+        applyAuto(actionName: "Auto Settings") { location, adjustments in
+            await AutoDevelop.settings(for: location, adjustments: adjustments)
         }
     }
 
     /// Works out each selected photo's new settings off the main thread, then applies them all as
-    /// one undoable step. Photos whose files can't be read are left as they are (with a beep).
+    /// one undoable step. Photos whose files can't be read, and that have no Smart Preview, are left
+    /// as they are (with a beep).
     private func applyAuto(
-        actionName: String, _ estimate: @escaping @Sendable (URL, PhotoAdjustments) async -> PhotoAdjustments?
+        actionName: String, _ estimate: @escaping @Sendable (PhotoSourceLocation, PhotoAdjustments) async -> PhotoAdjustments?
     ) {
-        let inputs = editing.photos(state.selectedPhotoIDs).map { ($0.objectID, $0.fileURL, $0.adjustments) }
+        let inputs = editing.photos(state.selectedPhotoIDs).map { ($0.objectID, store.sourceLocation(of: $0), $0.adjustments) }
         guard !inputs.isEmpty else { return }
         autoDevelopTask = Task { [weak self] in
             var results: [NSManagedObjectID: PhotoAdjustments] = [:]
-            for (id, url, adjustments) in inputs {
+            for (id, location, adjustments) in inputs {
                 if Task.isCancelled { return }
-                if let after = await estimate(url, adjustments) { results[id] = after }
+                if let after = await estimate(location, adjustments) { results[id] = after }
             }
             guard let self else { return }
             autoDevelopTask = nil

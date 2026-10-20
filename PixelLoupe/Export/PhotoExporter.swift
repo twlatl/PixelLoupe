@@ -5,22 +5,26 @@ import UniformTypeIdentifiers
 
 /// A photo to export, captured on the main actor so exporting never touches Core Data.
 nonisolated struct ExportItem: Sendable {
+    /// The original.
     let source: URL
     let adjustments: PhotoAdjustments
     let metadata: PhotoMetadata
     let keywords: [String]
     let rating: Int
     let captureDate: Date
+    /// The photo's Smart Preview, exported from (at its size) when the original can't be read.
+    var smartPreview: URL? = nil
 
     var fileName: String { source.lastPathComponent }
+    var location: PhotoSourceLocation { PhotoSourceLocation(original: source, smartPreview: smartPreview) }
 }
 
 extension ExportItem {
-    init(_ photo: Photo) {
+    init(_ photo: Photo, smartPreview: URL? = nil) {
         self.init(
             source: photo.fileURL, adjustments: photo.adjustments, metadata: photo.metadata,
             keywords: Tag.exportNames(for: photo.tags),
-            rating: Int(photo.rating), captureDate: photo.captureDate
+            rating: Int(photo.rating), captureDate: photo.captureDate, smartPreview: smartPreview
         )
     }
 }
@@ -123,11 +127,14 @@ nonisolated enum ExportNaming {
 nonisolated enum PhotoExporter {
     enum ExportError: LocalizedError {
         case unreadable(String), unwritable(String)
+        /// Exporting next to an original whose folder isn't there (its drive is disconnected).
+        case folderUnavailable(String)
 
         var errorDescription: String? {
             switch self {
             case .unreadable(let name): "“\(name)” could not be read."
             case .unwritable(let name): "“\(name)” could not be written."
+            case .folderUnavailable(let name): "The folder of “\(name)” isn’t available."
             }
         }
     }
@@ -135,6 +142,8 @@ nonisolated enum PhotoExporter {
     struct Result: Sendable {
         var exported: [URL] = []
         var failures: [String] = []
+        /// The exported files drawn from Smart Previews, at their size, because the originals couldn't be read.
+        var fromSmartPreviews: [URL] = []
     }
 
     /// A watermark to draw, and its graphic's file.
@@ -152,31 +161,33 @@ nonisolated enum PhotoExporter {
         await progress(0, total)
         var result = Result()
         let concurrency = max(1, min(3, ProcessInfo.processInfo.activeProcessorCount / 3))
-        await withTaskGroup(of: (URL, Error?).self) { group in
+        await withTaskGroup(of: (URL, Swift.Result<Bool, Error>).self) { group in
             var pending = plan.entries.makeIterator()
             func addNext() -> Bool {
                 guard let entry = pending.next() else { return false }
                 group.addTask {
                     do {
                         try Task.checkCancellation()
-                        try await export(entry.item, to: entry.url, settings: settings, watermark: watermark)
-                        return (entry.url, nil)
+                        let fromSmartPreview = try await export(entry.item, to: entry.url, settings: settings, watermark: watermark)
+                        return (entry.url, .success(fromSmartPreview))
                     } catch {
-                        return (entry.url, error)
+                        return (entry.url, .failure(error))
                     }
                 }
                 return true
             }
             for _ in 0..<concurrency where !addNext() { break }
             var completed = 0
-            for await (url, error) in group {
+            for await (url, outcome) in group {
                 completed += 1
-                if let error {
+                switch outcome {
+                case .failure(let error):
                     if !(error is CancellationError) {
                         result.failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
                     }
-                } else {
+                case .success(let fromSmartPreview):
                     result.exported.append(url)
+                    if fromSmartPreview { result.fromSmartPreviews.append(url) }
                 }
                 await progress(completed, total)
                 if !Task.isCancelled { _ = addNext() }
@@ -185,31 +196,40 @@ nonisolated enum PhotoExporter {
         return result
     }
 
-    /// Exports one photo to `url`, creating its folder.
+    /// Exports one photo to `url`, creating its folder. Returns whether it was drawn from the photo's Smart Preview.
     @concurrent
-    static func export(_ item: ExportItem, to url: URL, settings: ExportSettings, watermark: Watermark?) async throws {
+    @discardableResult
+    static func export(_ item: ExportItem, to url: URL, settings: ExportSettings, watermark: Watermark?) async throws -> Bool {
+        // Never make an offline original's folder anew on the startup disk.
+        var originalFolder = item.source.deletingLastPathComponent().path(percentEncoded: false)
+        if !originalFolder.hasSuffix("/") { originalFolder += "/" }
+        if url.path(percentEncoded: false).hasPrefix(originalFolder), !FileManager.default.fileExists(atPath: originalFolder) {
+            throw ExportError.folderUnavailable(item.fileName)
+        }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         if settings.format == .original {
             if FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
                 try FileManager.default.removeItem(at: url)
             }
             try FileManager.default.copyItem(at: item.source, to: url)
-            return
+            return false
         }
-        let image = try render(item, settings: settings, watermark: watermark)
-        let metadata = metadata(for: item, settings: settings, size: CGSize(width: image.width, height: image.height))
-        let data = try encode(image, metadata: metadata, settings: settings, name: url.lastPathComponent)
+        let rendered = try render(item, settings: settings, watermark: watermark)
+        let metadata = metadata(for: item, settings: settings, size: CGSize(width: rendered.image.width, height: rendered.image.height))
+        let data = try encode(rendered.image, metadata: metadata, settings: settings, name: url.lastPathComponent)
         try data.write(to: url, options: .atomic)
+        return rendered.isFromSmartPreview
     }
 
     // MARK: - Rendering
 
     /// The photo with its edits, sized, sharpened and watermarked, in the export's color space and
-    /// bit depth (no alpha).
-    static func render(_ item: ExportItem, settings: ExportSettings, watermark: Watermark?) throws -> CGImage {
-        guard let develop = DevelopSource(url: item.source) else { throw ExportError.unreadable(item.fileName) }
+    /// bit depth (no alpha). From the photo's Smart Preview when the original can't be read, at no
+    /// more than the Smart Preview's size (2560 px on the long edge, before cropping).
+    static func render(_ item: ExportItem, settings: ExportSettings, watermark: Watermark?) throws -> (image: CGImage, isFromSmartPreview: Bool) {
+        guard let develop = DevelopSource.open(item.location) else { throw ExportError.unreadable(item.fileName) }
         let size = develop.croppedSize(item.adjustments)
-        let scale = settings.scale(for: size)
+        let scale = develop.smartPreview.map { min(settings.scale(for: size), $0.scale) } ?? settings.scale(for: size)
         var image = develop.image(with: item.adjustments, scale: min(scale, 1))
         image = image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
         if scale > 1 {
@@ -240,7 +260,7 @@ nonisolated enum PhotoExporter {
         else { throw ExportError.unreadable(item.fileName) }
         output.draw(rendered, in: target)
         guard let flattened = output.makeImage() else { throw ExportError.unreadable(item.fileName) }
-        return flattened
+        return (flattened, develop.isSmartPreview)
     }
 
     /// Output sharpening for the medium, scaled to the output's resolution.
@@ -335,7 +355,10 @@ nonisolated enum PhotoExporter {
     /// The exported file's metadata: the original's, as much as Include allows, with the
     /// catalog's edits (metadata, keywords, rating), and the size and orientation as exported.
     static func metadata(for item: ExportItem, settings: ExportSettings, size: CGSize) -> CGImageMetadata {
-        let original = CGImageSourceCreateWithURL(item.source as CFURL, nil).flatMap { CGImageSourceCopyMetadataAtIndex($0, 0, nil) }
+        // A missing original's Smart Preview keeps its metadata.
+        let original = ([item.source] + [item.smartPreview].compactMap { $0 }).lazy
+            .compactMap { CGImageSourceCreateWithURL($0 as CFURL, nil).flatMap { CGImageSourceCopyMetadataAtIndex($0, 0, nil) } }
+            .first
         let result: CGMutableImageMetadata
         var fields: [MetadataField.ID]
         switch settings.metadata {

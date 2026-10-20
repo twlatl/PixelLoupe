@@ -466,7 +466,9 @@ final class WatermarkEditorWindowController: NSWindowController, NSWindowDelegat
             return
         }
         previewTask = Task { [weak self] in
-            let rendered = await PhotoRenderer.render(photo.url, adjustments: photo.adjustments, maxPixels: Self.previewPixels)
+            let rendered = await PhotoRenderer.render(
+                PhotoSourceLocation(original: photo.url), adjustments: photo.adjustments, maxPixels: Self.previewPixels
+            )
             guard let self, !Task.isCancelled else { return }
             baseImage = rendered.map { CIImage(cgImage: $0.image) } ?? Self.samplePhoto()
             updatePreview()

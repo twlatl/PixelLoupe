@@ -2,6 +2,7 @@ import AppKit
 
 /// Selectors handled along the responder chain by the catalog window and Library views.
 @objc protocol PixelLoupeActions {
+    @objc optional func showAbout(_ sender: Any?)
     @objc optional func newCatalog(_ sender: Any?)
     @objc optional func checkForUpdates(_ sender: Any?)
     @objc optional func openCatalogDocument(_ sender: Any?)
@@ -32,6 +33,8 @@ import AppKit
     @objc optional func showFolderInFinder(_ sender: Any?)
     @objc optional func getFolderInfo(_ sender: Any?)
     @objc optional func showLightroomImportReport(_ sender: Any?)
+    @objc optional func buildSmartPreviews(_ sender: Any?)
+    @objc optional func discardSmartPreviews(_ sender: Any?)
     @objc optional func showLibrary(_ sender: Any?)
     @objc optional func showDevelop(_ sender: Any?)
     @objc optional func increaseThumbnailSize(_ sender: Any?)
@@ -181,7 +184,7 @@ enum MainMenu {
 
     private static func appMenu() -> NSMenu {
         let menu = NSMenu(title: "PixelLoupe")
-        menu.addItem(item("About PixelLoupe", #selector(NSApplication.orderFrontStandardAboutPanel(_:))))
+        menu.addItem(item("About PixelLoupe", #selector(PixelLoupeActions.showAbout(_:))))
         menu.addItem(item("Check for Updates…", #selector(PixelLoupeActions.checkForUpdates(_:))))
         menu.addItem(.separator())
         menu.addItem(item("Settings…", #selector(PixelLoupeActions.showSettings(_:)), ","))
@@ -249,6 +252,12 @@ enum MainMenu {
         // B, as in Lightroom; handled by the window as a single key.
         menu.addItem(item("Add to Target Collection", #selector(PixelLoupeActions.addToTargetCollection(_:)), "b", modifiers: []))
         menu.addItem(item("Remove from Collection", #selector(PixelLoupeActions.removeFromCollection(_:))))
+        menu.addItem(.separator())
+        // Lightroom's Library ▸ Previews, without shortcuts.
+        let previews = NSMenu(title: "Previews")
+        previews.addItem(item("Build Smart Previews", #selector(PixelLoupeActions.buildSmartPreviews(_:))))
+        previews.addItem(item("Discard Smart Previews…", #selector(PixelLoupeActions.discardSmartPreviews(_:))))
+        menu.addItem(submenuItem(previews))
         menu.addItem(.separator())
         menu.addItem(item("Lightroom Import Report", #selector(PixelLoupeActions.showLightroomImportReport(_:))))
         return menu

@@ -164,8 +164,7 @@ nonisolated final class LightroomCatalog {
 
     private static func hasPendingChanges(_ catalog: URL) -> Bool {
         let path = sidecar(catalog, "-wal").path(percentEncoded: false)
-        let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int
-        return (size ?? 0) > 0
+        return (FileManager.default.sizeAndModificationDate(atPath: path)?.size ?? 0) > 0
     }
 
     private static func makeSnapshot(of catalog: URL) throws -> URL {

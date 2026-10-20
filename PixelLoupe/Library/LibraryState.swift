@@ -196,6 +196,9 @@ final class LibraryState {
         didSet { if importStatus != oldValue { notify(.importStatus) } }
     }
 
+    /// The import under way, which Previous Import shows from its start, before its first photo is in.
+    var importingID: UUID?
+
     /// File ▸ Export's progress, shown like import's.
     var exportStatus: ImportStatus? {
         didSet { if exportStatus != oldValue { notify(.importStatus) } }
@@ -218,6 +221,11 @@ final class LibraryState {
     /// Photo ▸ Edit In's progress writing copies, shown like import's.
     var editInStatus: ImportStatus? {
         didSet { if editInStatus != oldValue { notify(.importStatus) } }
+    }
+
+    /// Library ▸ Previews ▸ Build Smart Previews' progress, shown like import's when nothing else is.
+    var smartPreviewStatus: ImportStatus? {
+        didSet { if smartPreviewStatus != oldValue { notify(.importStatus) } }
     }
 
     /// The editor Edit In is preparing photos for, for the progress label.

@@ -7,7 +7,9 @@ import OSLog
 ///
 /// - photos that have no thumbnail (no Lightroom preview, or one that failed) get one from the original;
 /// - thumbnails copied from Lightroom's previews (see ``SeededThumbnails``) are redrawn by PixelLoupe
-///   for photos whose edits PixelLoupe renders, so the grid matches Develop.
+///   for photos whose edits PixelLoupe renders, so the grid matches Develop;
+/// - thumbnails drawn from a Smart Preview while the original was missing are redrawn from the
+///   original, here and again whenever originals come back (a drive is connected).
 ///
 /// Photos whose file can't be found are left as they are (a Lightroom preview keeps showing).
 /// Closing the catalog stops the pass; the next opening carries on where it left off.
@@ -15,6 +17,9 @@ import OSLog
 final class ThumbnailMaintenance {
     private unowned let store: CatalogStore
     private var task: Task<Void, Never>?
+    /// Changed by `stop()`, so a pass that outlives it doesn't clear its successor.
+    private var generation = 0
+    private var availabilityObserver: NSObjectProtocol?
     private static let logger = Logger(subsystem: "net.pixegen.PixelLoupe", category: "Thumbnails")
 
     init(store: CatalogStore) {
@@ -23,17 +28,41 @@ final class ThumbnailMaintenance {
 
     /// Starts after `delay`, so opening the catalog and the first scroll stay snappy.
     func start(after delay: Duration = .seconds(4)) {
+        guard availabilityObserver == nil else { return }
+        availabilityObserver = NotificationCenter.default.addObserver(
+            forName: FileAvailability.didChangeNotification, object: store.availability, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.originalsMayHaveReturned() }
+        }
+        schedule(after: delay)
+    }
+
+    func stop() {
+        if let availabilityObserver { NotificationCenter.default.removeObserver(availabilityObserver) }
+        availabilityObserver = nil
+        generation += 1
+        task?.cancel()
+        task = nil
+    }
+
+    private func schedule(after delay: Duration) {
         guard task == nil else { return }
+        let generation = generation
         task = Task(priority: .utility) { [weak self] in
             try? await Task.sleep(for: delay)
             guard !Task.isCancelled else { return }
             await self?.run()
+            guard let self, self.generation == generation else { return }
+            task = nil
         }
     }
 
-    func stop() {
-        task?.cancel()
-        task = nil
+    /// A pass soon, when a thumbnail drawn from a Smart Preview has its original back.
+    private func originalsMayHaveReturned() {
+        let availability = store.availability
+        guard availability.hasChecked,
+              store.thumbnails.drawnFromSmartPreviews.contains(where: { !availability.isMissing($0) }) else { return }
+        schedule(after: .seconds(1))
     }
 
     /// Waits for the pass in flight to finish; used by tests.
@@ -50,7 +79,7 @@ final class ThumbnailMaintenance {
     private func run() async {
         let directory = store.thumbnails.directory
         let context = store.newBackgroundContext()
-        let work = await Self.plan(context: context, directory: directory)
+        let work = await Self.plan(context: context, directory: directory, fromSmartPreviews: store.thumbnails.drawnFromSmartPreviews)
         guard !work.isEmpty else { return }
         Self.logger.info("Drawing \(work.count) thumbnails in the background")
 
@@ -63,7 +92,7 @@ final class ThumbnailMaintenance {
             request.predicate = NSPredicate(format: "id == %@", item.id as CVarArg)
             request.fetchLimit = 1
             guard let photo = try? store.viewContext.fetch(request).first else { continue }
-            let ok = await store.thumbnails.render(id: item.id, source: photo.fileURL, adjustments: photo.adjustments)
+            let ok = await store.thumbnails.render(id: item.id, source: store.sourceLocation(of: photo), adjustments: photo.adjustments)
             if ok, seeded.remove(item.id) != nil {
                 sinceSave += 1
                 if sinceSave >= 50 {
@@ -77,7 +106,7 @@ final class ThumbnailMaintenance {
     }
 
     @concurrent
-    private static func plan(context: NSManagedObjectContext, directory: URL) async -> [Work] {
+    private static func plan(context: NSManagedObjectContext, directory: URL, fromSmartPreviews: Set<UUID>) async -> [Work] {
         let files = (try? FileManager.default.contentsOfDirectory(atPath: directory.path(percentEncoded: false))) ?? []
         let existing = Set(files.compactMap { name -> UUID? in
             name.hasSuffix(".jpg") ? UUID(uuidString: String(name.dropLast(4))) : nil
@@ -104,7 +133,7 @@ final class ThumbnailMaintenance {
         for (id, path) in photos {
             if Task.isCancelled { return [] }
             let needsThumbnail = !existing.contains(id)
-            let needsRedraw = seeded.contains(id) && edited.contains(id)
+            let needsRedraw = (seeded.contains(id) && edited.contains(id)) || fromSmartPreviews.contains(id)
             guard needsThumbnail || needsRedraw, FileManager.default.fileExists(atPath: path) else { continue }
             work.append(Work(id: id, path: path))
         }

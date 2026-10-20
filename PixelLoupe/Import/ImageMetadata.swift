@@ -23,6 +23,9 @@ nonisolated struct ImageMetadata: Equatable, Sendable {
     var caption: String?
     var creator: String?
     var copyright: String?
+    /// The file's own rating (`xmp:Rating`): 1–5 stars, or -1 for a photo rejected in the camera or
+    /// another app. `nil` when it has none.
+    var rating: Int?
 
     /// Reads metadata without decoding pixel data. Returns `nil` if the file isn't a readable image.
     static func read(from url: URL) -> ImageMetadata? {
@@ -35,6 +38,7 @@ nonisolated struct ImageMetadata: Equatable, Sendable {
         var metadata = ImageMetadata(properties: properties)
         if let xmp = CGImageSourceCopyMetadataAtIndex(source, 0, nil) {
             metadata.mergeKeywords(xmpKeywords(xmp))
+            metadata.rating = xmpRating(xmp)
         }
         return metadata
     }
@@ -95,6 +99,13 @@ nonisolated struct ImageMetadata: Equatable, Sendable {
               let values = CGImageMetadataTagCopyValue(tag) as? [CGImageMetadataTag]
         else { return [] }
         return values.compactMap { CGImageMetadataTagCopyValue($0) as? String }
+    }
+
+    static func xmpRating(_ metadata: CGImageMetadata) -> Int? {
+        guard let text = CGImageMetadataCopyStringValueWithPath(metadata, nil, "xmp:Rating" as CFString) as String?,
+              let value = Double(text.trimmingCharacters(in: .whitespaces)) else { return nil }
+        let rating = Int(value.rounded())
+        return (-1...5).contains(rating) && rating != 0 ? rating : nil
     }
 
     private static func clean(_ value: String?) -> String? {
