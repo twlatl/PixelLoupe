@@ -58,11 +58,13 @@ extension CatalogWindowController {
                 alert.messageText = preview.total == 0 ? "There are no photos to relink" : "None of the photos are there"
                 alert.informativeText = preview.total == 0
                     ? "“\(name)” has no photos in this catalog."
-                    : "None of the \(preview.total.formatted()) photos in “\(name)” were found in “\((newPath as NSString).lastPathComponent)”. Choose the folder that contains the same files."
+                    : "None of the \(preview.total.formatted()) photos in “\(name)” were found in “\((newPath as NSString).lastPathComponent)”. Choose the folder that contains the same files, or the folder it's in."
                 alert.addButton(withTitle: "OK")
                 alert.beginSheetModal(for: window) { _ in }
                 return
             }
+            // The preview may have found the files in a same-named folder inside the one chosen.
+            let newPath = preview.newPath
             alert.messageText = "Relink “\(name)”?"
             var detail = "\(preview.found.formatted()) of \(preview.total.formatted()) photos were found in “\(newPath)”."
             if preview.missing > 0 { detail += " \(preview.missing.formatted()) will stay missing." }
