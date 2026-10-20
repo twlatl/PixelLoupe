@@ -207,14 +207,17 @@ where they are), and **TO** (the destination and the folder the first photo will
 destination are remembered for each catalog; a managed catalog starts out copying into its storage folder
 (`2026/10-15`), a referenced one adding in place.
 
-The sidebar lists **Devices** (memory cards: any disk with a `DCIM` folder, with the camera that shot it and a **New**
+The sidebar lists **Devices** (iPhones, iPads and cameras connected over USB, read with ImageCaptureCore, and memory
+cards: any disk with a `DCIM` folder, with the camera that shot it and a **New**
 badge when it has photos the catalog doesn't), **Volumes** and **Locations** (Pictures, Desktop, Downloads and the last
 ten folders imported from) as folder trees, and **Choose Folder…**. Cards and removable volumes have an eject button.
 **Include Subfolders** (on by default) decides whether a folder's subfolders are read too; **Eject After Import** (off
 by default) ejects a card once all its checked photos have come across. Choosing a source reads its photos and videos
 without importing anything, and shows the count on its row. Photos on a card are always copied (Add is unavailable:
 the catalog would point at a card that's about to be ejected). With Settings ▸ Import ▸ **Open the import window when a
-memory card is inserted** (off by default), inserting a card brings PixelLoupe forward with the card chosen.
+memory card is inserted** (off by default), inserting a card brings PixelLoupe forward with the card chosen. A phone's or camera's
+photos show their thumbnails from the device; importing downloads the checked ones to a temporary folder, imports
+them as copies, then removes the downloads. A locked iPhone asks to be unlocked (and to trust this Mac) first.
 
 The grid numbers the photos, sorted by **Capture Time**, **File Name** or **File Type**, and can show **All Photos**,
 **New Photos** (not already in the catalog), or **Destination Folders** (in a section for each folder they'll be copied
