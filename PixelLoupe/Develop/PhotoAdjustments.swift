@@ -736,7 +736,7 @@ nonisolated extension PhotoAdjustments.Transform {
 }
 
 nonisolated extension PhotoAdjustments.Profile {
-    private enum CodingKeys: String, CodingKey { case isEnabled, kind, amount, importedName }
+    private enum CodingKeys: String, CodingKey { case isEnabled, kind, amount, importedName, adobeID }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -745,6 +745,7 @@ nonisolated extension PhotoAdjustments.Profile {
         kind = try container.decodeIfPresent(Kind.self, forKey: .kind) ?? kind
         amount = try container.decodeIfPresent(Double.self, forKey: .amount) ?? amount
         importedName = try container.decodeIfPresent(String.self, forKey: .importedName)
+        adobeID = try container.decodeIfPresent(String.self, forKey: .adobeID)
     }
 }
 

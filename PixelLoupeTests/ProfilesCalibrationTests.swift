@@ -31,6 +31,15 @@ struct ProfilesCalibrationTests {
         #expect(PhotoAdjustments.Profile.Kind.standard.title == "Default" && PhotoAdjustments.Profile.Kind.vivid.title == "Vivid")
     }
 
+    @Test("An imported Adobe profile survives saving")
+    func adobeProfileRoundTrips() throws {
+        var edited = PhotoAdjustments()
+        edited.profile = .init(kind: .standard, amount: 0.8, importedName: "Classic Chrome", adobeID: "UUID-CLASSIC-CHROME")
+        let data = try #require(edited.encoded)
+        #expect(PhotoAdjustments(data: data).profile.adobeID == "UUID-CLASSIC-CHROME")
+        #expect(PhotoAdjustments(data: data) == edited)
+    }
+
     @Test("A profile or calibration goes into the color table, not a new pass")
     func foldsIntoTable() {
         var adjustments = PhotoAdjustments()
