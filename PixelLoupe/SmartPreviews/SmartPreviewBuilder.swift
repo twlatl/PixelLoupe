@@ -128,7 +128,17 @@ final class SmartPreviewBuilder {
         guard let fileExtension = SmartPreviewWriter.fileExtension(for: original) else { return nil }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let destination = SmartPreviewStore.url(for: id, fileExtension: fileExtension, in: directory)
-        try SmartPreviewWriter.write(original: original, to: destination)
+
+        // A camera RAW file gets its camera model's white-balance table, measured on the model's first Smart Preview.
+        let tables = SmartPreviewWhiteBalance.directory(in: directory)
+        let cameraModel = SmartPreviewWhiteBalance.cameraModel(of: original)
+        let table = cameraModel.flatMap { SmartPreviewWhiteBalance.load(cameraModel: $0, in: tables) }
+        let info = try SmartPreviewWriter.write(original: original, to: destination, whiteBalance: table)
+        if table == nil, let cameraModel {
+            let measured = try SmartPreviewWhiteBalance.measure(original: original, smartPreview: destination, smartPreviewScale: info.scale)
+            try? measured.save(cameraModel: cameraModel, in: tables)
+            try SmartPreviewWriter.write(original: original, to: destination, whiteBalance: measured)
+        }
         return destination
     }
 

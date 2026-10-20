@@ -205,16 +205,21 @@ nonisolated final class DevelopSource {
         if let rawFilter, let rawDefaults {
             rawFilter.scaleFactor = Float(decodeScale)
 
-            let light = adjustments.light
-            rawFilter.exposure = light.isEnabled ? Float(light.exposure) : 0
-
             let whiteBalance = adjustments.whiteBalance
-            rawFilter.neutralTemperature = whiteBalance.isActive
+            let temperature = whiteBalance.isActive
                 ? Float(whiteBalance.temperature ?? Double(rawDefaults.neutralTemperature))
                 : rawDefaults.neutralTemperature
-            rawFilter.neutralTint = whiteBalance.isActive
-                ? Float(whiteBalance.tint ?? Double(rawDefaults.neutralTint))
-                : rawDefaults.neutralTint
+            let tint = whiteBalance.isActive ? Float(whiteBalance.tint ?? Double(rawDefaults.neutralTint)) : rawDefaults.neutralTint
+            rawFilter.neutralTemperature = temperature
+            rawFilter.neutralTint = tint
+
+            let light = adjustments.light
+            // On a camera RAW file's Smart Preview, the brightness its white balance misses away from As Shot.
+            let correction = smartPreview?.whiteBalance?.exposureCorrection(
+                temperature: Double(temperature), tint: Double(tint),
+                asShot: (Double(rawDefaults.neutralTemperature), Double(rawDefaults.neutralTint))
+            ) ?? 0
+            rawFilter.exposure = (light.isEnabled ? Float(light.exposure) : 0) + Float(correction)
 
             let noise = adjustments.noiseReduction
             if rawFilter.isLuminanceNoiseReductionSupported {

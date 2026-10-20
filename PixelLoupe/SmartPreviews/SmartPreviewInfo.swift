@@ -34,6 +34,8 @@ nonisolated struct SmartPreviewInfo: Codable, Sendable, Equatable {
     /// (for cameras whose RAW files always apply it).
     var hasBuiltInLensProfile = false
     var isBuiltInLensProfileApplied = false
+    /// The brightness a camera RAW file's Smart Preview misses away from As Shot (camera RAW files only, RAW-121).
+    var whiteBalance: SmartPreviewWhiteBalance?
 
     var originalSize: CGSize { CGSize(width: originalWidth, height: originalHeight) }
 
