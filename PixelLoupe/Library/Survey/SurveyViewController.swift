@@ -312,13 +312,13 @@ final class SurveyPhotoView: NSView {
         let scale = window?.backingScaleFactor ?? 2
         let pixels = max(photoFrame.width, photoFrame.height) * scale
         guard pixels > shownPixels * 1.1, pixels > CGFloat(ThumbnailStore.maxPixelSize) else { return }
-        let url = photo.fileURL
+        let location = store.sourceLocation(of: photo)
         let adjustments = photo.adjustments
         let id = photoID
         renderTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled,
-                  let source = await CompareSource.load(url),
+                  let source = await CompareSource.load(location),
                   let rendered = await source.render(adjustments: adjustments, region: nil, renderScale: nil, maxPixels: pixels),
                   let self, !Task.isCancelled, photoID == id else { return }
             setImage(rendered.image)

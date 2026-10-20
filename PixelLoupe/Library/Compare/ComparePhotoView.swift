@@ -177,7 +177,7 @@ final class ComparePhotoView: NSView {
         baseLayer.contents = store.thumbnails.cachedImage(for: photo.id)
         layoutLayers()
 
-        let url = photo.fileURL
+        let location = store.sourceLocation(of: photo)
         let uuid = photo.id
         let thumbnails = store.thumbnails
         loadTask = Task { [weak self] in
@@ -185,7 +185,7 @@ final class ComparePhotoView: NSView {
                 guard let self, photoID == id else { return }
                 baseLayer.contents = thumbnail
             }
-            let loaded = await CompareSource.load(url)
+            let loaded = await CompareSource.load(location)
             guard let self, !Task.isCancelled, photoID == id else { return }
             source = loaded
             if isFitted, let fitZoom {
@@ -374,8 +374,8 @@ nonisolated final class CompareSource: @unchecked Sendable {
     }
 
     @concurrent
-    static func load(_ url: URL) async -> CompareSource? {
-        DevelopSource(url: url).map(CompareSource.init)
+    static func load(_ location: PhotoSourceLocation) async -> CompareSource? {
+        DevelopSource.open(location).map(CompareSource.init)
     }
 
     /// Renders the whole photo to fit `maxPixels`, or `region` (full-resolution pixels) at `renderScale`.

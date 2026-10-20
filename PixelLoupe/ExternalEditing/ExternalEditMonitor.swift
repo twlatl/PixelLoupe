@@ -100,7 +100,7 @@ final class ExternalEditMonitor {
             apply(files, to: photos.map(\.objectID))
             for photo in photos where !photo.isDeleted {
                 let id = photo.id
-                _ = await store.thumbnails.render(id: id, source: photo.fileURL, adjustments: photo.adjustments)
+                _ = await store.thumbnails.render(id: id, source: store.sourceLocation(of: photo), adjustments: photo.adjustments)
                 NotificationCenter.default.post(name: Self.photoFileDidChangeNotification, object: self, userInfo: ["id": id])
             }
             reloading.subtract(ids)

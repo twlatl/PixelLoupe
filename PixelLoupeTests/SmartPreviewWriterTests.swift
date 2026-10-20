@@ -84,7 +84,11 @@ struct SmartPreviewWriterTests {
         context.setFillColor(red: 0.8, green: 0.4, blue: 0.1, alpha: 1)
         context.fill(CGRect(x: 0, y: 0, width: 3000, height: 2000))
         let destination = try #require(CGImageDestinationCreateWithURL(original as CFURL, UTType.jpeg.identifier as CFString, 1, nil))
-        CGImageDestinationAddImage(destination, try #require(context.makeImage()), [kCGImagePropertyOrientation: 6] as CFDictionary)
+        CGImageDestinationAddImage(destination, try #require(context.makeImage()), [
+            kCGImagePropertyOrientation: 6,
+            kCGImagePropertyTIFFDictionary: [kCGImagePropertyTIFFModel: "EOS R5"],
+            kCGImagePropertyExifDictionary: [kCGImagePropertyExifFNumber: 2.8],
+        ] as CFDictionary)
         try #require(CGImageDestinationFinalize(destination))
 
         #expect(SmartPreviewWriter.recipe(for: original) == .image && SmartPreviewWriter.fileExtension(for: original) == "heic")
@@ -100,6 +104,10 @@ struct SmartPreviewWriterTests {
         #expect(height == 2560 && abs(width - 1707) <= 1, "upright, 2560 on the long edge: \(width) × \(height)")
         #expect((properties[kCGImagePropertyOrientation] as? Int ?? 1) == 1)
         #expect(abs(info.scale - 2560.0 / 3000) < 0.001)
+        // The original's metadata comes along, for the shooting settings and lens profiles.
+        let tiff = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any], exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any]
+        #expect(tiff?[kCGImagePropertyTIFFModel] as? String == "EOS R5" && exif?[kCGImagePropertyExifFNumber] as? Double == 2.8)
+        #expect(ShootingInfo.read(from: proxy).aperture == 2.8)
     }
 
     @Test func videosGetNone() {

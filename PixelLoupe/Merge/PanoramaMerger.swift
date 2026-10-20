@@ -588,7 +588,9 @@ nonisolated final class PanoramaMerger {
             defer { try? FileManager.default.removeItem(at: url) }
             try LinearDNGWriter.write(small.image, metadata: dngMetadata(), to: url)
             try Task.checkCancellation()
-            if let auto = await AutoDevelop.settings(for: url, adjustments: adjustments, region: covered) { adjustments = auto }
+            if let auto = await AutoDevelop.settings(for: PhotoSourceLocation(original: url), adjustments: adjustments, region: covered) {
+                adjustments = auto
+            }
         }
         if options.autoCrop {
             adjustments.crop.rect = covered

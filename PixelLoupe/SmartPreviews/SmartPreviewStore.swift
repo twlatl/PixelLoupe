@@ -123,6 +123,11 @@ nonisolated enum PhotoSourceStatus: Equatable, Sendable {
 }
 
 extension CatalogStore {
+    /// Where `photo`'s pixels can come from: its original, and its Smart Preview if it has one.
+    func sourceLocation(of photo: Photo) -> PhotoSourceLocation {
+        PhotoSourceLocation(original: photo.fileURL, smartPreview: smartPreviews.file(for: photo))
+    }
+
     /// Where `photo` can be drawn from, or nil for a video (which has no Smart Preview).
     func sourceStatus(of photo: Photo) -> PhotoSourceStatus? {
         guard !photo.isVideo else { return nil }
