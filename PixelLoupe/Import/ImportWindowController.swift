@@ -281,6 +281,13 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
             lockShield.bottomAnchor.constraint(equalTo: panes.view.bottomAnchor),
         ])
         panes.view.setContentHuggingPriority(.init(1), for: .vertical)
+        // The filter sits under Copy / Add, which the toolbar centers in the window. (Between the header's
+        // two equally stretchy spacers it had no one place to be, and drifted flush left or right.) Below
+        // the count's and sort's compression resistance, so a narrow pane pushes it aside rather than
+        // truncating them.
+        let centered = filterControl.centerXAnchor.constraint(equalTo: stack.centerXAnchor)
+        centered.priority = .init(700)
+        centered.isActive = true
         DispatchQueue.main.async {
             // Starting widths, unless the user has dragged the dividers before.
             if split.subviews[0].frame.width < 210 || split.subviews[0].frame.width > 330 {
@@ -349,6 +356,7 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         filterControl.target = self
         filterControl.action = #selector(filterChanged(_:))
         filterControl.setAccessibilityLabel("Show")
+        filterControl.setAccessibilityIdentifier("importFilter")
         let sortLabel = NSTextField(labelWithString: "Sort")
         sortLabel.textColor = .secondaryLabelColor
         for sort in ImportSelection.Sort.allCases {
