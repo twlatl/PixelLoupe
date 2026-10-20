@@ -68,6 +68,12 @@ struct AboutWindowTests {
         let attributes = storage.attributes(at: 0, effectiveRange: nil)
         #expect((attributes[.font] as? NSFont)?.pointSize == 13)
         #expect(attributes[.foregroundColor] as? NSColor == .secondaryLabelColor)
+        // Flush left, not centered.
+        var alignments: Set<NSTextAlignment.RawValue> = []
+        storage.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: storage.length)) { value, _, _ in
+            alignments.insert(((value as? NSParagraphStyle)?.alignment ?? .natural).rawValue)
+        }
+        #expect(!alignments.isEmpty && alignments.isSubset(of: [NSTextAlignment.left.rawValue, NSTextAlignment.natural.rawValue]))
     }
 
     @Test func openedNormallyItShowsTheFeaturedPhotoAndTheCreditsStayPut() {

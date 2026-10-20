@@ -32,7 +32,7 @@ final class AboutWindowController: NSWindowController, NSWindowDelegate {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     /// `Credits.html` in the sidebar's type: the system font in a secondary label color, which follows
-    /// light and dark appearance (the HTML gives the text, its links and its centering).
+    /// light and dark appearance (the HTML gives the text, its links and its paragraphs, flush left).
     static func credits(bundle: Bundle = .main) -> NSAttributedString {
         guard let url = bundle.url(forResource: "Credits", withExtension: "html"),
               let data = try? Data(contentsOf: url),
