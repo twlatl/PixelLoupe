@@ -152,6 +152,14 @@ final class LibraryInspectorViewController: NSViewController {
             self, selector: #selector(thumbnailDidUpdate(_:)),
             name: ThumbnailStore.didUpdateNotification, object: store.thumbnails
         )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(sourceStatusDidChange(_:)),
+            name: SmartPreviewStore.didChangeNotification, object: store.smartPreviews
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(sourceStatusDidChange(_:)),
+            name: FileAvailability.didChangeNotification, object: store.availability
+        )
         keywordList.reload()
         selectionChanged()
     }
@@ -207,6 +215,10 @@ final class LibraryInspectorViewController: NSViewController {
         }
     }
 
+    @objc private func sourceStatusDidChange(_ notification: Notification) {
+        histogram.sourceStatus = selectedPhotos.first.flatMap(store.sourceStatus)
+    }
+
     @objc private func thumbnailDidUpdate(_ notification: Notification) {
         guard let id = notification.userInfo?["id"] as? UUID, selectedPhotos.first?.id == id else { return }
         updateHistogram()
@@ -220,8 +232,10 @@ final class LibraryInspectorViewController: NSViewController {
         guard let photo = selectedPhotos.first else {
             histogram.histogram = nil
             histogram.shootingInfo = ShootingInfo()
+            histogram.sourceStatus = nil
             return
         }
+        histogram.sourceStatus = store.sourceStatus(of: photo)
         let thumbnails = store.thumbnails, id = photo.id, url = photo.fileURL
         histogramTask = Task { [weak self] in
             let image = await thumbnails.image(for: id)

@@ -220,6 +220,11 @@ final class LibraryState {
         didSet { if editInStatus != oldValue { notify(.importStatus) } }
     }
 
+    /// Library ▸ Previews ▸ Build Smart Previews' progress, shown like import's when nothing else is.
+    var smartPreviewStatus: ImportStatus? {
+        didSet { if smartPreviewStatus != oldValue { notify(.importStatus) } }
+    }
+
     /// The editor Edit In is preparing photos for, for the progress label.
     var editInApplicationName = ""
 

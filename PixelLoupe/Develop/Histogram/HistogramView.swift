@@ -1,7 +1,8 @@
 import AppKit
 
 /// Lightroom-style histogram at the top of Develop's sidebar: overlapping red, green and blue
-/// channels, clipping indicators in the top corners, and the shooting settings underneath.
+/// channels, clipping indicators in the top corners, and the shooting settings underneath, then
+/// what the photo is drawn from ("Original + Smart Preview").
 ///
 /// Dragging across the histogram adjusts the zone under the pointer (Black Point, Shadows,
 /// Exposure, Highlights, White Point); hovering names the zone and its value in place of the
@@ -19,6 +20,11 @@ final class HistogramView: NSView {
 
     var shootingInfo = ShootingInfo() {
         didSet { updateInfo() }
+    }
+
+    /// Nil when there's no photo, or for a video.
+    var sourceStatus: PhotoSourceStatus? {
+        didSet { statusLabel.stringValue = sourceStatus?.title ?? "" }
     }
 
     /// Whether there's a photo to adjust; dragging does nothing otherwise.
@@ -58,6 +64,7 @@ final class HistogramView: NSView {
     private let infoLabels = (0..<4).map { _ in NSTextField(labelWithString: "") }
     private let infoRow = NSStackView()
     private let zoneLabel = NSTextField(labelWithString: "")
+    private let statusLabel = NSTextField(labelWithString: "")
     private var hoveredZone: HistogramZone? {
         didSet {
             guard hoveredZone != oldValue else { return }
@@ -100,8 +107,12 @@ final class HistogramView: NSView {
         zoneLabel.alignment = .center
         zoneLabel.isHidden = true
         zoneLabel.setAccessibilityIdentifier("histogramZone")
+        statusLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.alignment = .center
+        statusLabel.setAccessibilityIdentifier("histogramSourceStatus")
 
-        for view in [plot, shadowButton, highlightButton, infoRow, zoneLabel] as [NSView] {
+        for view in [plot, shadowButton, highlightButton, infoRow, zoneLabel, statusLabel] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
@@ -117,9 +128,13 @@ final class HistogramView: NSView {
             infoRow.topAnchor.constraint(equalTo: plot.bottomAnchor, constant: 6),
             infoRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
             infoRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
-            infoRow.bottomAnchor.constraint(equalTo: bottomAnchor),
-            // A fixed height, so the histogram never stretches to take the sidebar's space.
+            // Fixed heights, so the histogram never stretches to take the sidebar's space.
             infoRow.heightAnchor.constraint(equalToConstant: 16),
+            statusLabel.topAnchor.constraint(equalTo: infoRow.bottomAnchor),
+            statusLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            statusLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
+            statusLabel.bottomAnchor.constraint(equalTo: bottomAnchor),
+            statusLabel.heightAnchor.constraint(equalToConstant: 16),
             zoneLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             zoneLabel.centerYAnchor.constraint(equalTo: infoRow.centerYAnchor),
         ])

@@ -31,10 +31,14 @@ final class CatalogStore: NSObject {
     private(set) var info: CatalogInfo
     let container: NSPersistentContainer
     let thumbnails: ThumbnailStore
+    /// Stand-ins for originals that can't be read (see ``SmartPreviewStore``).
+    let smartPreviews: SmartPreviewStore
     /// Which photos and folders can't be found on disk (see ``FileAvailability``).
     private(set) lazy var availability = FileAvailability(store: self)
     /// Draws missing thumbnails and redraws Lightroom-seeded ones in the background.
     private(set) lazy var thumbnailMaintenance = ThumbnailMaintenance(store: self)
+    /// Writes Smart Previews in the background.
+    private(set) lazy var smartPreviewBuilder = SmartPreviewBuilder(store: self)
     /// Brings back edits other apps save to files sent with Photo ▸ Edit In (see ``ExternalEditMonitor``).
     private(set) lazy var externalEdits = ExternalEditMonitor(store: self)
 
@@ -69,6 +73,7 @@ final class CatalogStore: NSObject {
         self.info = info
         self.viewState = CatalogViewState.load(from: packageURL)
         self.thumbnails = ThumbnailStore(directory: CatalogPackage.thumbnailsURL(in: packageURL))
+        self.smartPreviews = SmartPreviewStore(directory: CatalogPackage.smartPreviewsURL(in: packageURL))
 
         container = NSPersistentContainer(name: "PixelLoupe", managedObjectModel: Self.managedObjectModel)
         let description = NSPersistentStoreDescription(
@@ -158,12 +163,12 @@ final class CatalogStore: NSObject {
         try encoder.encode(info).write(to: CatalogPackage.infoURL(in: packageURL), options: .atomic)
     }
 
-    /// Deletes cached thumbnails of photos no longer in the catalog. Removed photos keep theirs
-    /// while the app runs, so undoing a removal shows them straight away; this runs when the catalog
-    /// opens, in the background.
-    func pruneOrphanedThumbnails() {
+    /// Deletes cached thumbnails and Smart Previews of photos no longer in the catalog. Removed photos
+    /// keep theirs while the app runs, so undoing a removal shows them straight away; this runs when
+    /// the catalog opens, in the background.
+    func pruneOrphanedPreviews() {
         let context = newBackgroundContext()
-        let directory = thumbnails.directory
+        let directory = thumbnails.directory, smartPreviews = smartPreviews.directory
         context.perform {
             let request = NSFetchRequest<NSDictionary>(entityName: "Photo")
             request.resultType = .dictionaryResultType
@@ -176,6 +181,7 @@ final class CatalogStore: NSObject {
                 guard let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent), !kept.contains(id) else { continue }
                 try? FileManager.default.removeItem(at: file)
             }
+            SmartPreviewStore.pruneOrphans(in: smartPreviews, keeping: kept)
         }
     }
 
