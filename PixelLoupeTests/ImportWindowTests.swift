@@ -407,6 +407,42 @@ struct ImportWindowTests {
         #expect(!AppSettings.shared.opensImportOnCardInsert)
     }
 
+    @Test func theFilterStaysCenteredUnderCopyAndAdd() throws {
+        let directory = try TemporaryDirectory()
+        let info = Fixtures.managedInfo(storage: try directory.subdirectory("Storage"))
+        let catalog = directory.url.appending(path: "Test.pixelloupe")
+        let store = try CatalogStore.inMemory(info: info, packageURL: catalog)
+        let controller = ImportWindowController(service: ImportService(store: store), catalogURL: catalog, info: info)
+        let window = try #require(controller.window)
+        window.setFrame(NSRect(x: 0, y: 0, width: 1240, height: 800), display: true)
+        window.layoutIfNeeded()
+        let content = try #require(window.contentView)
+        let split = try #require(content.firstDescendant(where: { $0 is NSSplitView }) as? NSSplitView)
+        let filter = try #require(content.firstDescendant(identifier: "importFilter"))
+        let count = try #require(content.firstDescendant(identifier: "importSelectedCount") as? NSTextField)
+        // Copy / Add is centered in the toolbar, so the filter belongs at the window's center.
+        func offset() -> CGFloat { filter.convert(filter.bounds, to: content).midX - content.bounds.midX }
+
+        #expect(abs(offset()) < 1)
+
+        // Not wherever the count and the sort leave room (it used to sit flush left or flush right).
+        count.stringValue = "1,234 of 5,678 selected"
+        window.layoutIfNeeded()
+        #expect(abs(offset()) < 1)
+
+        // Nor in the middle of the grid pane when the sidebar and inspector differ in width.
+        split.setPosition(200, ofDividerAt: 0)
+        split.setPosition(split.frame.width - 420, ofDividerAt: 1)
+        window.layoutIfNeeded()
+        #expect(abs(offset()) < 1)
+
+        // A wider window keeps it there too.
+        window.setFrame(NSRect(x: 0, y: 0, width: 1600, height: 800), display: true)
+        window.layoutIfNeeded()
+        #expect(abs(offset()) < 1)
+        controller.close()
+    }
+
     private func photoCount(in store: CatalogStore) throws -> Int {
         try store.viewContext.count(for: Photo.fetchRequest())
     }
