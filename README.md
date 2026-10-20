@@ -231,6 +231,8 @@ Date**; or **Into One Folder**) and, for By Date, the **Date Format** (`2026/202
 `2026-10-15` or `2026/October/15`), taken from each photo's capture date.
 
 The right panel's **File Handling** section:
+- **Build Smart Previews** (off): once the import is in, the photos get Smart Previews in the background, so they can
+  be edited while their originals are offline (as Library ▸ Previews ▸ Build Smart Previews does)
 - **Don't Import Suspected Duplicates** (on by default; turned off, photos in the library can be checked and imported again)
 - **Don't Import Rejected Images** (files rated as rejected, `xmp:Rating` −1, can't be checked)
 - **Make a Second Copy** (Copy only: a backup of each file in an "Imported on 2026-10-15" folder in the chosen folder)

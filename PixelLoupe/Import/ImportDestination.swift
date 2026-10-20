@@ -205,4 +205,24 @@ nonisolated struct ImportHandling: Codable, Equatable, Sendable {
     var developPresetPath: String?
     var metadataPresetID: UUID?
     var renaming: ImportRenaming?
+    /// Build Smart Previews: the imported photos get Smart Previews in the background once they're in.
+    var buildsSmartPreviews = false
+}
+
+nonisolated extension ImportHandling {
+    /// Each choice as saved, and the default for any saved before it existed (settings and presets
+    /// from older versions keep the rest).
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        allowsDuplicates = try container.decodeIfPresent(Bool.self, forKey: .allowsDuplicates) ?? false
+        skipsRejected = try container.decodeIfPresent(Bool.self, forKey: .skipsRejected) ?? false
+        makesSecondCopy = try container.decodeIfPresent(Bool.self, forKey: .makesSecondCopy) ?? false
+        secondCopy = try container.decodeIfPresent(URL.self, forKey: .secondCopy)
+        addsToCollection = try container.decodeIfPresent(Bool.self, forKey: .addsToCollection) ?? false
+        collectionID = try container.decodeIfPresent(UUID.self, forKey: .collectionID)
+        developPresetPath = try container.decodeIfPresent(String.self, forKey: .developPresetPath)
+        metadataPresetID = try container.decodeIfPresent(UUID.self, forKey: .metadataPresetID)
+        renaming = try container.decodeIfPresent(ImportRenaming.self, forKey: .renaming)
+        buildsSmartPreviews = try container.decodeIfPresent(Bool.self, forKey: .buildsSmartPreviews) ?? false
+    }
 }

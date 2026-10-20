@@ -21,6 +21,8 @@ final class ImportOptionsModel {
     var addUnavailableReason: String? { didSet { if addUnavailableReason != oldValue { changed() } } }
 
     // File Handling
+    /// Build Smart Previews (off by default).
+    var buildsSmartPreviews: Bool { didSet { changed() } }
     /// Don't Import Suspected Duplicates (on by default).
     var skipsDuplicates: Bool { didSet { changed() } }
     /// Don't Import Rejected Images.
@@ -79,6 +81,7 @@ final class ImportOptionsModel {
         layout = settings.destination.layout
         organize = settings.destination.organize
         let handling = settings.handling ?? ImportHandling()
+        buildsSmartPreviews = handling.buildsSmartPreviews
         skipsDuplicates = !handling.allowsDuplicates
         skipsRejected = handling.skipsRejected
         makesSecondCopy = handling.makesSecondCopy
@@ -96,7 +99,8 @@ final class ImportOptionsModel {
         ImportSettings(transfer: transfer, destination: destination, handling: ImportHandling(
             allowsDuplicates: !skipsDuplicates, skipsRejected: skipsRejected, makesSecondCopy: makesSecondCopy,
             secondCopy: secondCopy, addsToCollection: addsToCollection, collectionID: collectionID,
-            developPresetPath: developPresetPath, metadataPresetID: metadataPresetID, renaming: renaming))
+            developPresetPath: developPresetPath, metadataPresetID: metadataPresetID, renaming: renaming,
+            buildsSmartPreviews: buildsSmartPreviews))
     }
 
     var destination: ImportDestination {
@@ -122,6 +126,7 @@ final class ImportOptionsModel {
         extras.metadata = metadataPreset
         extras.developPreset = developPreset
         extras.renaming = renaming.isOn ? renaming : nil
+        extras.buildsSmartPreviews = buildsSmartPreviews
         if addsToCollection {
             if let collectionID {
                 extras.collection = .existing(collectionID)
@@ -150,6 +155,7 @@ final class ImportOptionsModel {
         subfolderName = settings.destination.subfolder ?? ""
         layout = settings.destination.layout
         organize = settings.destination.organize
+        buildsSmartPreviews = handling.buildsSmartPreviews
         skipsDuplicates = !handling.allowsDuplicates
         skipsRejected = handling.skipsRejected
         makesSecondCopy = handling.makesSecondCopy
@@ -223,6 +229,11 @@ struct ImportOptionsPanel: View {
 
     private var fileHandling: some View {
         Section(isExpanded: $model.fileHandlingExpanded) {
+            // First, as in Lightroom.
+            Toggle("Build Smart Previews", isOn: $model.buildsSmartPreviews)
+                .tint(switchTint)
+                .help("Builds Smart Previews of the imported photos in the background, so they can be edited while the originals are offline")
+                .accessibilityIdentifier("importBuildsSmartPreviews")
             Toggle(isOn: $model.skipsDuplicates) {
                 Text("Don't Import Suspected Duplicates")
                 if model.duplicateCount > 0 {
