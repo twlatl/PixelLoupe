@@ -490,8 +490,8 @@ clone) and red eyes; generative or AI removals can't be imported and are reporte
 The **Masking** tool (⇧W, or its button in the Develop sidebar) adjusts part of a photo. **M** adds a linear gradient, **⇧M** a
 radial one, and **O** shows the selected mask in red. On the photo, drag a linear gradient's lines (or its middle to move it),
 or a radial gradient's handles (edge, feather ring, center, and the outer handle to turn it). Each mask has Amount, Exposure,
-Contrast, Highlights, Shadows, Whites, Blacks, Temp, Tint, Saturation, Clarity, Texture and Dehaze sliders, an Invert checkbox
-and a Delete button; all of it is undoable. Masks are stored as shapes, not bitmaps, in the photo's coordinates before
+Contrast, Highlights, Shadows, Whites, Blacks, Temp, Tint, Saturation, Clarity, Texture and Dehaze sliders and an Invert
+checkbox, and the red ⊗ button at the end of its row in the mask list deletes it; all of it is undoable. Masks are stored as shapes, not bitmaps, in the photo's coordinates before
 cropping, so they stay on the subject if the crop changes. Brush, range and AI (subject, sky, people) masks aren't
 available yet; a Lightroom import brings in linear and radial gradients (the old graduated and radial filters and the newer
 masks) and reports the rest.

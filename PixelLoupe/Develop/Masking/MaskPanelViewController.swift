@@ -20,13 +20,13 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
     private let table = NSTableView()
     private let overlayCheckbox = NSButton(checkboxWithTitle: "Show Overlay (O)", target: nil, action: nil)
     private let invertCheckbox = NSButton(checkboxWithTitle: "Invert", target: nil, action: nil)
-    private let deleteButton = NSButton(title: "Delete", target: nil, action: nil)
     private var sliderRows: [SliderRow] = []
     private let detail = NSStackView()
     private var refreshers: [() -> Void] = []
     private var actionTargets: [ActionTarget] = []
-    /// The target for each row's checkbox (replaced whenever the rows are rebuilt).
+    /// The targets for each row's checkbox and delete button (replaced whenever the rows are rebuilt).
     private var rowTargets: [UUID: ActionTarget] = [:]
+    private var rowDeleteTargets: [UUID: ActionTarget] = [:]
     private let emptyLabel = NSTextField(wrappingLabelWithString: "Add a linear (M) or radial (⇧M) gradient to adjust part of the photo.")
 
     private var selected: PhotoAdjustments.LocalAdjustment? { masks.first { $0.id == selectedID } }
@@ -165,14 +165,6 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         }
         detail.addArrangedSubview(invertCheckbox)
 
-        deleteButton.controlSize = .small
-        deleteButton.bezelStyle = .rounded
-        deleteButton.setAccessibilityIdentifier("deleteMask")
-        let deleteTarget = ActionTarget { [weak self] _ in self?.deleteSelected() }
-        deleteButton.target = deleteTarget
-        deleteButton.action = #selector(ActionTarget.fire(_:))
-        actionTargets.append(deleteTarget)
-        detail.addArrangedSubview(deleteButton)
         for row in sliderRows { row.widthAnchor.constraint(equalTo: detail.widthAnchor).isActive = true }
     }
 
@@ -188,10 +180,11 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         onChange?(masks, isFinal, action)
     }
 
-    private func deleteSelected() {
-        guard let index = masks.firstIndex(where: { $0.id == selectedID }) else { return }
+    /// Deletes a mask; deleting the selected one selects the next (or the last).
+    private func delete(_ id: UUID) {
+        guard let index = masks.firstIndex(where: { $0.id == id }) else { return }
         masks.remove(at: index)
-        selectedID = masks.indices.contains(index) ? masks[index].id : masks.last?.id
+        if selectedID == id { selectedID = masks.indices.contains(index) ? masks[index].id : masks.last?.id }
         onSelectionChange?(selectedID)
         onChange?(masks, true, "Delete Mask")
         refresh()
@@ -208,6 +201,12 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
             selectedID = masks.first?.id
         }
         refresh()
+    }
+
+    /// Takes masks edited elsewhere (moved on the preview) without rebuilding the panel, so its next
+    /// slider edit starts from them instead of putting the old shapes back.
+    func update(masks: [PhotoAdjustments.LocalAdjustment]) {
+        self.masks = masks
     }
 
     func select(_ id: UUID?) {
@@ -265,7 +264,23 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         checkbox.target = target
         checkbox.action = #selector(ActionTarget.fire(_:))
         rowTargets[id] = target
-        return checkbox
+
+        let delete = NSButton(image: NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Delete \(mask.name)")!,
+                              target: nil, action: nil)
+        delete.isBordered = false
+        delete.symbolConfiguration = NSImage.SymbolConfiguration(paletteColors: [.white, .systemRed])
+        delete.toolTip = "Delete \(mask.name)"
+        delete.setAccessibilityIdentifier("deleteMask.\(row)")
+        delete.isEnabled = isEditingEnabled
+        let deleteTarget = ActionTarget { [weak self] _ in self?.delete(id) }
+        delete.target = deleteTarget
+        delete.action = #selector(ActionTarget.fire(_:))
+        rowDeleteTargets[id] = deleteTarget
+
+        checkbox.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let cell = NSStackView(views: [checkbox, NSView(), delete])
+        cell.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 4)
+        return cell
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
