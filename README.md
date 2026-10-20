@@ -151,6 +151,8 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `⇧⌘Return` | Secondary window: Loupe – Locked (keeps the photo on show until you choose another view; again to unlock) |
 | `R` | Crop & Straighten (Develop); in the crop tool `Return` applies, `Esc` cancels, `X` flips the orientation |
 | `J` | Show or hide shadow and highlight clipping on the Develop preview |
+| `Y` / `⌥Y` / `⇧Y` | Develop's Before/After (View ▸ Before/After): the photo before its edits left of / above the edited photo, or Split Screen (one photo, before left of a line down the middle and after right of it); the same key again goes back to the edited photo |
+| `\` | Before Only: show the Develop photo before its edits; `\` again shows it edited |
 | `W` | White Balance Selector: click something that should be neutral gray (Develop ▸ Adjust) |
 | `⌘K` | Add Keywords: the cursor in the right sidebar's Keywords field (in Library; shows the sidebar if hidden) |
 | `Tab` | Show or hide both sidebars (in Develop: the folder sidebar and the adjustment panel) |
@@ -654,6 +656,21 @@ to place it on a spot.
 - Drag the grip at the lower right to resize.
 - Click the zoom value for 50%–1600% (100% is the original's actual pixels), Focus on Loupe/Cursor, Pixel Grid,
   Color Value, Use Centered Loupe and Hide Loupe.
+
+## Before/After (Develop)
+
+View ▸ Before/After compares the photo with how it was before its edits, using Lightroom's keys. The before keeps the
+photo's framing (orientation, crop and straightening, and the Transform sliders) so the two line up; everything else
+is back at its defaults.
+
+- **Left/Right** (`Y`) and **Top/Bottom** (`⌥Y`): the before and the edited photo side by side, each as large as fits.
+  Zooming (`Z`, a click, the Navigator) zooms both alike, and dragging pans both.
+- **Before Only** (`\`): the before in place of the edited photo; `\` again shows it edited.
+- **Split Screen** (`⇧Y`): one photo with a line down the middle, the before left of it and the edited photo right of it.
+
+Press the same key again (or choose the checked item) to go back to the edited photo. The view stays as you move from
+photo to photo. Crop & Straighten, Masking and Spot Removal show the photo their own way: opening one ends
+Before/After, and choosing a Before/After view closes it. The histogram always shows the edited photo.
 
 ## Export
 

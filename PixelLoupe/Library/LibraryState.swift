@@ -53,6 +53,8 @@ final class LibraryState {
         case filmstrip
         case compare
         case developTool
+        /// Develop's Before/After view (View ▸ Before/After).
+        case beforeAfter
         /// The zoom (Navigator, click-to-zoom, Z): Fit or Fill, the zoom ratio, zoomed or not, where.
         case zoom
         /// The part of the photo the enlarged view or Develop shows, for the Navigator's rectangle.
@@ -101,6 +103,12 @@ final class LibraryState {
     /// The Develop sidebar's tool: Adjust (the RAW tools) or Crop & Straighten.
     var developTool: DevelopTool = .adjust {
         didSet { if developTool != oldValue { notify(.developTool) } }
+    }
+
+    /// How Develop shows the photo before its edits (`nil`: just the edited photo). Kept from photo
+    /// to photo, as in Lightroom.
+    var beforeAfter: BeforeAfterView? {
+        didSet { if beforeAfter != oldValue { notify(.beforeAfter) } }
     }
 
     /// Whether the Develop loupe is showing.
