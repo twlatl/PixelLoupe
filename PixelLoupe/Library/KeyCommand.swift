@@ -31,6 +31,7 @@ enum KeyCommand: Equatable {
     case linearMask             // M
     case radialMask             // ⇧M
     case maskOverlay            // O
+    case beforeAfter(BeforeAfterView) // Y left/right, ⌥Y top/bottom, \ before only, ⇧Y split (Develop)
     case toggleSidebars         // Tab
     case addToTargetCollection  // B
     case removePhoto            // Delete (Photo ▸ Remove Photo)
@@ -40,8 +41,8 @@ enum KeyCommand: Equatable {
         let modifiers = event.modifierFlags
             .intersection(.deviceIndependentFlagsMask)
             .subtracting([.numericPad, .function, .capsLock])
-        // The few shifted commands: Move to Top of Stack, Lightroom's Masking (⇧W) and Radial Gradient (⇧M),
-        // and the secondary window's views (⇧G, ⇧E, ⇧C, ⇧N).
+        // The few shifted commands: Move to Top of Stack, Lightroom's Masking (⇧W), Radial Gradient (⇧M)
+        // and Before/After Split Screen (⇧Y), and the secondary window's views (⇧G, ⇧E, ⇧C, ⇧N).
         if modifiers == .shift {
             switch event.charactersIgnoringModifiers?.lowercased() {
             case "s": self = .moveToTopOfStack
@@ -51,8 +52,15 @@ enum KeyCommand: Equatable {
             case "e": self = .secondaryView(.loupe)
             case "c": self = .secondaryView(.compare)
             case "n": self = .secondaryView(.survey)
+            case "y": self = .beforeAfter(.split)
             default: return nil
             }
+            return
+        }
+        // ⌥Y, Lightroom's Before/After Top/Bottom.
+        if modifiers == .option {
+            guard event.charactersIgnoringModifiers?.lowercased() == "y" else { return nil }
+            self = .beforeAfter(.topBottom)
             return
         }
         guard modifiers.isEmpty else { return nil }
@@ -95,6 +103,8 @@ enum KeyCommand: Equatable {
         case "m": self = .linearMask
         case "q": self = .spotRemovalTool
         case "o": self = .maskOverlay
+        case "y": self = .beforeAfter(.leftRight)
+        case "\\": self = .beforeAfter(.beforeOnly)
         case "b": self = .addToTargetCollection
         case "\r": self = .toggleEnlarge
         case "\u{1b}": self = .exit

@@ -32,6 +32,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     private let loupeSettings = LoupeSettings()
     private lazy var loupeOverlay = LoupeOverlayView(settings: loupeSettings)
     private var geometry: PreviewGeometry?
+    /// The Before/After views' labels and Split Screen's line.
+    let beforeAfterOverlay = BeforeAfterOverlayView()
     /// Click-to-zoom and panning over the preview (not while a tool's overlay takes the clicks).
     private let zoomClickView = ZoomClickView()
     /// The zoomed view as last drawn (drawable pixels), for panning.
@@ -150,7 +152,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         whiteBalancePicker.isHidden = true
         maskOverlay.isHidden = true
         retouchOverlay.isHidden = true
-        for view in [metalView!, zoomClickView, loupeOverlay, cropOverlay, maskOverlay, retouchOverlay, fringePicker, whiteBalancePicker, infoLabel, messageLabel, locateButton, spinner] as [NSView] {
+        for view in [metalView!, beforeAfterOverlay, zoomClickView, loupeOverlay, cropOverlay, maskOverlay, retouchOverlay, fringePicker, whiteBalancePicker, infoLabel, messageLabel, locateButton, spinner] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             previewContainer.addSubview(view)
         }
@@ -167,6 +169,10 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             metalView.leadingAnchor.constraint(equalTo: previewContainer.leadingAnchor, constant: 12),
             metalView.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor, constant: -12),
             metalView.bottomAnchor.constraint(equalTo: infoLabel.topAnchor, constant: -8),
+            beforeAfterOverlay.topAnchor.constraint(equalTo: metalView.topAnchor),
+            beforeAfterOverlay.leadingAnchor.constraint(equalTo: metalView.leadingAnchor),
+            beforeAfterOverlay.trailingAnchor.constraint(equalTo: metalView.trailingAnchor),
+            beforeAfterOverlay.bottomAnchor.constraint(equalTo: metalView.bottomAnchor),
             zoomClickView.topAnchor.constraint(equalTo: metalView.topAnchor),
             zoomClickView.leadingAnchor.constraint(equalTo: metalView.leadingAnchor),
             zoomClickView.trailingAnchor.constraint(equalTo: metalView.trailingAnchor),
@@ -251,8 +257,12 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             case .selection where view.window != nil: loadSelectedPhoto()
             case .loupe: loupeOverlay.isLoupeVisible = state.isLoupeVisible && state.developTool != .crop
             case .developTool:
+                // Crop, Masking and Spot Removal show the photo their own way, so they end Before/After.
+                if [.crop, .mask, .retouch].contains(state.developTool) { state.beforeAfter = nil }
                 updateTool()
                 zoomClickView.zoomDidChange()
+            case .beforeAfter:
+                metalView.needsDisplay = true
             case .zoom:
                 let zoom = state.zoom
                 if zoom.isZoomed != lastZoom.isZoomed || zoom.fit != lastZoom.fit || (zoom.isZoomed && zoom.ratio != lastZoom.ratio) {
@@ -1488,10 +1498,16 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         zoomClickView.onClick = { [weak self] point in
             guard let self else { return }
             var zoom = state.zoom
-            zoom.toggle(at: geometry.map { geometry in
+            // Side by side, a click on the before zooms to the same spot as one on the after.
+            let imageRect: CGRect? = if case .sideBySide(let before, _)? = beforeAfterOverlay.arrangement, before.contains(point) {
+                before
+            } else {
+                geometry?.imageRect
+            }
+            zoom.toggle(at: imageRect.map { imageRect in
                 CGPoint(
-                    x: ((point.x - geometry.imageRect.minX) / max(geometry.imageRect.width, 1)).clamped(to: 0...1),
-                    y: ((point.y - geometry.imageRect.minY) / max(geometry.imageRect.height, 1)).clamped(to: 0...1)
+                    x: ((point.x - imageRect.minX) / max(imageRect.width, 1)).clamped(to: 0...1),
+                    y: ((point.y - imageRect.minY) / max(imageRect.height, 1)).clamped(to: 0...1)
                 )
             })
             state.zoom = zoom
@@ -1524,6 +1540,11 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         }
     }
 
+    /// A rect in drawable pixels, in points.
+    private func points(_ rect: CGRect, _ backingScale: CGFloat) -> CGRect {
+        rect.isNull ? .zero : CGRect(x: rect.minX / backingScale, y: rect.minY / backingScale, width: rect.width / backingScale, height: rect.height / backingScale)
+    }
+
     // MARK: - MTKViewDelegate
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
@@ -1539,7 +1560,10 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         let matte = CIColor(cgColor: previewContainer.resolvedMatte)
         var output = CIImage(color: matte).cropped(to: bounds)
         var newGeometry: PreviewGeometry?
+        var newArrangement: BeforeAfterOverlayView.Arrangement?
         var previewImage: (image: CIImage, scale: CGFloat)?
+        /// The settings the loupe magnifies: the before's in Before Only.
+        var loupeAdjustments = presetPreview ?? adjustments
         if source == nil, let placeholder, !placeholder.extent.isEmpty {
             // Fill the same rect the decoded photo will, so the swap is seamless.
             let extent = placeholder.extent
@@ -1564,10 +1588,27 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             let previewScale = cropping
                 ? source.scale(toFit: max(bounds.width, bounds.height))
                 : source.scale(toFit: max(bounds.width, bounds.height), adjustments: shownAdjustments)
-            let image = source.image(with: shownAdjustments, scale: previewScale, geometry: cropping ? .straightenedOnly : .cropped)
-            if !cropping, !masking { previewImage = (image, previewScale) }
+            // View ▸ Before/After (not in the tools that show the photo their own way).
+            let beforeAfter = cropping || masking ? nil : state.beforeAfter
+            let beforeAdjustments = shownAdjustments.before
+            // The photo at `scale` from `source`: as edited, before the edits, or split between them.
+            func photo(from source: DevelopSource, scale: CGFloat, showing content: BeforeAfterContent) -> CIImage {
+                let after = source.image(with: shownAdjustments, scale: scale, geometry: cropping ? .straightenedOnly : .cropped)
+                guard content != .after else { return after }
+                return content.compose(before: source.image(with: beforeAdjustments, scale: scale, geometry: .cropped), after: after)
+            }
+            let content: BeforeAfterContent = switch beforeAfter {
+            case .beforeOnly?: .before
+            case .split?: .split
+            default: .after
+            }
+            let afterImage = photo(from: source, scale: previewScale, showing: .after)
+            let image = content == .after ? afterImage : photo(from: source, scale: previewScale, showing: content)
+            if !cropping, !masking { previewImage = (beforeAfter?.isSideBySide == true ? afterImage : image, previewScale) }
+            if content == .before { loupeAdjustments = beforeAdjustments }
             if !image.extent.isEmpty, !image.extent.isInfinite {
-                requestHistogram(for: image, adjustments: shownAdjustments, cropping: cropping)
+                // The histogram is always the edited photo's.
+                requestHistogram(for: afterImage, adjustments: shownAdjustments, cropping: cropping)
                 // The sharpen-mask preview or clipping warnings, and the selected mask in red while masking.
                 func decorate(_ image: CIImage, scale: CGFloat) -> CIImage {
                     var shown = showsSharpenMask
@@ -1592,42 +1633,66 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
                 let backingScale = view.bounds.width > 0 ? bounds.width / view.bounds.width : 2
                 // Full-resolution size of what's shown.
                 let fullSize = CGSize(width: image.extent.width / previewScale, height: image.extent.height / previewScale)
-                let rect: CGRect
-                if !cropping, let viewport = zoomViewport(imageSize: fullSize, pane: bounds) {
-                    // Fill or a zoom ratio (the crop tool always shows the whole frame).
-                    rect = viewport.imageRect(imageSize: fullSize, paneBounds: bounds, backingScale: 1)
-                    // Past the screen-sized preview's detail, render from the full-resolution decoder; Core
-                    // Image only computes the part that ends up on screen.
-                    var detail = (image: image, scale: previewScale)
-                    let detailScale = CGFloat(min(viewport.zoom, 1))
-                    if detailScale > previewScale * 1.01 {
-                        let full = loupeSource ?? source
-                        detail = (full.image(with: shownAdjustments, scale: detailScale, geometry: .cropped), detailScale)
+                // Draws `preview` (the photo showing `content`) in `pane`, fitted or at the zoom, and returns where.
+                func place(_ preview: CIImage, showing content: BeforeAfterContent, in pane: CGRect) -> CGRect {
+                    if !cropping, let viewport = zoomViewport(imageSize: fullSize, pane: pane) {
+                        // Fill or a zoom ratio (the crop tool always shows the whole frame).
+                        let rect = viewport.imageRect(imageSize: fullSize, paneBounds: pane, backingScale: 1)
+                        // Past the screen-sized preview's detail, render from the full-resolution decoder; Core
+                        // Image only computes the part that ends up on screen.
+                        var detail = (image: preview, scale: previewScale)
+                        let detailScale = CGFloat(min(viewport.zoom, 1))
+                        if detailScale > previewScale * 1.01 {
+                            detail = (photo(from: loupeSource ?? source, scale: detailScale, showing: content), detailScale)
+                        }
+                        let extent = detail.image.extent
+                        let placed = decorate(detail.image, scale: detail.scale)
+                            .transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
+                            .transformed(by: CGAffineTransform(scaleX: rect.width / extent.width, y: rect.height / extent.height))
+                            .transformed(by: CGAffineTransform(translationX: rect.minX, y: rect.minY))
+                            .cropped(to: pane)
+                        output = placed.composited(over: output)
+                        zoomedDraw = (viewport, fullSize, pane, backingScale)
+                        publishZoomVisibleRect(viewport.visibleImageRegion(imageSize: fullSize, paneBounds: pane, backingScale: 1), of: fullSize)
+                        return rect
                     }
-                    let extent = detail.image.extent
-                    let placed = decorate(detail.image, scale: detail.scale)
-                        .transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
-                        .transformed(by: CGAffineTransform(scaleX: rect.width / extent.width, y: rect.height / extent.height))
-                        .transformed(by: CGAffineTransform(translationX: rect.minX, y: rect.minY))
-                        .cropped(to: bounds)
-                    output = placed.composited(over: output)
-                    zoomedDraw = (viewport, fullSize, bounds, backingScale)
-                    publishZoomVisibleRect(viewport.visibleImageRegion(imageSize: fullSize, paneBounds: bounds, backingScale: 1), of: fullSize)
-                } else {
-                    let shown = decorate(image, scale: previewScale)
-                    let fit = min(bounds.width / image.extent.width, bounds.height / image.extent.height, 1)
+                    let shown = decorate(preview, scale: previewScale)
+                    let fit = min(pane.width / preview.extent.width, pane.height / preview.extent.height, 1)
                     let scaled = shown
-                        .transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
+                        .transformed(by: CGAffineTransform(translationX: -preview.extent.minX, y: -preview.extent.minY))
                         .transformed(by: CGAffineTransform(scaleX: fit, y: fit))
                     let offset = CGAffineTransform(
-                        translationX: ((bounds.width - scaled.extent.width) / 2).rounded(),
-                        y: ((bounds.height - scaled.extent.height) / 2).rounded()
+                        translationX: pane.minX + ((pane.width - scaled.extent.width) / 2).rounded(),
+                        y: pane.minY + ((pane.height - scaled.extent.height) / 2).rounded()
                     )
                     let placed = scaled.transformed(by: offset)
                     output = placed.composited(over: output)
-                    rect = placed.extent
                     zoomedDraw = nil
                     publishZoomVisibleRect(nil, of: fullSize)
+                    return placed.extent
+                }
+                let rect: CGRect
+                // Left/Right and Top/Bottom: the before in one pane and the after in the other, zoomed alike.
+                // The after goes last, so panning and the Navigator follow it.
+                if let panes = beforeAfter?.panes(in: bounds, gap: (8 * backingScale).rounded()) {
+                    let before = place(photo(from: source, scale: previewScale, showing: .before), showing: .before, in: panes.before)
+                    rect = place(afterImage, showing: .after, in: panes.after)
+                    newArrangement = .sideBySide(
+                        before: points(before.intersection(panes.before), backingScale), after: points(rect.intersection(panes.after), backingScale)
+                    )
+                    // The zoom animation moves one photo; side by side, both just change.
+                    pendingZoomAnimation = false
+                    zoomAnimation = nil
+                } else {
+                    rect = place(image, showing: content, in: bounds)
+                    let visible = points(rect.intersection(bounds), backingScale)
+                    switch beforeAfter {
+                    case .split?:
+                        let left = image.extent.width > 0 ? (image.extent.width / 2).rounded() / image.extent.width : 0.5
+                        newArrangement = .split(photo: visible, dividerX: (rect.minX + rect.width * left) / backingScale)
+                    case .beforeOnly?: newArrangement = .beforeOnly(photo: visible)
+                    default: break
+                    }
                 }
                 // Zooming in or out: move the preview from where it was to `rect` over a moment, drawing the
                 // quick screen-sized render on the way, then the sharp one.
@@ -1662,7 +1727,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
                 } else {
                     lastDrawnRect = rect
                 }
-                lastPreview = (image, CGRect(
+                // Side by side, the eyedroppers and loupe work on the after.
+                lastPreview = (beforeAfter?.isSideBySide == true ? afterImage : image, CGRect(
                     x: rect.minX / backingScale, y: rect.minY / backingScale,
                     width: rect.width / backingScale, height: rect.height / backingScale
                 ))
@@ -1708,11 +1774,12 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             geometry = newGeometry
             loupeOverlay.needsDisplay = true
         }
+        beforeAfterOverlay.arrangement = newArrangement
 
         if let request = loupeOverlay.renderRequest, request.magnify, let geometry {
             // Full resolution once its decoder is ready; until then, magnify the preview.
             let photo: (image: CIImage, scale: CGFloat)? = if let loupeSource {
-                (loupeSource.image(with: presetPreview ?? adjustments, scale: LoupeRenderer.renderScale(forZoom: request.zoom)),
+                (loupeSource.image(with: loupeAdjustments, scale: LoupeRenderer.renderScale(forZoom: request.zoom)),
                  LoupeRenderer.renderScale(forZoom: request.zoom))
             } else {
                 previewImage

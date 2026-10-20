@@ -23,6 +23,14 @@ struct KeyCommandTests {
         #expect(KeyCommand(event: event(characters)) == expected)
     }
 
+    @Test func beforeAfterUsesLightroomKeys() {
+        #expect(KeyCommand(event: event("y")) == .beforeAfter(.leftRight))
+        #expect(KeyCommand(event: event("y", modifiers: .option)) == .beforeAfter(.topBottom))
+        #expect(KeyCommand(event: event("\\")) == .beforeAfter(.beforeOnly))
+        #expect(KeyCommand(event: event("Y", modifiers: .shift)) == .beforeAfter(.split))
+        #expect(KeyCommand(event: event("y", modifiers: .command)) == nil)
+    }
+
     @Test func deleteRemovesPhotos() {
         #expect(KeyCommand(event: event("\u{7f}", keyCode: 51)) == .removePhoto)
         #expect(KeyCommand(event: event("\u{7f}", keyCode: 51, modifiers: .command)) == nil, "⌘Delete is the menu's")
@@ -115,6 +123,17 @@ struct MainMenuTests {
         let clipping = try item(#selector(PixelLoupeActions.showClipping(_:)), in: "View")
         #expect(clipping.title == "Show Clipping")
         #expect(clipping.keyEquivalent == "j" && clipping.keyEquivalentModifierMask.isEmpty)
+    }
+
+    @Test func beforeAfterIsInTheViewMenuWithLightroomKeys() throws {
+        let view = try #require(MainMenu.make().items.first { $0.title == "View" }?.submenu)
+        let menu = try #require(view.items.first { $0.title == "Before/After" }?.submenu)
+        let items = menu.items.map { ($0.title, $0.keyEquivalent, $0.keyEquivalentModifierMask, $0.tag) }
+        #expect(items.map(\.0) == ["Left/Right", "Top/Bottom", "Before Only", "Split Screen"])
+        #expect(items.map(\.1) == ["y", "y", "\\", "y"])
+        #expect(items.map(\.2) == [[], .option, [], .shift])
+        #expect(items.map(\.3) == BeforeAfterView.allCases.map(\.rawValue))
+        #expect(menu.items.allSatisfy { $0.action == #selector(PixelLoupeActions.showBeforeAfter(_:)) })
     }
 
     @Test func compareIsInTheViewMenuWithC() throws {

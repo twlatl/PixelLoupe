@@ -390,6 +390,12 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         case .maskOverlay:
             guard state.mode == .develop, state.developTool == .mask else { return false }
             develop.toggleMaskOverlay()
+        case .beforeAfter(let view):
+            // The same key again goes back to the edited photo. Crop, Masking and Spot Removal show the
+            // photo their own way, so they close (as in Lightroom).
+            guard state.mode == .develop, !selection.isEmpty else { return false }
+            if [.crop, .mask, .retouch].contains(state.developTool) { state.developTool = .adjust }
+            state.beforeAfter = state.beforeAfter == view ? nil : view
         case .whiteBalanceTool:
             guard state.mode == .develop, state.developTool == .adjust else { return false }
             develop.toggleWhiteBalancePicker()
@@ -532,6 +538,12 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
     @objc func addLinearMask(_ sender: Any?) { _ = perform(.linearMask) }
     @objc func addRadialMask(_ sender: Any?) { _ = perform(.radialMask) }
     @objc func showMaskOverlay(_ sender: Any?) { _ = perform(.maskOverlay) }
+
+    /// View ▸ Before/After: the item's tag is its ``BeforeAfterView``.
+    @objc func showBeforeAfter(_ sender: NSMenuItem) {
+        guard let view = BeforeAfterView(rawValue: sender.tag) else { return }
+        _ = perform(.beforeAfter(view))
+    }
 
     /// F6, as in Lightroom.
     @objc func toggleFilmstrip(_ sender: Any?) {
@@ -1138,6 +1150,12 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         case #selector(showMaskOverlay(_:)):
             let typing = (window?.firstResponder as? NSText)?.isEditable ?? false
             return !typing && state.mode == .develop && state.developTool == .mask
+        case #selector(showBeforeAfter(_:)):
+            // Shown with Y, ⌥Y, \ and ⇧Y in the menu; disabled while typing so the keys reach the text field.
+            let typing = (window?.firstResponder as? NSText)?.isEditable ?? false
+            let view = (item as? NSMenuItem).flatMap { BeforeAfterView(rawValue: $0.tag) }
+            (item as? NSMenuItem)?.state = state.mode == .develop && view != nil && state.beforeAfter == view ? .on : .off
+            return !typing && state.mode == .develop && !state.selectedPhotoIDs.isEmpty
         case #selector(whiteBalanceSelector(_:)):
             // Shown with W in the menu; disabled while typing so the key reaches the text field.
             let typing = (window?.firstResponder as? NSText)?.isEditable ?? false

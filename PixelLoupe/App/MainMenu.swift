@@ -106,6 +106,7 @@ import AppKit
     @objc optional func addLinearMask(_ sender: Any?)
     @objc optional func addRadialMask(_ sender: Any?)
     @objc optional func showMaskOverlay(_ sender: Any?)
+    @objc optional func showBeforeAfter(_ sender: NSMenuItem)
     @objc optional func removePhoto(_ sender: Any?)
     @objc optional func removeSelectedPhotos(_ sender: Any?)
     @objc optional func removeAndTrashPhotos(_ sender: Any?)
@@ -354,6 +355,7 @@ enum MainMenu {
         menu.addItem(item("Linear Gradient Mask", #selector(PixelLoupeActions.addLinearMask(_:)), "m", modifiers: []))
         menu.addItem(item("Radial Gradient Mask", #selector(PixelLoupeActions.addRadialMask(_:)), "m", modifiers: [.shift]))
         menu.addItem(item("Show Mask Overlay", #selector(PixelLoupeActions.showMaskOverlay(_:)), "o", modifiers: []))
+        menu.addItem(submenuItem(beforeAfterMenu()))
         menu.addItem(.separator())
         // = and - (Lightroom's thumbnail size keys) are single-key shortcuts handled by the window.
         menu.addItem(item("Larger Thumbnails", #selector(PixelLoupeActions.increaseThumbnailSize(_:))))
@@ -365,6 +367,22 @@ enum MainMenu {
                           String(Character(UnicodeScalar(NSF6FunctionKey)!)), modifiers: []))
         // AppKit retitles this Enter/Exit Full Screen and won't add its own duplicate.
         menu.addItem(item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", modifiers: [.command, .control]))
+        return menu
+    }
+
+    /// Develop's Before/After views with Lightroom's keys (handled by the window like C). Each item's
+    /// tag is its ``BeforeAfterView``.
+    private static func beforeAfterMenu() -> NSMenu {
+        let menu = NSMenu(title: "Before/After")
+        for view in BeforeAfterView.allCases {
+            let (key, modifiers): (String, NSEvent.ModifierFlags) = switch view {
+            case .leftRight: ("y", [])
+            case .topBottom: ("y", .option)
+            case .beforeOnly: ("\\", [])
+            case .split: ("y", .shift)
+            }
+            menu.addItem(item(view.title, #selector(PixelLoupeActions.showBeforeAfter(_:)), key, modifiers: modifiers, tag: view.rawValue))
+        }
         return menu
     }
 
