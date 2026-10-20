@@ -6,7 +6,9 @@ extension CatalogWindowController {
     private var selectedExportItems: [ExportItem] {
         // Videos aren't exported (there is nothing to render).
         state.selectedPhotoIDs.compactMap { id in
-            (try? store.viewContext.existingObject(with: id) as? Photo).flatMap { $0.isVideo ? nil : ExportItem($0) }
+            (try? store.viewContext.existingObject(with: id) as? Photo).flatMap { photo in
+                photo.isVideo ? nil : ExportItem(photo, smartPreview: store.smartPreviews.file(for: photo))
+            }
         }
     }
 
@@ -134,10 +136,34 @@ extension CatalogWindowController {
                 }
             }
         }
-        guard !result.failures.isEmpty, let window else { return }
-        let alert = NSAlert()
-        alert.messageText = "\(result.failures.count) photo\(result.failures.count == 1 ? "" : "s") could not be exported."
-        alert.informativeText = result.failures.prefix(10).joined(separator: "\n") + (result.failures.count > 10 ? "\n…" : "")
+        guard let alert = Self.exportSummary(result), let window else { return }
         alert.beginSheetModal(for: window)
+    }
+
+    /// What needs saying after an export: the photos that failed, and those drawn from Smart Previews at their
+    /// smaller size because the originals are missing. Nil when everything was exported from its original.
+    static func exportSummary(_ result: PhotoExporter.Result) -> NSAlert? {
+        func list(_ lines: [String]) -> String {
+            lines.prefix(10).joined(separator: "\n") + (lines.count > 10 ? "\n…" : "")
+        }
+        let fromSmartPreviews = result.fromSmartPreviews.map(\.lastPathComponent)
+        let previewNote = fromSmartPreviews.count == 1
+            ? "“\(fromSmartPreviews[0])” was exported from its Smart Preview, at up to 2,560 pixels, because its original is missing."
+            : "\(fromSmartPreviews.count) photos were exported from their Smart Previews, at up to 2,560 pixels, because their originals are missing:"
+        let alert = NSAlert()
+        if !result.failures.isEmpty {
+            alert.messageText = "\(result.failures.count) photo\(result.failures.count == 1 ? "" : "s") could not be exported."
+            alert.informativeText = list(result.failures)
+            if !fromSmartPreviews.isEmpty {
+                alert.informativeText += "\n\n" + previewNote + (fromSmartPreviews.count == 1 ? "" : "\n" + list(fromSmartPreviews))
+            }
+        } else if !fromSmartPreviews.isEmpty {
+            alert.messageText = fromSmartPreviews.count == 1
+                ? "A photo was exported from its Smart Preview." : "\(fromSmartPreviews.count) photos were exported from Smart Previews."
+            alert.informativeText = previewNote + (fromSmartPreviews.count == 1 ? "" : "\n" + list(fromSmartPreviews))
+        } else {
+            return nil
+        }
+        return alert
     }
 }
