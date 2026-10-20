@@ -125,6 +125,31 @@ final class PixelLoupeUITests: XCTestCase {
 
     /// Needs a catalog with photos: run with TEST_RUNNER_PIXELLOUPE_UI_CATALOG set to its path.
     @MainActor
+    func testContactSheetOpensFromTheWindowMenu() throws {
+        guard let catalog = ProcessInfo.processInfo.environment["PIXELLOUPE_UI_CATALOG"] else {
+            throw XCTSkip("Set PIXELLOUPE_UI_CATALOG to a catalog with photos.")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["-LastCatalogPath", catalog]
+        app.launch()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 30))
+        app.menuBars.menuBarItems["Window"].click()
+        app.menuBars.menuItems["Contact Sheet"].click()
+        let sheet = app.windows["contactSheet"]
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        XCTAssertTrue(sheet.groups["contactSheetPreview"].exists)
+        XCTAssertTrue(sheet.buttons["contactSheetGenerate"].exists)
+        XCTAssertTrue(sheet.staticTexts["contactSheetSummary"].exists)
+        sheet.typeKey("w", modifierFlags: .command)
+        XCTAssertFalse(sheet.waitForExistence(timeout: 1) && sheet.isHittable)
+
+        // ⌃⌥⌘C opens it too.
+        app.windows.firstMatch.typeKey("c", modifierFlags: [.control, .option, .command])
+        XCTAssertTrue(app.windows["contactSheet"].waitForExistence(timeout: 10))
+    }
+
+    /// Needs a catalog with photos: run with TEST_RUNNER_PIXELLOUPE_UI_CATALOG set to its path.
+    @MainActor
     func testExportDialogOpensWithShiftCommandE() throws {
         guard let catalog = ProcessInfo.processInfo.environment["PIXELLOUPE_UI_CATALOG"] else {
             throw XCTSkip("Set PIXELLOUPE_UI_CATALOG to a catalog with photos.")
