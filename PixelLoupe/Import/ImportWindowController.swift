@@ -132,6 +132,8 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
             self, selector: #selector(sourceMayBeGone(_:)), name: ImportDevices.didChangeNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(sourceMayBeGone(_:)), name: NSWorkspace.didUnmountNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(deviceDidUnlock(_:)), name: ImportDevices.didUnlockNotification, object: nil)
         sources.reload(extra: source)
         updateTopBar()
         updateCounts()
@@ -394,6 +396,7 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         enlargedView.onDoubleClick = { [weak self] in self?.showGrid() }
         emptyLabel.alignment = .center
         emptyLabel.textColor = .secondaryLabelColor
+        emptyLabel.setAccessibilityIdentifier("importMessage")
         spinner.style = .spinning
         spinner.isDisplayedWhenStopped = false
 
@@ -869,6 +872,13 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
                 self?.showMessage(error.localizedDescription)
             }
         }
+    }
+
+    /// A phone that said "Please unlock" is read again once it's unlocked and trusts this Mac.
+    @objc private func deviceDidUnlock(_ notification: Notification) {
+        guard let currentSource, currentSource.isDevice, !isImporting, selection.files.isEmpty,
+              ImportDevices.parse(currentSource.urls[0])?.deviceID == notification.object as? String else { return }
+        scan(currentSource)
     }
 
     private func replaceSelection(with files: [ImportService.ScannedFile]) {
