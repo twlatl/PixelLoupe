@@ -273,6 +273,19 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             self, selector: #selector(photoFileDidChange(_:)),
             name: ExternalEditMonitor.photoFileDidChangeNotification, object: store.externalEdits
         )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(sourceStatusDidChange(_:)),
+            name: SmartPreviewStore.didChangeNotification, object: store.smartPreviews
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(sourceStatusDidChange(_:)),
+            name: FileAvailability.didChangeNotification, object: store.availability
+        )
+    }
+
+    /// The photo's original went missing or came back, or it got or lost a Smart Preview.
+    @objc private func sourceStatusDidChange(_ notification: Notification) {
+        histogramView.sourceStatus = displayedPhoto.flatMap(store.sourceStatus)
     }
 
     /// Another app saved the photo being developed (Photo ▸ Edit In): decode it again. The zoom
@@ -1333,6 +1346,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             histogramView.isEditingEnabled = false
             histogramView.histogram = nil
             histogramView.shootingInfo = ShootingInfo()
+            histogramView.sourceStatus = nil
             histogramKey = nil
             show(message: "Select a photo in the Library to develop it.")
             infoLabel.stringValue = ""
@@ -1357,6 +1371,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         histogramView.isEditingEnabled = false
         histogramView.histogram = nil
         histogramView.shootingInfo = ShootingInfo()
+        histogramView.sourceStatus = store.sourceStatus(of: photo)
         histogramKey = nil
         endFringePicking()
         lensContext = nil

@@ -36,7 +36,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         self.store = store
         CollectionEditing(store: store).createDefaultSmartCollections()
         Self.restoreSelection(store.viewState, into: state, context: store.viewContext)
-        store.pruneOrphanedThumbnails()
+        store.pruneOrphanedPreviews()
         rootViewController = RootViewController(store: store, state: state)
 
         let window = NSWindow(
@@ -72,6 +72,9 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         modeSelection.onSelect = { [weak self] mode in self?.switchTo(mode) }
         store.availability.start()
         store.thumbnailMaintenance.start()
+        store.smartPreviewBuilder.onProgress = { [weak self] progress in self?.state.smartPreviewStatus = progress }
+        store.smartPreviewBuilder.start()
+        Task { [store] in await store.smartPreviews.load() }
         store.externalEdits.start()
         NotificationCenter.default.addObserver(
             self, selector: #selector(settingsDidChange(_:)), name: AppSettings.didChangeNotification, object: nil
@@ -140,6 +143,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         saveSelection()
         store.availability.stop()
         store.thumbnailMaintenance.stop()
+        store.smartPreviewBuilder.stop()
         store.externalEdits.stop()
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
@@ -1023,6 +1027,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         if let valid = validateSlideshowItem(item) { return valid }
         if let valid = validateDevelopSettingsItem(item) { return valid }
         if let valid = validateFolderItem(item) { return valid }
+        if let valid = validateSmartPreviewItem(item) { return valid }
         switch item.action {
         case #selector(addKeywords(_:)):
             return !state.selectedPhotoIDs.isEmpty
