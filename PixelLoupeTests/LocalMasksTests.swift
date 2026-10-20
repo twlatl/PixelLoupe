@@ -337,6 +337,82 @@ struct MaskHandleTests {
         #expect(steps.last?.1 == true && steps.first?.1 == false)
     }
 
+    private func radialMask(_ name: String, center: (Double, Double) = (0.5, 0.5), radius: (Double, Double) = (0.25, 0.4)) -> PhotoAdjustments.LocalAdjustment {
+        var mask = PhotoAdjustments.LocalAdjustment()
+        mask.name = name
+        mask.components = [.init(shape: .radial(.init(center: .init(x: center.0, y: center.1), radiusX: radius.0, radiusY: radius.1, angle: 0, feather: 0.5)))]
+        mask.settings.exposure = -0.5
+        return mask
+    }
+
+    @MainActor
+    private func subview<View: NSView>(_ identifier: String, of type: View.Type, in view: NSView) -> View? {
+        if let view = view as? View, view.accessibilityIdentifier() == identifier { return view }
+        return view.subviews.lazy.compactMap { self.subview(identifier, of: type, in: $0) }.first
+    }
+
+    @MainActor
+    @Test("A slider edit after moving a mask on the preview keeps the move (RAW-136)")
+    func sliderKeepsMovedMask() throws {
+        let panel = MaskPanelViewController()
+        let mask = radialMask("Radial Gradient 1")
+        panel.display(masks: [mask])
+        var moved = mask
+        moved.components = radialMask("", center: (0.2, 0.7), radius: (0.1, 0.15)).components
+        panel.update(masks: [moved])
+
+        var sent: [PhotoAdjustments.LocalAdjustment] = []
+        panel.onChange = { masks, _, _ in sent = masks }
+        let exposure = try #require(subview("slider.Mask.Exposure", of: SliderRow.self, in: panel.view))
+        exposure.onChange?(2, true)
+        #expect(sent.first?.components == moved.components)
+        #expect(sent.first?.settings.exposure == 2)
+    }
+
+    @MainActor
+    @Test("Each mask's row has a button that deletes it and leaves the selection alone")
+    func rowDeleteButton() throws {
+        let panel = MaskPanelViewController()
+        let first = radialMask("Radial Gradient 1"), second = radialMask("Radial Gradient 2", center: (0.3, 0.3))
+        panel.display(masks: [first, second], selecting: first.id)
+
+        var sent: [PhotoAdjustments.LocalAdjustment]?
+        panel.onChange = { masks, isFinal, action in
+            sent = masks
+            #expect(isFinal && action == "Delete Mask")
+        }
+        let table = try #require(subview("maskList", of: NSTableView.self, in: panel.view))
+        let row = try #require(table.view(atColumn: 0, row: 1, makeIfNecessary: true))
+        let delete = try #require(subview("deleteMask.1", of: NSButton.self, in: row))
+        #expect(delete.accessibilityLabel() == "Delete Radial Gradient 2")
+        delete.performClick(nil)
+        #expect(sent?.map(\.id) == [first.id])
+        #expect(panel.selectedID == first.id)
+    }
+
+    @MainActor
+    @Test("The row's delete button shows at the right edge of the mask list")
+    func rowDeleteButtonIsVisible() throws {
+        let panel = MaskPanelViewController()
+        // The panel is first laid out wider than it ends up, as when the Develop sidebar settles on its width.
+        let window = TestWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 700), styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = panel.view
+        panel.display(masks: [radialMask("Radial Gradient 1")])
+        window.layoutIfNeeded()
+        window.setContentSize(NSSize(width: 340, height: 700))
+        window.layoutIfNeeded()
+
+        let table = try #require(subview("maskList", of: NSTableView.self, in: panel.view))
+        let row = try #require(table.view(atColumn: 0, row: 0, makeIfNecessary: false))
+        let delete = try #require(subview("deleteMask.0", of: NSButton.self, in: row))
+        let list = try #require(table.enclosingScrollView)
+        let frame = delete.convert(delete.bounds, to: list)
+        #expect(!frame.isEmpty)
+        #expect(list.bounds.contains(frame), "button \(frame) list \(list.bounds) table \(table.frame) column \(table.tableColumns[0].width)")
+        #expect(frame.maxX > list.bounds.maxX - 30)
+        #expect(subview("deleteMask", of: NSButton.self, in: panel.view) == nil)
+    }
+
     @Test("M, ⇧M, O and ⇧W are masking shortcuts; plain W stays the white balance selector")
     func shortcuts() throws {
         func command(_ character: String, shift: Bool = false) -> KeyCommand? {

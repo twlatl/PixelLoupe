@@ -928,6 +928,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         newValue.masks = masks
         // Keep the Adjust panel's copy current, or its next edit would undo this one.
         if let source { panel.display(newValue, asShotWhiteBalance: source.asShotWhiteBalance, isRaw: source.isRaw) }
+        // Likewise the Masking panel's, or a slider touched after moving a mask puts it back (RAW-136).
+        maskPanel.update(masks: masks)
         adjustmentsChanged(newValue, isFinal: isFinal, actionName: actionName)
         maskOverlay.adjustment = masks.first { $0.id == maskPanel.selectedID }
     }
