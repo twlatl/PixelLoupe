@@ -47,6 +47,26 @@ struct ImportWindowTests {
         #expect(selection.number(of: 0) == 3, "numbers count every photo")
     }
 
+    @Test func descendingReversesTheSortNumbersAndFolders() {
+        let root = URL(filePath: "/Pictures", directoryHint: .isDirectory)
+        var selection = ImportSelection(
+            files: [file("A.jpg", date: "2026-10-12T09:00:00"), file("B.jpg", date: "2026-10-13T09:00:00"), file("C.jpg", date: "2026-10-12T10:00:00")],
+            destination: ImportDestination(root: root, subfolder: "", layout: .yearAndDate))
+        let names = { (s: ImportSelection) in s.shown.map { s.files[$0].candidate.source.url.lastPathComponent } }
+        #expect(names(selection) == ["A.jpg", "C.jpg", "B.jpg"])
+
+        selection.setAscending(false)
+        #expect(names(selection) == ["B.jpg", "C.jpg", "A.jpg"], "latest first")
+        #expect(selection.files.indices.map(selection.number) == [3, 1, 2], "numbers follow the grid")
+        selection.setSort(.fileName)
+        #expect(names(selection) == ["C.jpg", "B.jpg", "A.jpg"], "stays descending for another sort")
+
+        selection.setSort(.captureTime)
+        selection.setFilter(.destinationFolders)
+        #expect(selection.sections.map(\.title) == ["2026/2026-10-13", "2026/2026-10-12"], "latest folder first")
+        #expect(names(selection) == ["B.jpg", "C.jpg", "A.jpg"])
+    }
+
     @Test func destinationFoldersGroupsByWhereCopiesGo() {
         let root = URL(filePath: "/Pictures", directoryHint: .isDirectory)
         var selection = ImportSelection(
@@ -441,6 +461,33 @@ struct ImportWindowTests {
         window.layoutIfNeeded()
         #expect(abs(offset()) < 1)
         controller.close()
+    }
+
+    @Test func theSortDirectionButtonTogglesAndIsRemembered() throws {
+        let directory = try TemporaryDirectory()
+        let info = Fixtures.managedInfo(storage: try directory.subdirectory("Storage"))
+        let catalog = directory.url.appending(path: "Test.pixelloupe")
+        let store = try CatalogStore.inMemory(info: info, packageURL: catalog)
+        func open() throws -> (ImportWindowController, NSButton) {
+            let controller = ImportWindowController(service: ImportService(store: store), catalogURL: catalog, info: info)
+            let content = try #require(controller.window?.contentView)
+            return (controller, try #require(content.firstDescendant(identifier: "importSortDirection") as? NSButton))
+        }
+        defer { Defaults.store.removeObject(forKey: "ImportSortAscending") }
+        Defaults.store.removeObject(forKey: "ImportSortAscending")
+
+        let (first, button) = try open()
+        #expect(button.accessibilityValue() as? String == "Ascending")
+        #expect(button.image != nil)
+        button.performClick(nil)
+        #expect(button.accessibilityValue() as? String == "Descending")
+        first.close()
+
+        let (second, reopened) = try open()
+        #expect(reopened.accessibilityValue() as? String == "Descending", "the next import window keeps it")
+        reopened.performClick(nil)
+        #expect(reopened.accessibilityValue() as? String == "Ascending")
+        second.close()
     }
 
     private func photoCount(in store: CatalogStore) throws -> Int {

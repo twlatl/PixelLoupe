@@ -32,6 +32,7 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     private static let includeSubfoldersKey = "ImportIncludesSubfolders"
     private static let ejectAfterImportKey = "ImportEjectsAfterImport"
     private static let sortKey = "ImportSort"
+    private static let sortAscendingKey = "ImportSortAscending"
     private static let fromItem = NSToolbarItem.Identifier("importFrom")
     private static let transferItem = NSToolbarItem.Identifier("importTransfer")
     private static let toItem = NSToolbarItem.Identifier("importTo")
@@ -66,6 +67,7 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     private let selectedLabel = NSTextField(labelWithString: "")
     private let filterControl = NSSegmentedControl(labels: ImportSelection.Filter.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
     private let sortPopUp = NSPopUpButton()
+    private let sortDirectionButton = NSButton()
     private let layout = NSCollectionViewFlowLayout()
     private let collectionView = PhotoCollectionView()
     private let gridScrollView = NSScrollView()
@@ -369,7 +371,15 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         sortPopUp.target = self
         sortPopUp.action = #selector(sortChanged(_:))
         sortPopUp.setAccessibilityLabel("Sort")
-        let header = bar([selectedLabel, flexible(), filterControl, flexible(), sortLabel, sortPopUp])
+        selection.setAscending(Defaults.store.object(forKey: Self.sortAscendingKey) as? Bool ?? true)
+        sortDirectionButton.bezelStyle = .toolbar
+        sortDirectionButton.isBordered = false
+        sortDirectionButton.imagePosition = .imageOnly
+        sortDirectionButton.target = self
+        sortDirectionButton.action = #selector(toggleSortDirection(_:))
+        sortDirectionButton.setAccessibilityIdentifier("importSortDirection")
+        updateSortDirectionButton()
+        let header = bar([selectedLabel, flexible(), filterControl, flexible(), sortLabel, sortDirectionButton, sortPopUp])
         // When the pane is narrow, "Sort" goes first and then the count, rather than the bar forcing the
         // pane wider than the split view allows.
         header.setVisibilityPriority(.init(rawValue: 800), for: sortLabel)
@@ -892,7 +902,7 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     private func replaceSelection(with files: [ImportService.ScannedFile]) {
         checkAnchor = nil
         selection = ImportSelection(
-            files: files, transfer: options.effectiveTransfer, sort: selection.sort, filter: selection.filter,
+            files: files, transfer: options.effectiveTransfer, sort: selection.sort, ascending: selection.ascending, filter: selection.filter,
             destination: options.destination, allowsDuplicates: !options.skipsDuplicates, skipsRejected: options.skipsRejected)
         collectionView.reloadData()
         updateCounts()
@@ -958,6 +968,23 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         Defaults.store.set(raw, forKey: Self.sortKey)
         selection.setSort(sort)
         collectionView.reloadData()
+    }
+
+    @objc private func toggleSortDirection(_ sender: Any?) {
+        selection.setAscending(!selection.ascending)
+        Defaults.store.set(selection.ascending, forKey: Self.sortAscendingKey)
+        updateSortDirectionButton()
+        collectionView.reloadData()
+    }
+
+    /// The button keeps one symbol either way; descending tints it with the accent color.
+    private func updateSortDirectionButton() {
+        let title = selection.ascending ? "Ascending" : "Descending"
+        sortDirectionButton.image = NSImage(systemSymbolName: "arrow.up.arrow.down.circle.fill", accessibilityDescription: title)
+        sortDirectionButton.contentTintColor = selection.ascending ? .secondaryLabelColor : .controlAccentColor
+        sortDirectionButton.toolTip = selection.ascending ? "Ascending — click for descending" : "Descending — click for ascending"
+        sortDirectionButton.setAccessibilityLabel("Sort Direction")
+        sortDirectionButton.setAccessibilityValue(title)
     }
 
     @objc private func thumbnailSizeChanged(_ sender: NSSlider) {

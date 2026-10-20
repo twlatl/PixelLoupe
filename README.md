@@ -224,7 +224,7 @@ memory card is inserted** (off by default), inserting a card brings PixelLoupe f
 photos show their thumbnails from the device; importing downloads the checked ones to a temporary folder, imports
 them as copies, then removes the downloads. A locked iPhone asks to be unlocked (and to trust this Mac) first.
 
-The grid numbers the photos, sorted by **Capture Time**, **File Name** or **File Type**, and can show **All Photos**,
+The grid numbers the photos, sorted by **Capture Time**, **File Name** or **File Type** (the button beside Sort flips between ascending and descending), and can show **All Photos**,
 **New Photos** (not already in the catalog), or **Destination Folders** (in a section for each folder they'll be copied
 into). New photos start checked; ones the catalog already has show **In Library** and can't be checked (for Copy, the
 same name, size and capture time; for Add, the same file). `Space` checks or unchecks the selected photos, as does clicking the checkbox of any one of several selected photos; Shift-clicking a checkbox gives every photo between it and the last checkbox clicked that one's state (uncheck one, Shift-click another, and all between are unchecked). Double-click a
