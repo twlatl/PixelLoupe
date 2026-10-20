@@ -12,6 +12,14 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     var onImport: (([ImportService.Candidate], ImportTransfer, ImportDestination, ImportExtras, _ eject: URL?) -> Void)?
     /// Called when the window closes, imported or not.
     var onClose: (() -> Void)?
+    /// Called by Cancel (or closing the window, once confirmed) while photos are importing.
+    var onCancelImport: (() -> Void)?
+
+    /// Whether the checked photos are being imported: the window is locked except for Cancel.
+    private(set) var isImporting = false
+    private let lockShield = ImportLockShield()
+    private let progressBar = NSProgressIndicator()
+    private var cancelButton: NSButton?
 
     static let thumbnailSizeRange: ClosedRange<Double> = 100...400
     /// The grid pane's narrowest: the filter and the sort pop-up, once "Sort" and the count have given way.
@@ -223,6 +231,16 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         stack.orientation = .vertical
         stack.spacing = 0
         fillWidth(stack)
+        // While importing, a shield over the panes takes their clicks.
+        lockShield.isHidden = true
+        lockShield.translatesAutoresizingMaskIntoConstraints = false
+        stack.addSubview(lockShield)
+        NSLayoutConstraint.activate([
+            lockShield.leadingAnchor.constraint(equalTo: panes.view.leadingAnchor),
+            lockShield.trailingAnchor.constraint(equalTo: panes.view.trailingAnchor),
+            lockShield.topAnchor.constraint(equalTo: panes.view.topAnchor),
+            lockShield.bottomAnchor.constraint(equalTo: panes.view.bottomAnchor),
+        ])
         panes.view.setContentHuggingPriority(.init(1), for: .vertical)
         DispatchQueue.main.async {
             // Starting widths, unless the user has dragged the dividers before.
@@ -426,7 +444,14 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         updatePresetMenu()
         // The preset sits in the middle of the footer, as in the mockups.
         let left = flexible(), right = flexible()
-        let footer = bar([summaryLabel, left, presetLabel, presetPopUp, right, cancel, importButton])
+        cancelButton = cancel
+        progressBar.style = .bar
+        progressBar.isIndeterminate = false
+        progressBar.isHidden = true
+        progressBar.setAccessibilityLabel("Import progress")
+        progressBar.setAccessibilityIdentifier("importProgress")
+        progressBar.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        let footer = bar([summaryLabel, left, presetLabel, presetPopUp, right, progressBar, cancel, importButton])
         left.widthAnchor.constraint(equalTo: right.widthAnchor).isActive = true
         footer.setVisibilityPriority(.init(rawValue: 800), for: presetLabel)
         footer.edgeInsets = NSEdgeInsets(top: 10, left: 16, bottom: 12, right: 16)
@@ -993,6 +1018,8 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     // MARK: - Keys
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
+        // Locked while importing (Escape still reaches Cancel).
+        guard !isImporting else { return false }
         guard event.window === window, window?.attachedSheet == nil,
               !((window?.firstResponder as? NSText)?.isEditable ?? false),
               event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return false }
@@ -1016,8 +1043,80 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     // MARK: - Actions
 
     @objc private func cancel(_ sender: Any?) {
+        // While importing, Cancel stops the import (what's in so far stays in the catalog).
+        if isImporting {
+            onCancelImport?()
+            return
+        }
         // Escape leaves the enlarged photo first (handled before this), so here it closes the window.
         window?.performClose(nil)
+    }
+
+    /// Closing the window while importing asks first, then stops the import.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard isImporting else { return true }
+        let alert = NSAlert()
+        alert.messageText = "Stop importing?"
+        alert.informativeText = "Photos already imported stay in the catalog."
+        alert.addButton(withTitle: "Stop Import")
+        alert.addButton(withTitle: "Continue Importing")
+        alert.beginSheetModal(for: sender) { [weak self] response in
+            if response == .alertFirstButtonReturn { self?.onCancelImport?() }
+        }
+        return false
+    }
+
+    // MARK: - Importing
+
+    /// Locks the window (except Cancel) and shows the import's progress in the footer.
+    private func beginImporting(total: Int) {
+        isImporting = true
+        lockShield.isHidden = false
+        options.isLocked = true
+        for control in [fromPopUp, toPopUp, presetPopUp] as [NSControl] { control.isEnabled = false }
+        importButton.isHidden = true
+        progressBar.isHidden = false
+        progressBar.maxValue = Double(max(total, 1))
+        progressBar.doubleValue = 0
+        summaryLabel.stringValue = "Importing \(total == 1 ? "1 photo" : "\(total) photos")…"
+        window?.makeFirstResponder(nil)
+    }
+
+    /// The import's progress, from the catalog window running it.
+    func importDidProgress(_ progress: ImportProgress) {
+        guard isImporting else { return }
+        progressBar.maxValue = Double(max(progress.total, 1))
+        progressBar.doubleValue = Double(progress.completed)
+        summaryLabel.stringValue = "Importing \(min(progress.completed, progress.total)) of \(progress.total)…"
+    }
+
+    /// The import finished (or was stopped): with no failures the window closes; otherwise it lists them,
+    /// and Done closes it.
+    func importDidFinish(failures: [String]) {
+        isImporting = false
+        guard !failures.isEmpty, let window else {
+            close()
+            return
+        }
+        progressBar.isHidden = true
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = failures.count == 1 ? "1 photo couldn't be imported" : "\(failures.count) photos couldn't be imported"
+        alert.informativeText = "The others were imported."
+        let list = NSTextView()
+        list.string = failures.joined(separator: "\n")
+        list.isEditable = false
+        list.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        list.textContainerInset = NSSize(width: 4, height: 4)
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 380, height: 140))
+        scroll.documentView = list
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        list.frame = scroll.contentView.bounds
+        list.autoresizingMask = [.width]
+        alert.accessoryView = scroll
+        alert.addButton(withTitle: "Done")
+        alert.beginSheetModal(for: window) { [weak self] _ in self?.close() }
     }
 
     @objc private func importChecked(_ sender: Any?) {
@@ -1029,8 +1128,8 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         }
         options.settings.save(for: catalogURL)
         let card = ejectAfterImport.state == .on ? currentSource.flatMap { ImportCards.isOnCard($0.urls) ? ImportCards.card(containing: $0.urls[0]) : nil } : nil
+        beginImporting(total: candidates.count)
         onImport?(candidates, options.effectiveTransfer, options.destination, options.extras, card)
-        close()
     }
 }
 
@@ -1086,4 +1185,30 @@ private final class PaneController: NSViewController {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func loadView() { view = content }
+}
+
+/// Covers the import window's panes while photos import, taking their clicks and dimming them a little.
+final class ImportLockShield: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        setAccessibilityElement(false)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.35).cgColor
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        isHidden ? nil : (frame.contains(point) ? self : nil)
+    }
+
+    override func mouseDown(with event: NSEvent) {}
+    override func rightMouseDown(with event: NSEvent) {}
+    override func scrollWheel(with event: NSEvent) {}
 }

@@ -246,8 +246,11 @@ a name (Save Current Settings as New Preset…), and applies them when chosen. C
 preset as "(edited)" until it's updated (Update Preset); presets can be renamed and deleted, are shared by every
 catalog, and each catalog remembers the one last chosen.
 
-**Import N Photos** imports the checked photos, with progress in the catalog window's bottom bar, and closes the window.
-The left sidebar's **Previous Import** then shows them.
+**Import N Photos** locks the window (only Cancel works) and shows the progress in its footer. The catalog window
+switches to **Previous Import** (in the sidebar's Catalog section: the photos from the latest import) so the photos
+appear as they come in. With no failures the window closes and a pill over the photos says what happened ("Imported 34
+photos · 6 already in the catalog"); otherwise the window lists the failures until Done. Cancel (or closing the window,
+after confirming) stops the import, keeping what's in so far.
 
 ## Slideshow
 

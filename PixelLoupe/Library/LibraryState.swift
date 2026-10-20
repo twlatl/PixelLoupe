@@ -196,6 +196,9 @@ final class LibraryState {
         didSet { if importStatus != oldValue { notify(.importStatus) } }
     }
 
+    /// The import under way, which Previous Import shows from its start, before its first photo is in.
+    var importingID: UUID?
+
     /// File ▸ Export's progress, shown like import's.
     var exportStatus: ImportStatus? {
         didSet { if exportStatus != oldValue { notify(.importStatus) } }

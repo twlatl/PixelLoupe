@@ -55,12 +55,13 @@ final class ImportService {
         transfer: ImportTransfer? = nil,
         destination: ImportDestination? = nil,
         extras: ImportExtras = ImportExtras(),
+        importID: UUID = UUID(),
         progress: (ImportProgress) -> Void = { _ in }
     ) async throws -> ImportSummary {
         let defaults = ImportSettings.defaults(for: store.info)
         let summary = try await importBatches(
             count: candidates.count, transfer: transfer ?? defaults.transfer,
-            destination: destination ?? defaults.destination, extras: extras, progress: progress
+            destination: destination ?? defaults.destination, extras: extras, importID: importID, progress: progress
         ) { range in
             Array(candidates[range])
         }
@@ -73,6 +74,8 @@ final class ImportService {
         transfer: ImportTransfer,
         destination: ImportDestination,
         extras: ImportExtras = ImportExtras(),
+        // Every photo this import adds shares it, so Previous Import can show them together.
+        importID: UUID = UUID(),
         progress: (ImportProgress) -> Void,
         candidates: (Range<Int>) async -> [Candidate]
     ) async throws -> ImportSummary {
@@ -87,8 +90,6 @@ final class ImportService {
         guard count > 0 else { return summary }
 
         let context = store.newBackgroundContext()
-        // Every photo this import adds shares it, so Previous Import can show them together.
-        let importID = UUID()
         var seenKeys = try await Self.existingKeys(in: context, mode: rule)
         var reservedDestinations = Set<String>()
         let thumbnailDirectory = store.thumbnails.directory

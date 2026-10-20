@@ -949,33 +949,70 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         controller.showWindow(nil)
     }
 
+    /// Imports what the import window checked. The Library switches to Previous Import at once, so
+    /// photos appear as they come in; the import window shows the progress, and closes when it's done
+    /// (or lists what failed). Cancel there stops the import, keeping what's in so far.
     func runImport(
         _ candidates: [ImportService.Candidate], transfer: ImportTransfer, destination: ImportDestination,
         extras: ImportExtras = ImportExtras(), eject card: URL? = nil
     ) {
         let service = ImportService(store: store)
+        let importID = UUID()
+        state.presentation = .grid
+        state.mode = .library
+        state.importingID = importID
+        state.filter.scope = .previousImport(id: importID)
+        rootViewController.main.sidebar.reload()
+        importWindowController?.onCancelImport = { [weak self] in self?.importTask?.cancel() }
         importTask = Task { [weak self] in
             defer {
                 self?.importTask = nil
                 self?.state.importStatus = nil
             }
             do {
-                let summary = try await service.importPhotos(candidates, transfer: transfer, destination: destination, extras: extras) { progress in
-                    self?.state.importStatus = LibraryState.ImportStatus(
-                        completed: progress.completed, total: progress.total
-                    )
+                let summary = try await service.importPhotos(
+                    candidates, transfer: transfer, destination: destination, extras: extras, importID: importID
+                ) { progress in
+                    self?.state.importStatus = LibraryState.ImportStatus(completed: progress.completed, total: progress.total)
+                    self?.importWindowController?.importDidProgress(progress)
                 }
-                self?.reportImport(summary)
+                self?.importWindowController?.importDidFinish(failures: summary.failures)
+                self?.announce(Self.importMessage(for: summary))
                 // Eject After Import: only when everything came across, so nothing is left to retry.
                 if let card, summary.failures.isEmpty, let error = await ImportCards.eject(card) {
                     self?.showError(error)
                 }
             } catch is CancellationError {
-                return
+                self?.importWindowController?.importDidFinish(failures: [])
+                self?.announceStoppedImport(importID)
             } catch {
+                self?.importWindowController?.importDidFinish(failures: [])
                 self?.showError(error)
             }
+            // Previous Import falls back to the import before when nothing came in.
+            self?.state.importingID = nil
+            self?.rootViewController.main.sidebar.reload()
         }
+    }
+
+    /// "Imported 34 photos · 6 already in the catalog", for the pill over the photos.
+    static func importMessage(for summary: ImportSummary) -> String {
+        var parts = [summary.imported == 1 ? "Imported 1 photo" : "Imported \(summary.imported) photos"]
+        if summary.skippedDuplicates > 0 { parts.append("\(summary.skippedDuplicates) already in the catalog") }
+        if summary.skippedRejected > 0 { parts.append("\(summary.skippedRejected) rejected left out") }
+        if !summary.failures.isEmpty { parts.append("\(summary.failures.count) failed") }
+        return parts.joined(separator: " · ")
+    }
+
+    private func announceStoppedImport(_ importID: UUID) {
+        let request = Photo.fetchRequest()
+        request.predicate = NSPredicate(format: "importID == %@", importID as CVarArg)
+        let count = (try? store.viewContext.count(for: request)) ?? 0
+        announce("Import stopped · \(count == 1 ? "1 photo" : "\(count) photos") imported")
+    }
+
+    private func announce(_ message: String) {
+        rootViewController.main.markOverlay.show(.message(message))
     }
 
     // Files and folders dropped on the window open the import window with them.
@@ -1001,21 +1038,6 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         let urls = info.draggingPasteboard.readObjects(
             forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
         return urls.filter(SupportedImageTypes.isImportable)
-    }
-
-    private func reportImport(_ summary: ImportSummary) {
-        guard summary.imported == 0 || !summary.failures.isEmpty, let window else { return }
-        let alert = NSAlert()
-        if summary.imported == 0 && summary.failures.isEmpty {
-            alert.messageText = summary.skippedDuplicates > 0
-                ? "All selected photos are already in this catalog."
-                : "No supported photos were found."
-        } else {
-            alert.messageText = "Imported \(summary.imported) photos. \(summary.failures.count) could not be imported."
-            alert.informativeText = summary.failures.prefix(10).joined(separator: "\n")
-                + (summary.failures.count > 10 ? "\n…" : "")
-        }
-        alert.beginSheetModal(for: window)
     }
 
     func showError(_ error: Error) {
