@@ -66,6 +66,10 @@ nonisolated final class DevelopSource {
     }
 
     init?(url: URL) {
+        // Core Image can go on decoding a file after it's gone while another filter has it open (seen on
+        // CI's macOS image), so a missing original would never give way to its Smart Preview. Develop's
+        // loader checks the same way.
+        guard FileManager.default.isReadableFile(atPath: url.path(percentEncoded: false)) else { return nil }
         self.url = url
         smartPreview = nil
         fileScale = 1
