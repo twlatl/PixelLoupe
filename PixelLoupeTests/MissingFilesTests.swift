@@ -207,7 +207,7 @@ struct MissingFilesTests {
         let setup = try makeSetup()
         let missing = URL(filePath: setup.photos["C.jpg"]!.filePath)
         #expect(DevelopSource(url: missing) == nil)
-        let rendered = await PhotoRenderer.render(missing, adjustments: PhotoAdjustments(), maxPixels: 512)
+        let rendered = await PhotoRenderer.render(.init(original: missing), adjustments: PhotoAdjustments(), maxPixels: 512)
         #expect(rendered == nil)
     }
 }

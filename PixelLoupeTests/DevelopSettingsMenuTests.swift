@@ -155,14 +155,14 @@ struct DevelopSettingsMenuTests {
         let directory = try TemporaryDirectory()
         let warm = directory.url.appending(path: "warm.jpg")
         try writeWarmJPEG(to: warm)
-        let whiteBalance = try #require(await AutoDevelop.whiteBalance(for: warm, adjustments: .init()))
+        let whiteBalance = try #require(await AutoDevelop.whiteBalance(for: .init(original: warm), adjustments: .init()))
         #expect((whiteBalance.temperature ?? 6500) < 6500 && whiteBalance.preset == "Auto")
 
         let dark = directory.url.appending(path: "dark.jpg")
         try writeWarmJPEG(to: dark, red: 0.08, green: 0.08, blue: 0.08)
-        let settings = try #require(await AutoDevelop.settings(for: dark, adjustments: .init()))
+        let settings = try #require(await AutoDevelop.settings(for: .init(original: dark), adjustments: .init()))
         #expect(settings.light.exposure > 0)
-        #expect(await AutoDevelop.settings(for: directory.url.appending(path: "gone.jpg"), adjustments: .init()) == nil)
+        #expect(await AutoDevelop.settings(for: .init(original: directory.url.appending(path: "gone.jpg")), adjustments: .init()) == nil)
     }
 
     // MARK: - In the window

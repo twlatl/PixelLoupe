@@ -265,7 +265,12 @@ nonisolated enum SmartPreviewWriter {
             sourceModificationDate: fingerprint.modified, sourceSize: fingerprint.size
         )
 
-        let metadata = CGImageMetadataCreateMutable()
+        // The original's metadata (EXIF, IPTC, GPS and XMP), for the pixels as they are now: upright.
+        let metadata = CGImageSourceCopyMetadataAtIndex(source, 0, nil).flatMap { CGImageMetadataCreateMutableCopy($0) }
+            ?? CGImageMetadataCreateMutable()
+        CGImageMetadataSetValueMatchingImageProperty(
+            metadata, kCGImagePropertyTIFFDictionary, kCGImagePropertyTIFFOrientation, 1 as CFNumber
+        )
         guard CGImageMetadataRegisterNamespaceForPrefix(
                 metadata, SmartPreviewInfo.xmpNamespace as CFString, SmartPreviewInfo.xmpPrefix as CFString, nil
               ),

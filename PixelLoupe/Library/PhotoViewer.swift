@@ -207,7 +207,7 @@ final class PhotoViewer: NSView {
         guard let photo, !photo.isVideo else { return }
         let id = photoID
         let uuid = photo.id
-        let url = photo.fileURL
+        let location = store.sourceLocation(of: photo)
         let adjustments = photo.adjustments
         let pixels = max(targetPixels, 512)
         let thumbnails = store.thumbnails
@@ -217,7 +217,7 @@ final class PhotoViewer: NSView {
                 guard let self, !Task.isCancelled, photoID == id else { return }
                 imageLayer.contents = thumbnail
             }
-            let rendered = await PhotoRenderer.render(url, adjustments: adjustments, maxPixels: pixels)
+            let rendered = await PhotoRenderer.render(location, adjustments: adjustments, maxPixels: pixels)
             guard let self, !Task.isCancelled, photoID == id, let rendered else { return }
             imageLayer.contents = rendered.image
             renderedSize = pixels
@@ -334,7 +334,7 @@ final class PhotoViewer: NSView {
         guard let photo, !photo.isVideo else { return }
         if zoomSource == nil {
             let id = photoID
-            let loaded = await CompareSource.load(photo.fileURL)
+            let loaded = await CompareSource.load(store.sourceLocation(of: photo))
             guard photoID == id else { return }
             zoomSource = loaded
         }

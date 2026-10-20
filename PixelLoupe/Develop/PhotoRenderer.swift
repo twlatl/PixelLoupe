@@ -12,10 +12,10 @@ nonisolated enum PhotoRenderer {
 
     static let context = CIContext(options: [.cacheIntermediates: false])
 
-    /// Renders `url` so its long edge is at most `maxPixels` (never upscaled).
+    /// Renders the photo at `location` so its long edge is at most `maxPixels` (never upscaled).
     @concurrent
-    static func render(_ url: URL, adjustments: PhotoAdjustments, maxPixels: CGFloat) async -> Rendered? {
-        guard let source = DevelopSource(url: url) else { return nil }
+    static func render(_ location: PhotoSourceLocation, adjustments: PhotoAdjustments, maxPixels: CGFloat) async -> Rendered? {
+        guard let source = DevelopSource.open(location) else { return nil }
         let image = source.image(with: adjustments, scale: source.scale(toFit: maxPixels, adjustments: adjustments))
         guard let colorSpace = CGColorSpace(name: CGColorSpace.displayP3),
               let cgImage = context.createCGImage(image, from: image.extent, format: .RGBA8, colorSpace: colorSpace)

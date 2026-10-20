@@ -51,6 +51,7 @@ final class LensPanelViewController: NSViewController {
     private(set) var catalog = LensCatalog()
     /// The camera's RAW files always apply their built-in profile.
     private(set) var builtInAlwaysOn = false
+    private(set) var onSmartPreview = false
     var isEditingEnabled = false {
         didSet { update() }
     }
@@ -294,12 +295,15 @@ final class LensPanelViewController: NSViewController {
 
     // MARK: - Display
 
-    /// Shows a photo's settings and what's known about its profile.
-    func display(_ lens: Lens, status: ProfileStatus, catalog: LensCatalog, builtInAlwaysOn: Bool = false) {
+    /// Shows a photo's settings and what's known about its profile. `onSmartPreview`: the photo is
+    /// drawn from its Smart Preview, whose pixels have the built-in profile or not whatever the
+    /// setting (`builtInAlwaysOn` says which).
+    func display(_ lens: Lens, status: ProfileStatus, catalog: LensCatalog, builtInAlwaysOn: Bool = false, onSmartPreview: Bool = false) {
         self.lens = lens
         self.status = status
         self.catalog = catalog
         self.builtInAlwaysOn = builtInAlwaysOn
+        self.onSmartPreview = onSmartPreview
         if isViewLoaded { update() }
     }
 
@@ -348,6 +352,8 @@ final class LensPanelViewController: NSViewController {
         let message: String? = switch status {
         case .unavailable: nil
         case .searching: "Looking for a lens profile…"
+        case .builtIn where onSmartPreview && !builtInAlwaysOn:
+            lens.enableProfileCorrections ? "The Built-in Lens Profile is applied to the original only." : nil
         case .builtIn: builtInApplied ? "Built-in Lens Profile applied." : nil
         case .matched where !lens.enableProfileCorrections: nil
         case .matched: lens.profile.map { "LensFun profile applied: \($0.title)." }

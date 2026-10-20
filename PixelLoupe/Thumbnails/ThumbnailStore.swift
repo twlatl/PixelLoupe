@@ -57,58 +57,75 @@ final class ThumbnailStore {
 
     /// Rewrites the thumbnail for a photo after its Develop settings change. Rapid successive
     /// changes for the same photo cancel earlier renders.
-    func regenerate(id: UUID, source: URL, adjustments: PhotoAdjustments) {
+    func regenerate(id: UUID, source: PhotoSourceLocation, adjustments: PhotoAdjustments) {
         regenerations[id]?.cancel()
         let destination = url(for: id)
         regenerations[id] = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
-            let succeeded = await Self.renderThumbnail(from: source, to: destination, adjustments: adjustments)
+            let drawn = await Self.renderThumbnail(from: source, to: destination, adjustments: adjustments)
             guard let self, !Task.isCancelled else { return }
             regenerations[id] = nil
-            guard succeeded else { return }
-            cache.removeObject(forKey: id as NSUUID)
-            NotificationCenter.default.post(name: Self.didUpdateNotification, object: self, userInfo: ["id": id])
+            guard let drawn else { return }
+            didDraw(id, from: drawn)
         }
     }
 
     /// Redraws the thumbnail for a photo now (unlike ``regenerate(id:source:adjustments:)``, without
     /// waiting) and tells the grid. Returns whether it worked. For background passes.
-    func render(id: UUID, source: URL, adjustments: PhotoAdjustments) async -> Bool {
-        let succeeded = await Self.renderThumbnail(from: source, to: url(for: id), adjustments: adjustments)
-        guard succeeded else { return false }
+    func render(id: UUID, source: PhotoSourceLocation, adjustments: PhotoAdjustments) async -> Bool {
+        guard let drawn = await Self.renderThumbnail(from: source, to: url(for: id), adjustments: adjustments) else { return false }
+        didDraw(id, from: drawn)
+        return true
+    }
+
+    /// Photos whose thumbnail was drawn from their Smart Preview, while the original was missing.
+    private(set) lazy var drawnFromSmartPreviews = SeededThumbnails.load(from: directory, origin: .smartPreview)
+
+    private func didDraw(_ id: UUID, from drawn: Drawn) {
+        let listed = drawn == .smartPreview ? drawnFromSmartPreviews.insert(id).inserted : drawnFromSmartPreviews.remove(id) != nil
+        if listed { SeededThumbnails.save(drawnFromSmartPreviews, to: directory, origin: .smartPreview) }
         cache.removeObject(forKey: id as NSUUID)
         NotificationCenter.default.post(name: Self.didUpdateNotification, object: self, userInfo: ["id": id])
-        return true
+    }
+
+    /// What a thumbnail was drawn from.
+    private enum Drawn {
+        case original, smartPreview
     }
 
     nonisolated private static let renderContext = CIContext(options: [.cacheIntermediates: false])
 
     @concurrent
-    nonisolated private static func renderThumbnail(from source: URL, to destination: URL, adjustments: PhotoAdjustments) async -> Bool {
+    nonisolated private static func renderThumbnail(
+        from location: PhotoSourceLocation, to destination: URL, adjustments: PhotoAdjustments
+    ) async -> Drawn? {
         let temporary = destination.deletingLastPathComponent().appending(path: ".\(UUID().uuidString).jpg")
         defer { try? FileManager.default.removeItem(at: temporary) }
+        let source = location.original
+        var drawn = Drawn.original
         do {
             if SupportedImageTypes.isVideo(source) {
                 try await VideoSupport.writeThumbnail(from: source, to: temporary)
-            } else if adjustments.isDefault {
-                try generateThumbnail(from: source, to: temporary)
+            } else if adjustments.isDefault, (try? generateThumbnail(from: source, to: temporary)) != nil {
+                // The embedded preview, or a quick decode.
             } else {
-                guard let developSource = DevelopSource(url: source) else { return false }
+                guard let developSource = DevelopSource.open(location) else { return nil }
                 let image = developSource.image(with: adjustments, scale: developSource.scale(toFit: CGFloat(maxPixelSize), adjustments: adjustments))
                 guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
                       let cgImage = renderContext.createCGImage(image, from: image.extent, format: .RGBA8, colorSpace: colorSpace)
-                else { return false }
+                else { return nil }
                 try writeJPEG(cgImage, to: temporary)
+                if developSource.isSmartPreview { drawn = .smartPreview }
             }
             if FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)) {
                 _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporary)
             } else {
                 try FileManager.default.moveItem(at: temporary, to: destination)
             }
-            return true
+            return drawn
         } catch {
-            return false
+            return nil
         }
     }
 

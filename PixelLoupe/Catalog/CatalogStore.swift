@@ -105,7 +105,7 @@ final class CatalogStore: NSObject {
         let updated = notification.userInfo?[NSUpdatedObjectsKey] as? Set<NSManagedObject> ?? []
         for case let photo as Photo in updated
         where photo.changedValuesForCurrentEvent()[#keyPath(Photo.adjustmentsData)] != nil {
-            thumbnails.regenerate(id: photo.id, source: photo.fileURL, adjustments: photo.adjustments)
+            thumbnails.regenerate(id: photo.id, source: sourceLocation(of: photo), adjustments: photo.adjustments)
         }
     }
 

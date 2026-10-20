@@ -2,18 +2,41 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 import Foundation
 
+/// Where a photo's pixels can come from: its original, and the Smart Preview that stands in for it
+/// when the original can't be read (RAW-85). Resolved on the main actor
+/// (``CatalogStore/sourceLocation(of:)``), opened off it.
+nonisolated struct PhotoSourceLocation: Sendable, Equatable {
+    var original: URL
+    var smartPreview: URL?
+
+    init(original: URL, smartPreview: URL? = nil) {
+        self.original = original
+        self.smartPreview = smartPreview
+    }
+}
+
 /// A decoded photo that can be re-rendered with any `PhotoAdjustments`.
 ///
 /// RAW files go through Apple's RAW engine (`CIRAWFilter`), which handles exposure, white
 /// balance, noise reduction and sharpening at the demosaic stage for the best quality. Other
 /// formats get the Core Image equivalents. The rest of the pipeline is shared.
 ///
+/// A Smart Preview opened in place of its original passes for the original at reduced
+/// resolution: it reports the original's size and takes scales relative to it, enlarging when
+/// asked for more pixels than it has (soft, but where callers expect it).
+///
 /// Not thread-safe: use one instance per thread or task.
 nonisolated final class DevelopSource {
+    /// The file decoded: the original, or its Smart Preview.
     let url: URL
     let isRaw: Bool
-    /// Size of the full-resolution image, after orientation.
+    /// Size of the full-resolution image, after orientation. For a Smart Preview, its original's.
     let nativeSize: CGSize
+    /// What the Smart Preview records, when that's what was opened.
+    let smartPreview: SmartPreviewInfo?
+    var isSmartPreview: Bool { smartPreview != nil }
+    /// The decoded file's size relative to `nativeSize`: 1, or a Smart Preview's scale.
+    private let fileScale: CGFloat
 
     private let rawFilter: CIRAWFilter?
     private let rawDefaults: RawDefaults?
@@ -30,22 +53,26 @@ nonisolated final class DevelopSource {
         var detail: Float
         /// Whether the RAW engine applies the camera's built-in lens profile unless asked to.
         var lensCorrection: Bool
+
+        init(_ raw: CIRAWFilter, lensCorrection: Bool) {
+            neutralTemperature = raw.neutralTemperature
+            neutralTint = raw.neutralTint
+            luminanceNoiseReduction = raw.luminanceNoiseReductionAmount
+            colorNoiseReduction = raw.colorNoiseReductionAmount
+            sharpness = raw.sharpnessAmount
+            detail = raw.detailAmount
+            self.lensCorrection = lensCorrection
+        }
     }
 
     init?(url: URL) {
         self.url = url
+        smartPreview = nil
+        fileScale = 1
         if SupportedImageTypes.isRaw(url), let raw = CIRAWFilter(imageURL: url), let output = raw.outputImage {
             isRaw = true
             rawFilter = raw
-            rawDefaults = RawDefaults(
-                neutralTemperature: raw.neutralTemperature,
-                neutralTint: raw.neutralTint,
-                luminanceNoiseReduction: raw.luminanceNoiseReductionAmount,
-                colorNoiseReduction: raw.colorNoiseReductionAmount,
-                sharpness: raw.sharpnessAmount,
-                detail: raw.detailAmount,
-                lensCorrection: raw.isLensCorrectionSupported && raw.isLensCorrectionEnabled
-            )
+            rawDefaults = RawDefaults(raw, lensCorrection: raw.isLensCorrectionSupported && raw.isLensCorrectionEnabled)
             baseImage = nil
             nativeSize = output.extent.size
         } else if let image = CIImage(contentsOf: url, options: [.applyOrientationProperty: true]) {
@@ -59,6 +86,37 @@ nonisolated final class DevelopSource {
         }
     }
 
+    /// A Smart Preview standing in for its original (see ``SmartPreviewWriter``).
+    init?(smartPreview url: URL) {
+        guard let info = SmartPreviewInfo.read(from: url), info.scale > 0, info.originalWidth > 0, info.originalHeight > 0
+        else { return nil }
+        self.url = url
+        smartPreview = info
+        fileScale = CGFloat(info.scale)
+        nativeSize = info.originalSize
+        if info.kind != .image, let raw = CIRAWFilter(imageURL: url), raw.outputImage != nil {
+            // The original's look, which the Smart Preview was decoded without.
+            if let shadowBias = info.shadowBias { raw.shadowBias = shadowBias }
+            if let localToneMapAmount = info.localToneMapAmount { raw.localToneMapAmount = localToneMapAmount }
+            isRaw = true
+            rawFilter = raw
+            rawDefaults = RawDefaults(raw, lensCorrection: info.isBuiltInLensProfileApplied)
+            baseImage = nil
+        } else if info.kind == .image, let image = CIImage(contentsOf: url, options: [.applyOrientationProperty: true]) {
+            isRaw = false
+            rawFilter = nil
+            rawDefaults = nil
+            baseImage = image
+        } else {
+            return nil
+        }
+    }
+
+    /// Opens `location`'s original, or its Smart Preview when the original can't be read.
+    static func open(_ location: PhotoSourceLocation) -> DevelopSource? {
+        DevelopSource(url: location.original) ?? location.smartPreview.flatMap { DevelopSource(smartPreview: $0) }
+    }
+
     /// White balance the camera recorded. Non-RAW images are treated as already neutral (6500 K).
     var asShotWhiteBalance: (temperature: Double, tint: Double) {
         guard let rawDefaults else { return (6500, 0) }
@@ -66,13 +124,25 @@ nonisolated final class DevelopSource {
     }
 
     /// Whether the file carries the camera's own lens profile (many mirrorless RAW formats), which
-    /// Lens Corrections uses instead of a LensFun profile, as Lightroom does.
-    var hasBuiltInLensProfile: Bool { rawFilter?.isLensCorrectionSupported ?? false }
+    /// Lens Corrections uses instead of a LensFun profile, as Lightroom does. For a Smart Preview,
+    /// whether its original does.
+    var hasBuiltInLensProfile: Bool {
+        smartPreview?.hasBuiltInLensProfile ?? rawFilter?.isLensCorrectionSupported ?? false
+    }
 
     /// Whether the built-in lens profile is applied: when Enable Profile Corrections is on, and
-    /// always for cameras whose RAW files apply it by default.
+    /// always for cameras whose RAW files apply it by default. A Smart Preview has it in its pixels
+    /// or not, whatever the setting.
     func isBuiltInLensProfileApplied(_ adjustments: PhotoAdjustments) -> Bool {
-        hasBuiltInLensProfile && (adjustments.lens.enableProfileCorrections || rawDefaults?.lensCorrection == true)
+        if let smartPreview { return smartPreview.isBuiltInLensProfileApplied }
+        return hasBuiltInLensProfile && (adjustments.lens.enableProfileCorrections || rawDefaults?.lensCorrection == true)
+    }
+
+    /// Whether noise reduction is left to the pipeline (Core Image's): for files the RAW engine
+    /// doesn't decode, and Smart Previews it can't reduce noise in.
+    var reducesNoiseInPipeline: Bool {
+        guard let rawFilter else { return true }
+        return isSmartPreview && !rawFilter.isLuminanceNoiseReductionSupported
     }
 
     /// Scale that fits the image's long edge in `pixels` (never upscales).
@@ -130,8 +200,10 @@ nonisolated final class DevelopSource {
     /// The decoded image before Lens Corrections and the shared pipeline: RAW decoding settings
     /// applied for RAW files, a downscaled original otherwise.
     func baseImage(with adjustments: PhotoAdjustments, scale: CGFloat) -> CIImage {
+        // The scale to decode the file at, and how much to enlarge that (a Smart Preview asked for more than it has).
+        let decodeScale = min(1, scale / fileScale), enlargement = max(1, scale / fileScale)
         if let rawFilter, let rawDefaults {
-            rawFilter.scaleFactor = Float(scale)
+            rawFilter.scaleFactor = Float(decodeScale)
 
             let light = adjustments.light
             rawFilter.exposure = light.isEnabled ? Float(light.exposure) : 0
@@ -167,9 +239,15 @@ nonisolated final class DevelopSource {
                 rawFilter.isLensCorrectionEnabled = isBuiltInLensProfileApplied(adjustments)
             }
 
-            if let output = rawFilter.outputImage { return output }
+            if let output = rawFilter.outputImage { return Self.enlarged(output, by: enlargement) }
         }
-        return scaledBaseImage(scale: scale)
+        return Self.enlarged(scaledBaseImage(scale: decodeScale), by: enlargement)
+    }
+
+    private static func enlarged(_ image: CIImage, by factor: CGFloat) -> CIImage {
+        guard factor > 1.001 else { return image }
+        let extent = image.extent
+        return image.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY).scaledBy(x: factor, y: factor))
     }
 
     private func scaledBaseImage(scale: CGFloat) -> CIImage {
@@ -236,14 +314,16 @@ nonisolated enum AdjustmentPipeline {
                 filter.targetNeutral = CIVector(x: 6500, y: 0)
                 image = filter.outputImage ?? image
             }
-            let noise = adjustments.noiseReduction
-            if noise.isActive {
-                let filter = CIFilter.noiseReduction()
-                filter.inputImage = image
-                filter.noiseLevel = Float(0.005 + max(noise.amount, noise.color) * 0.06)
-                filter.sharpness = Float(noise.detail * 0.8)
-                image = filter.outputImage ?? image
-            }
+        }
+        // On a Smart Preview of a RAW file the camera's default noise reduction is already in the
+        // pixels; this approximates the original's more.
+        let noise = adjustments.noiseReduction
+        if source.reducesNoiseInPipeline, noise.isActive {
+            let filter = CIFilter.noiseReduction()
+            filter.inputImage = image
+            filter.noiseLevel = Float(0.005 + max(noise.amount, noise.color) * 0.06)
+            filter.sharpness = Float(noise.detail * 0.8)
+            image = filter.outputImage ?? image
         }
 
         let light = adjustments.light

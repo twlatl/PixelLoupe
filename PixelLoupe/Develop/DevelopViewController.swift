@@ -509,7 +509,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             .searching
         }
         lensPanel.display(adjustments.lens, status: status, catalog: context?.catalog ?? LensCatalog(),
-                          builtInAlwaysOn: context?.builtInAlwaysOn ?? false)
+                          builtInAlwaysOn: context?.builtInAlwaysOn ?? false, onSmartPreview: source?.isSmartPreview ?? false)
     }
 
     /// Finds the photo's built-in profile, matching LensFun profile and the profiles that fit its
@@ -521,7 +521,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         }
         let hasBuiltIn = source.hasBuiltInLensProfile
         let builtInAlwaysOn = source.isBuiltInLensProfileApplied(PhotoAdjustments())
-        let make = photo.cameraMake, model = photo.cameraModel, lensModel = photo.lensModel, url = photo.fileURL
+        // The file opened: a Smart Preview keeps its original's EXIF.
+        let make = photo.cameraMake, model = photo.cameraModel, lensModel = photo.lensModel, url = source.url
         showLens()
         lensContextTask?.cancel()
         lensContextTask = Task { [weak self] in
@@ -1387,6 +1388,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         ].filter { !$0.isEmpty }.joined(separator: "  ·  ")
 
         let url = photo.fileURL
+        let location = store.sourceLocation(of: photo)
         loadTask?.cancel()
         // Videos are shown and played in the Library; there is nothing to develop.
         if photo.isVideo {
@@ -1399,14 +1401,14 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         let thumbnails = store.thumbnails
         let uuid = photo.id
         loadTask = Task { [weak self] in
-            let info = await Self.readShootingInfo(url)
+            let info = await Self.readShootingInfo(location)
             if self?.displayedPhotoID == id { self?.histogramView.shootingInfo = info }
             if self?.placeholder == nil, let thumbnail = await thumbnails.image(for: uuid) {
                 guard let self, displayedPhotoID == id, source == nil else { return }
                 placeholder = CIImage(cgImage: thumbnail)
                 metalView.needsDisplay = true
             }
-            let loaded = await Self.loadSource(url)
+            let loaded = await Self.loadSource(location)
             guard let self, !Task.isCancelled, displayedPhotoID == id else { return }
             spinner.stopAnimation(nil)
             guard let source = loaded?.source else {
@@ -1427,7 +1429,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             metalView.needsDisplay = true
 
             // The loupe's full-resolution decoder isn't needed to show the photo; load it after.
-            let loupe = await Self.loadSource(url)
+            let loupe = await Self.loadSource(location)
             guard displayedPhotoID == id else { return }
             loupeSource = loupe?.source
             placeholder = nil
@@ -1440,16 +1442,24 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         let source: DevelopSource
     }
 
+    /// From the original, or the Smart Preview (which keeps its EXIF) when the original is missing.
     @concurrent
-    nonisolated private static func readShootingInfo(_ url: URL) async -> ShootingInfo {
-        ShootingInfo.read(from: url)
+    nonisolated private static func readShootingInfo(_ location: PhotoSourceLocation) async -> ShootingInfo {
+        if !FileManager.default.isReadableFile(atPath: location.original.path(percentEncoded: false)),
+           let smartPreview = location.smartPreview {
+            return ShootingInfo.read(from: smartPreview)
+        }
+        return ShootingInfo.read(from: location.original)
     }
 
+    /// The original, or its Smart Preview when the original can't be read.
     @concurrent
-    nonisolated private static func loadSource(_ url: URL) async -> LoadedSource? {
-        guard FileManager.default.isReadableFile(atPath: url.path(percentEncoded: false)),
-              let source = DevelopSource(url: url) else { return nil }
-        return LoadedSource(source: source)
+    nonisolated private static func loadSource(_ location: PhotoSourceLocation) async -> LoadedSource? {
+        if FileManager.default.isReadableFile(atPath: location.original.path(percentEncoded: false)),
+           let source = DevelopSource(url: location.original) {
+            return LoadedSource(source: source)
+        }
+        return location.smartPreview.flatMap { DevelopSource(smartPreview: $0) }.map(LoadedSource.init)
     }
 
     @concurrent
