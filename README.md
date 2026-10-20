@@ -18,6 +18,11 @@ Open `PixelLoupe.xcodeproj` and run the **PixelLoupe** scheme, or from the comma
 xcodebuild -project PixelLoupe.xcodeproj -scheme PixelLoupe -destination 'platform=macOS' test
 ```
 
+The JPEG XL encoder Smart Previews use, libjxl, is checked in already built, as
+`Packages/JXLEncoder/libjxl.xcframework`, so building needs nothing else. `Scripts/build-libjxl.sh` rebuilds it from
+the pinned libjxl release (it needs CMake: `brew install cmake`). The build is reproducible: with the same Xcode it
+gives the same bytes, so the checked-in copy can be verified with `git diff --stat` after running it.
+
 ## Updates
 
 PixelLoupe updates itself with [Sparkle](https://sparkle-project.org). **PixelLoupe ▸ Check for Updates…** checks now; at

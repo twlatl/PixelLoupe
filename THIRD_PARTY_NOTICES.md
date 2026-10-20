@@ -29,6 +29,20 @@ material from others.
 - **Changes:** none to Sparkle itself. Release builds leave out its XPC services, which only sandboxed apps use, and
   re-sign its helpers with PixelLoupe's Developer ID (`Scripts/release.sh`).
 
+### libjxl (JPEG XL encoder)
+
+- **What:** the JPEG XL encoder linked into the app, which compresses the tiles of Smart Previews (RAW-85). Only
+  encoding is used; Apple's RAW engine decodes JPEG XL itself.
+- **From:** the [JPEG XL reference implementation](https://github.com/libjxl/libjxl), © the JPEG XL Project Authors,
+  built from a pinned release by `Scripts/build-libjxl.sh` into `Packages/JXLEncoder/libjxl.xcframework`. It includes:
+  - [Highway](https://github.com/google/highway), © the Highway Project Authors;
+  - [Brotli](https://github.com/google/brotli), © the Brotli Authors;
+  - [skcms](https://skia.googlesource.com/skcms), © Google.
+- **License:** the BSD 3-Clause License, with Google's patent grant for JPEG XL. Highway is under Apache-2.0 or
+  BSD-3-Clause, and PixelLoupe takes BSD-3-Clause; Brotli is under the MIT License; skcms is under the BSD 3-Clause
+  License. The full texts ship in the app as `libjxl-LICENSE.txt`, which the build script writes from the same source.
+- **Changes:** none to the source. The build leaves out libjxl's tools, plugins, jpegli and thread pool.
+
 ## Used but not bundled
 
 - **Adobe camera profiles and presets:** PixelLoupe reads profiles and Lightroom / Camera Raw presets that the user

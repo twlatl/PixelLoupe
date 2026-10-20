@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		0A000000000000000000000E /* PixelLoupeIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 0A000000000000000000000D /* PixelLoupeIcon.icon */; };
 		0A0000000000000000000061 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 0A0000000000000000000062 /* Sparkle */; };
+		0A0000000000000000000064 /* JXLEncoder in Frameworks */ = {isa = PBXBuildFile; productRef = 0A0000000000000000000065 /* JXLEncoder */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -60,6 +61,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				0A0000000000000000000061 /* Sparkle in Frameworks */,
+				0A0000000000000000000064 /* JXLEncoder in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -139,6 +141,7 @@
 			name = PixelLoupe;
 			packageProductDependencies = (
 				0A0000000000000000000062 /* Sparkle */,
+				0A0000000000000000000065 /* JXLEncoder */,
 			);
 			productName = PixelLoupe;
 			productReference = 0A0000000000000000000011 /* PixelLoupe.app */;
@@ -224,6 +227,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				0A0000000000000000000063 /* XCRemoteSwiftPackageReference "Sparkle" */,
+				0A0000000000000000000066 /* XCLocalSwiftPackageReference "Packages/JXLEncoder" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 0A0000000000000000000003 /* Products */;
@@ -533,6 +537,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		0A0000000000000000000066 /* XCLocalSwiftPackageReference "Packages/JXLEncoder" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/JXLEncoder;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		0A0000000000000000000063 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -549,6 +560,10 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 0A0000000000000000000063 /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
+		};
+		0A0000000000000000000065 /* JXLEncoder */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = JXLEncoder;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
