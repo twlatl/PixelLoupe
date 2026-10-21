@@ -40,6 +40,14 @@ final class AppSettings {
         }
     }
 
+    /// The theme's matte when `matte` is `nil`: 10% in Light Mode, 85% in Dark Mode.
+    nonisolated static let lightMatte = 0.10
+    nonisolated static let darkMatte = 0.85
+
+    nonisolated static func themeMatte(for appearance: NSAppearance) -> Double {
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? darkMatte : lightMatte
+    }
+
     /// Matte behind photos: 0 is white, 1 is black. `nil` follows the light/dark theme.
     var matte: Double? {
         didSet {
@@ -117,6 +125,26 @@ final class AppSettings {
         Defaults.store.object(forKey: matteKey) as? Double
     }
 
+    /// Whether the app last looked dark, to tell a light/dark switch from other appearance changes.
+    private var isDark: Bool?
+    private var appearanceObservation: NSKeyValueObservation?
+
+    /// Puts Matte Color back to the theme's each time the app switches between Light and Dark,
+    /// whether from the Appearance setting or from macOS.
+    func startFollowingAppearance() {
+        isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        appearanceObservation = NSApp.observe(\.effectiveAppearance) { [weak self] app, _ in
+            MainActor.assumeIsolated { self?.effectiveAppearanceDidChange(app.effectiveAppearance) }
+        }
+    }
+
+    func effectiveAppearanceDidChange(_ appearance: NSAppearance) {
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        defer { isDark = dark }
+        guard let isDark, isDark != dark, matte != nil else { return }
+        matte = nil
+    }
+
     func applyAppearance() {
         NSApp.appearance = switch appearance {
         case .system: nil
@@ -130,8 +158,7 @@ final class AppSettings {
 nonisolated enum GridColors {
     /// Matte brightness (0 black … 1 white) for `appearance`, honoring the user's Matte Color setting.
     static func matteWhite(for appearance: NSAppearance) -> CGFloat {
-        if let matte = AppSettings.storedMatte() { return 1 - matte }
-        return appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? 0.13 : 0.80
+        1 - (AppSettings.storedMatte() ?? AppSettings.themeMatte(for: appearance))
     }
 
     /// Cells sit slightly lighter on dark mattes and slightly darker on light ones.

@@ -176,7 +176,7 @@ struct AppearanceSettingsView: View {
     /// Slider position for the matte; follows the theme's default until the user moves it.
     private var matte: Binding<Double> {
         Binding(
-            get: { settings.matte ?? (colorScheme == .dark ? 0.87 : 0.20) },
+            get: { settings.matte ?? (colorScheme == .dark ? AppSettings.darkMatte : AppSettings.lightMatte) },
             set: { settings.matte = $0 }
         )
     }
