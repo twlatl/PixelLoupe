@@ -92,3 +92,38 @@ enum GrayChrome {
         }
     }
 }
+
+/// A bar's background filled with the theme's chrome: Gray's gray, otherwise the window background.
+/// For bars that sit among views on the matte (the filmstrip's header), which would otherwise show it.
+final class ChromeBackgroundView: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(settingsDidChange(_:)),
+            name: AppSettings.didChangeNotification, object: nil
+        )
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        var color = CGColor.clear
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            color = (GrayChrome.isOn ? GrayChrome.color : NSColor.windowBackgroundColor).cgColor
+        }
+        layer?.backgroundColor = color
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    @objc private func settingsDidChange(_ notification: Notification) {
+        needsDisplay = true
+    }
+}

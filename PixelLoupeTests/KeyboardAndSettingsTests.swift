@@ -303,6 +303,23 @@ struct MatteTests {
         #expect(black.backgroundColor == .black)
     }
 
+    @Test("The filmstrip's header is chrome, not matte: gray in Gray (RAW-155)")
+    func filmstripHeaderIsChrome() {
+        let settings = AppSettings.shared
+        let savedAppearance = settings.appearance
+        defer { settings.appearance = savedAppearance }
+
+        let bar = ChromeBackgroundView(frame: NSRect(x: 0, y: 0, width: 50, height: 20))
+        settings.appearance = .gray
+        bar.updateLayer()
+        #expect(abs(white(bar.layer?.backgroundColor) - white(GrayChrome.color.cgColor)) < 0.01)
+        #expect(white(bar.layer?.backgroundColor) > 0.5, "not Gray's black matte")
+
+        settings.appearance = .light
+        bar.updateLayer()
+        #expect(white(bar.layer?.backgroundColor) > white(GrayChrome.color.cgColor), "Light's window background")
+    }
+
     /// Views on the matte must repaint when the setting changes, not only when the theme does.
     @Test func matteViewsRepaintWhenSettingChanges() {
         let settings = AppSettings.shared
