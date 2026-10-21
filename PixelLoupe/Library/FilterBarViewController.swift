@@ -16,7 +16,9 @@ final class FilterBarViewController: NSViewController, NSSearchFieldDelegate {
     /// The Attribute groups in two halves, side by side or (in a narrow grid) one above the other.
     private let attributeHalves = NSStackView()
 
-    private lazy var metadataBrowser = MetadataBrowserView(store: store, state: state)
+    /// Holds the Metadata columns, made the first time the mode shows (they count photos as they go).
+    private let metadataContainer = NSView()
+    private var metadataBrowser: MetadataBrowserView?
     private let searchField = ClickToFocusSearchField()
     private let textFieldPopUp = NSPopUpButton()
     private let textRulePopUp = NSPopUpButton()
@@ -226,7 +228,8 @@ final class FilterBarViewController: NSViewController, NSSearchFieldDelegate {
     }
 
     private func metadataRow() -> [NSView] {
-        [metadataBrowser]
+        metadataContainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return [metadataContainer]
     }
 
     private func label(_ string: String, emphasized: Bool = false) -> NSTextField {
@@ -243,6 +246,20 @@ final class FilterBarViewController: NSViewController, NSSearchFieldDelegate {
         return box
     }
 
+    private func installMetadataBrowser() {
+        guard metadataBrowser == nil else { return }
+        let browser = MetadataBrowserView(store: store, state: state)
+        browser.translatesAutoresizingMaskIntoConstraints = false
+        metadataContainer.addSubview(browser)
+        NSLayoutConstraint.activate([
+            browser.topAnchor.constraint(equalTo: metadataContainer.topAnchor),
+            browser.leadingAnchor.constraint(equalTo: metadataContainer.leadingAnchor),
+            browser.trailingAnchor.constraint(equalTo: metadataContainer.trailingAnchor),
+            browser.bottomAnchor.constraint(equalTo: metadataContainer.bottomAnchor),
+        ])
+        metadataBrowser = browser
+    }
+
     private func update() {
         let filter = state.filter
         for (index, mode) in Self.segmentModes.enumerated() {
@@ -251,6 +268,7 @@ final class FilterBarViewController: NSViewController, NSSearchFieldDelegate {
         for (mode, row) in rows {
             row.isHidden = !filter.modes.contains(mode)
         }
+        if filter.modes.contains(.metadata) { installMetadataBrowser() }
         textFieldPopUp.selectItem(at: LibraryFilter.TextSearch.Field.allCases.firstIndex(of: filter.text.field) ?? 0)
         textRulePopUp.selectItem(at: LibraryFilter.TextSearch.Rule.allCases.firstIndex(of: filter.text.rule) ?? 0)
         // Leave the field alone while a typed search is waiting to apply.
