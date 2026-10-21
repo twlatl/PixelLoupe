@@ -5,13 +5,19 @@ import Foundation
 enum AppMode: Int, CaseIterable {
     case library
     case develop
+    /// Photos with a location, as pins on a map (RAW-165).
+    case map
 
     var title: String {
         switch self {
         case .library: "Library"
         case .develop: "Develop"
+        case .map: "Map"
         }
     }
+
+    /// Whether the right column shows the Library's inspector (Library and Map) rather than Develop's panel.
+    var showsLibraryInspector: Bool { self != .develop }
 }
 
 enum DevelopTool {
