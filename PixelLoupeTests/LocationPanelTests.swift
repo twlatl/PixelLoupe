@@ -91,17 +91,33 @@ struct LocationPanelTests {
         #expect(asked == [1, 1] && photos.allSatisfy { $0.location == Self.camera })
     }
 
-    @Test("Remove takes the location away, even the camera's, and Target Photo limits it to one")
+    @Test("Remove takes the location away, even the camera's")
     func remove() throws {
         let (store, photos, directory) = try makeCatalog()
         _ = directory
         let (controller, _) = inspector(store, selecting: [photos[0], photos[1]])
-        controller.target = .targetPhoto
         controller.locationPanel.remove(nil)
         #expect(photos[0].locationKind == .cleared && !photos[0].hasGPS && photos[0].location == nil)
-        #expect(photos[1].locationKind == .file)
+        #expect(photos[1].locationKind == .cleared)
         #expect(store.viewContext.undoManager?.undoActionName == "Remove Location")
         #expect(photos[0].metadata[.gps] == "", "the Metadata panel's GPS field shows it removed")
+    }
+
+    /// Regression: with Metadata's Target Photo chosen (out of sight in the Metadata section), giving
+    /// several selected photos a place only changed the first.
+    @Test("Every selected photo gets the place, whatever Metadata's Target Photo / Selected Photos says")
+    func ignoresTheMetadataTarget() throws {
+        let (store, photos, directory) = try makeCatalog()
+        _ = directory
+        let (controller, _) = inspector(store, selecting: photos)
+        controller.target = .targetPhoto
+        controller.confirmReplacingCameraLocations = { _ in true }
+        #expect(controller.locationPanel.locationLabel.stringValue == "Multiple locations", "it shows them all, too")
+        controller.locationPanel.lookUp("40.7484, -73.9857")
+        controller.locationPanel.replace(nil)
+        #expect(photos.allSatisfy { $0.location == Self.typed })
+        controller.locationPanel.remove(nil)
+        #expect(photos.allSatisfy { $0.locationKind == .cleared })
     }
 
     @Test("↑ ↓ and Return work the places found from the keyboard")

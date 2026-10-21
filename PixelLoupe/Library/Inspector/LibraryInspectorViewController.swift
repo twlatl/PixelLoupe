@@ -478,20 +478,25 @@ final class LibraryInspectorViewController: NSViewController {
         shownLocation(of: photo) != nil || (photo.locationKind == .file && photo.hasGPS)
     }
 
-    /// The Location panel shows the edit targets' location: one, several, or none.
+    /// The photos the Location panel shows and changes: every selected photo. Unlike Metadata it
+    /// doesn't follow Target Photo / Selected Photos, which is out of sight in the Metadata section;
+    /// giving a place to the photos selected (on the map, say) is what's meant.
+    private var locationTargets: [NSManagedObjectID] { state.selectedPhotoIDs }
+
+    /// The Location panel shows the selected photos' location: one, several, or none.
     private func updateLocation() {
-        let photos = editing.photos(target == .targetPhoto ? Array(state.selectedPhotoIDs.prefix(1))
-                                    : Array(state.selectedPhotoIDs.prefix(Self.maximumComparedPhotos)))
+        let photos = editing.photos(Array(locationTargets.prefix(Self.maximumComparedPhotos)))
         let locations = photos.map(shownLocation(of:))
         let first = locations.first ?? nil
         let isMixed = locations.dropFirst().contains { $0 != first }
         locationPanel.show(isMixed ? nil : first, isMixed: isMixed, hasPhotos: !photos.isEmpty)
     }
 
-    /// Gives the edit targets `location`: those without one, or all of them (`replacing`, after asking
-    /// when that overwrites a location the camera recorded). One undoable step; the files aren't changed.
+    /// Gives the selected photos `location`: those without one, or all of them (`replacing`, after
+    /// asking when that overwrites a location the camera recorded). One undoable step; the files aren't
+    /// changed.
     func setLocation(_ location: GPSCoordinate, replacing: Bool) {
-        let photos = editing.photos(editTargets)
+        let photos = editing.photos(locationTargets)
         let changing = photos.filter { replacing ? $0.location != location : !hasLocation($0) }
         guard !changing.isEmpty else { NSSound.beep(); return }
         if replacing {
@@ -502,9 +507,9 @@ final class LibraryInspectorViewController: NSViewController {
         updateMetadata()
     }
 
-    /// Removes the edit targets' location, even one the camera recorded.
+    /// Removes the selected photos' location, even one the camera recorded.
     func removeLocation() {
-        let changing = editing.photos(editTargets).filter { $0.locationKind != .cleared }
+        let changing = editing.photos(locationTargets).filter { $0.locationKind != .cleared }
         guard !changing.isEmpty else { return }
         editing.edit(changing.map(\.objectID), actionName: "Remove Location") { $0.setLocationOverride(.cleared) }
         updateMetadata()

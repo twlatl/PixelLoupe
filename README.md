@@ -500,9 +500,9 @@ The `sidebar.right` toolbar button shows or hides the Library's right sidebar, f
 - **Location:** a small map of the photos' location (or "Multiple locations"), and a field that finds an address or
   place as you type (↑ ↓ and Return pick one) or takes "lat, lon", which works offline. Drag the pin to fine-tune.
   **Apply** gives the place to the photos that have no location; **Replace** gives it to all of them, asking first
-  when that replaces a location the camera recorded; **Remove** takes the location away, even the camera's. They
-  follow Target Photo / Selected Photos, are saved in the catalog only (the original files keep theirs, and exports
-  use the catalog's) and are undoable.
+  when that replaces a location the camera recorded; **Remove** takes the location away, even the camera's. They act
+  on every selected photo (not just the target photo, whatever Metadata's Target Photo / Selected Photos says), are
+  saved in the catalog only (the original files keep theirs, and exports use the catalog's) and are undoable.
 
 ## Curves (Develop)
 
