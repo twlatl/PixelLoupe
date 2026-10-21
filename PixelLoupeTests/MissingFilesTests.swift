@@ -172,6 +172,56 @@ struct MissingFilesTests {
         #expect(a.filePath == newPath + "/Trip/A.jpg")
     }
 
+    @Test("Choosing the folder a moved folder now sits in relinks it there and nests it under that folder")
+    func relinkIntoParent() async throws {
+        let setup = try makeSetup()
+        let store = setup.store
+        let context = store.viewContext
+        // "Family" is in the catalog; "Trip" was moved into it on disk.
+        let family = try setup.directory.subdirectory("Family")
+        let familyFolder = Folder(context: context)
+        familyFolder.path = Self.path(family)
+        familyFolder.name = "Family"
+        try context.save()
+        context.undoManager?.removeAllActions()
+        try FileManager.default.moveItem(at: setup.trip, to: family.appending(path: "Trip"))
+        let oldPath = Self.path(setup.trip)
+
+        let preview = await FileRelinking.preview(folder: oldPath, to: Self.path(family), context: store.newBackgroundContext())
+        #expect(preview.newPath == Self.path(family) + "/Trip")
+        #expect(preview.total == 2 && preview.found == 2)
+
+        try FileRelinking.relinkFolder(oldPath, to: preview.newPath, in: store)
+        let trip = setup.folders["trip"]!
+        #expect(trip.path == Self.path(family) + "/Trip" && trip.parent == familyFolder)
+        #expect(setup.photos["A.jpg"]!.filePath == Self.path(family) + "/Trip/A.jpg")
+
+        try #require(context.undoManager).undo()
+        #expect(trip.path == oldPath && trip.parent == setup.folders["root"])
+    }
+
+    @Test("Preview leaves the chosen folder alone when neither it nor a same-named folder in it has the files")
+    func relinkNotFound() async throws {
+        let setup = try makeSetup()
+        let elsewhere = try setup.directory.subdirectory("Elsewhere/Trip")
+        let preview = await FileRelinking.preview(
+            folder: Self.path(setup.trip), to: Self.path(elsewhere.deletingLastPathComponent()),
+            context: setup.store.newBackgroundContext())
+        #expect(preview.newPath == Self.path(elsewhere.deletingLastPathComponent()))
+        #expect(preview.total == 2 && preview.found == 0)
+    }
+
+    @Test("Updating a top-level folder to where it already is puts it under its catalog parent")
+    func relinkInPlaceNests() throws {
+        let setup = try makeSetup()
+        let trip = setup.folders["trip"]!
+        trip.parent = nil
+        try setup.store.viewContext.save()
+
+        try FileRelinking.relinkFolder(Self.path(setup.trip), to: Self.path(setup.trip), in: setup.store)
+        #expect(trip.parent == setup.folders["root"])
+    }
+
     @Test("Preview notices files of a different size")
     func sizeMismatch() async throws {
         let setup = try makeSetup()

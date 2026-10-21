@@ -189,6 +189,51 @@ struct ImportServiceTests {
         ])
     }
 
+    @Test func copyingIntoACatalogFolderNestsTheNewFolders() async throws {
+        let directory = try TemporaryDirectory()
+        let family = try directory.subdirectory("Pictures/Family Pictures")
+        let card = try directory.subdirectory("Card")
+        try Fixtures.writeJPEG(to: family.appending(path: "old.jpg"), captureDate: "2025:06:01 12:00:00")
+        try Fixtures.writeJPEG(to: card.appending(path: "IMG_0001.jpg"))
+
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "Test.pixelloupe"))
+        let service = ImportService(store: store)
+        _ = try await service.importPhotos(from: [family])
+
+        let files = try await service.scan([card]).files
+        let summary = try await service.importPhotos(
+            files.map(\.candidate), transfer: .copy,
+            destination: ImportDestination(root: family, subfolder: nil, layout: .yearAndMonthDay))
+        #expect(summary.imported == 1)
+
+        let familyPath = family.path(percentEncoded: false).trimmingSuffix("/")
+        #expect(try photos(in: store).map(\.filePath).contains("\(familyPath)/2026/10-12/IMG_0001.jpg"))
+        #expect(try folderPaths(in: store) == [
+            familyPath: nil,
+            "\(familyPath)/2026": familyPath,
+            "\(familyPath)/2026/10-12": "\(familyPath)/2026",
+        ])
+    }
+
+    @Test func addingASubfolderOfACatalogFolderNestsIt() async throws {
+        let directory = try TemporaryDirectory()
+        let pictures = try directory.subdirectory("Pictures")
+        let trip = try directory.subdirectory("Pictures/Trip")
+        try Fixtures.writeJPEG(to: pictures.appending(path: "a.jpg"))
+        try Fixtures.writeJPEG(to: trip.appending(path: "b.jpg"))
+
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "Test.pixelloupe"))
+        let service = ImportService(store: store)
+        _ = try await service.importPhotos(try await service.scan([pictures], includeSubfolders: false).files.map(\.candidate))
+        _ = try await service.importPhotos(from: [trip])
+
+        let picturesPath = pictures.path(percentEncoded: false).trimmingSuffix("/")
+        #expect(try folderPaths(in: store) == [
+            picturesPath: nil,
+            "\(picturesPath)/Trip": picturesPath,
+        ])
+    }
+
     @Test func keywordsBecomeSharedTags() async throws {
         let directory = try TemporaryDirectory()
         let source = try directory.subdirectory("Source")

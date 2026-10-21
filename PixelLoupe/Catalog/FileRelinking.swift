@@ -19,9 +19,19 @@ nonisolated enum FileRelinking {
     }
 
     /// Looks for each of the folder's photos under `newPath` (same relative path), checking that the
-    /// file exists and, where the catalog knows the size, that the size matches.
+    /// file exists and, where the catalog knows the size, that the size matches. When none are there
+    /// but `newPath` has a folder of the same name with the files in it, the user chose the folder it
+    /// now sits in, and the preview's `newPath` is that subfolder.
     @concurrent
     static func preview(folder oldPath: String, to newPath: String, context: NSManagedObjectContext) async -> Preview {
+        let direct = await preview(oldPath, at: newPath, context: context)
+        guard direct.total > 0, direct.found == 0 else { return direct }
+        let nested = await preview(oldPath, at: newPath + "/" + (oldPath as NSString).lastPathComponent, context: context)
+        return nested.found > 0 ? nested : direct
+    }
+
+    @concurrent
+    private static func preview(_ oldPath: String, at newPath: String, context: NSManagedObjectContext) async -> Preview {
         let rows: [(path: String, size: Int64)] = await context.perform {
             let request = NSFetchRequest<NSDictionary>(entityName: "Photo")
             request.resultType = .dictionaryResultType
@@ -69,15 +79,22 @@ nonisolated enum FileRelinking {
     }
 
     /// Rewrites the paths of the folder `oldPath`, its subfolders and their photos to start with
-    /// `newPath`, without saving. Returns how many photos were rewritten.
+    /// `newPath`, without saving, and moves the folder in the folder tree to wherever `newPath` is on
+    /// disk. Returns how many photos were rewritten.
     @discardableResult
     static func rewritePaths(of oldPath: String, to newPath: String, in context: NSManagedObjectContext) throws -> Int {
         let folderRequest = Folder.fetchRequest()
         folderRequest.predicate = NSPredicate(format: "path == %@ OR path BEGINSWITH %@", oldPath, oldPath + "/")
+        var moved: Folder?
         for folder in try context.fetch(folderRequest) {
             folder.path = newPath + String(folder.path.dropFirst(oldPath.count))
-            if folder.path == newPath { folder.name = (newPath as NSString).lastPathComponent }
+            if folder.path == newPath {
+                folder.name = (newPath as NSString).lastPathComponent
+                moved = folder
+            }
         }
+        // Inside the catalog folder it's now in on disk, or top-level if there's none.
+        if let moved { moved.parent = FolderTree.nearestAncestor(of: newPath, in: context) }
 
         var rewritten = 0
         let photoRequest = Photo.fetchRequest()

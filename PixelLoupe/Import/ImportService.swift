@@ -650,6 +650,9 @@ nonisolated enum FolderTree {
                 let folder = Folder(context: context)
                 folder.path = path
                 folder.name = (path as NSString).lastPathComponent
+                // The top of the chain goes inside the catalog folder it's in on disk, if there is one
+                // (copying into "Family Pictures" puts "2026" under it, not beside it).
+                folder.parent = parent ?? nearestAncestor(of: path, in: context)
                 adoptOrphans(of: folder, in: context)
                 cache[path] = folder
                 return folder
@@ -658,6 +661,21 @@ nonisolated enum FolderTree {
             parent = folder
         }
         return parent!
+    }
+
+    /// The catalog folder closest above `path` on disk: its parent directory, or that one's, and so on.
+    static func nearestAncestor(of path: String, in context: NSManagedObjectContext) -> Folder? {
+        var ancestors: [String] = []
+        var current = (path as NSString).deletingLastPathComponent
+        while current != "/" && !current.isEmpty {
+            ancestors.append(current)
+            current = (current as NSString).deletingLastPathComponent
+        }
+        guard !ancestors.isEmpty else { return nil }
+        let request = Folder.fetchRequest()
+        request.predicate = NSPredicate(format: "path IN %@", ancestors)
+        let found = (try? context.fetch(request)) ?? []
+        return found.max { $0.path.count < $1.path.count }
     }
 
     private static func existingFolder(at path: String, in context: NSManagedObjectContext, cache: inout [String: Folder]) -> Folder? {
