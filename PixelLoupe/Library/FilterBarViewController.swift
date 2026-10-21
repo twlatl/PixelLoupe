@@ -1,5 +1,6 @@
 import AppKit
 import CoreData
+import SwiftUI
 
 /// Lightroom's Library Filter bar above the grid: a header to choose the modes (Text, Attribute,
 /// Metadata or None), then a row of criteria for each active mode. Click a mode to show just it,
@@ -13,8 +14,8 @@ final class FilterBarViewController: NSViewController, NSSearchFieldDelegate, NS
     private let presetsPopUp = NSPopUpButton(frame: .zero, pullsDown: true)
 
     /// Text, Attribute, Metadata and None, in that order.
-    private let modeControl = NSSegmentedControl()
-    private static let segmentModes: [LibraryFilter.Mode?] = LibraryFilter.Mode.allCases + [nil]
+    private let modeSelection = FilterModeSelection()
+    private lazy var modeControl = NSHostingView(rootView: FilterModePicker(selection: modeSelection))
     private var rows: [LibraryFilter.Mode: NSStackView] = [:]
     /// The Attribute groups in two halves, side by side or (in a narrow grid) one above the other.
     private let attributeHalves = NSStackView()
@@ -111,17 +112,11 @@ final class FilterBarViewController: NSViewController, NSSearchFieldDelegate, NS
         title.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         title.textColor = .secondaryLabelColor
 
-        modeControl.segmentCount = Self.segmentModes.count
-        modeControl.trackingMode = .selectAny
-        modeControl.controlSize = .small
-        modeControl.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        for (index, mode) in Self.segmentModes.enumerated() {
-            modeControl.setLabel(mode?.title ?? "None", forSegment: index)
-            modeControl.setToolTip(mode.map { "Filter by \($0.title.lowercased()); Shift-click to combine with other modes" }
-                ?? "Turn off the filters", forSegment: index)
+        modeSelection.onClick = { [weak self] mode, extending in
+            guard let self else { return }
+            state.filter.modes = LibraryFilter.Mode.modes(afterClicking: mode, in: state.filter.modes, extending: extending)
         }
-        modeControl.target = self
-        modeControl.action = #selector(modeClicked(_:))
+        modeControl.sizingOptions = .intrinsicContentSize
         modeControl.setAccessibilityLabel("Library filter modes")
         modeControl.setAccessibilityIdentifier("filterModes")
 
@@ -204,6 +199,8 @@ final class FilterBarViewController: NSViewController, NSSearchFieldDelegate, NS
         // Return applies the search at once; typing applies it after a pause (controlTextDidChange).
         searchField.sendsWholeSearchString = true
         searchField.setAccessibilityIdentifier("metadataSearch")
+        // 2pt shorter than standard, to sit with the small pop-ups beside it.
+        searchField.heightAnchor.constraint(equalToConstant: searchField.intrinsicContentSize.height - 2).isActive = true
         searchField.widthAnchor.constraint(equalToConstant: 260).isActive = true
         return [textFieldPopUp, textRulePopUp, searchField]
     }
@@ -284,9 +281,7 @@ final class FilterBarViewController: NSViewController, NSSearchFieldDelegate, NS
 
     private func update() {
         let filter = state.filter
-        for (index, mode) in Self.segmentModes.enumerated() {
-            modeControl.setSelected(mode.map { filter.modes.contains($0) } ?? filter.modes.isEmpty, forSegment: index)
-        }
+        if modeSelection.modes != filter.modes { modeSelection.modes = filter.modes }
         for (mode, row) in rows {
             row.isHidden = !filter.modes.contains(mode)
         }
@@ -301,18 +296,6 @@ final class FilterBarViewController: NSViewController, NSSearchFieldDelegate, NS
     }
 
     // MARK: - Actions
-
-    /// Finds the segment whose selection the click changed (the control toggles it before calling us).
-    @objc private func modeClicked(_ sender: NSSegmentedControl) {
-        let modes = state.filter.modes
-        guard let index = Self.segmentModes.indices.first(where: { index in
-            sender.isSelected(forSegment: index) != (Self.segmentModes[index].map { modes.contains($0) } ?? modes.isEmpty)
-        }) else { return update() }
-        let extending = NSApp.currentEvent?.modifierFlags.contains(.shift) ?? false
-        state.filter.modes = LibraryFilter.Mode.modes(afterClicking: Self.segmentModes[index], in: modes, extending: extending)
-        // The control's own toggling may not match (a plain click on an active mode among others).
-        update()
-    }
 
     @objc private func clearMode(_ sender: NSButton) {
         switch LibraryFilter.Mode.allCases[sender.tag] {
@@ -485,20 +468,16 @@ nonisolated extension LibraryFilter.Mode {
     }
 }
 
-/// The bar's gray, set apart from the grid and panels around it: 40% gray in light mode, 60% in dark.
+/// The bar's background: a gradient that lightens toward the grid, set apart from the panels around it.
 final class FilterBarBackground: NSView {
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        wantsLayer = true
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-
-    override var wantsUpdateLayer: Bool { true }
-
-    override func updateLayer() {
-        layer?.backgroundColor = NSColor(white: Self.white(for: effectiveAppearance), alpha: 1).cgColor
+    override func draw(_ dirtyRect: NSRect) {
+        let stops = Self.stops(for: effectiveAppearance)
+        var locations = stops.map(\.location)
+        let gradient = NSGradient(
+            colors: stops.map { NSColor(srgbRed: $0.color.r, green: $0.color.g, blue: $0.color.b, alpha: 1) },
+            atLocations: &locations, colorSpace: .sRGB)
+        // From the top down.
+        gradient?.draw(in: bounds, angle: -90)
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -506,8 +485,43 @@ final class FilterBarBackground: NSView {
         needsDisplay = true
     }
 
-    /// Brightness (0 black … 1 white): a 40% gray is 60% white.
-    static func white(for appearance: NSAppearance) -> CGFloat {
-        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? 0.4 : 0.6
+    typealias Stop = (location: CGFloat, color: (r: CGFloat, g: CGFloat, b: CGFloat))
+
+    /// From the top of the bar down. Light mode holds a warm gray for the top half, then lightens.
+    static func stops(for appearance: NSAppearance) -> [Stop] {
+        func rgb(_ hex: UInt32) -> (r: CGFloat, g: CGFloat, b: CGFloat) {
+            (CGFloat(hex >> 16 & 0xFF) / 255, CGFloat(hex >> 8 & 0xFF) / 255, CGFloat(hex & 0xFF) / 255)
+        }
+        return appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? [(0, rgb(0x393939)), (1, rgb(0x4A4A4A))]
+            : [(0, rgb(0xD3D0D1)), (0.48, rgb(0xD3D1D2)), (1, rgb(0xF1F1F1))]
+    }
+}
+
+/// The modes the header's picker shows selected, and where its clicks go.
+@Observable
+final class FilterModeSelection {
+    var modes: Set<LibraryFilter.Mode> = []
+    /// The mode clicked (`nil` for None), and whether Shift was down to add or remove it.
+    var onClick: (LibraryFilter.Mode?, _ extending: Bool) -> Void = { _, _ in }
+}
+
+/// Text, Attribute, Metadata and None, drawn like the Library/Develop switcher: the active modes are
+/// accent-tinted glass capsules (gray in Monochrome Mode). A click shows just that mode; Shift-click
+/// adds or removes it.
+struct FilterModePicker: View {
+    var selection: FilterModeSelection
+
+    static let options: [LibraryFilter.Mode?] = LibraryFilter.Mode.allCases + [nil]
+
+    var body: some View {
+        CapsulePicker(
+            options: Self.options,
+            isSelected: { $0.map(selection.modes.contains) ?? selection.modes.isEmpty },
+            title: { $0?.title ?? "None" },
+            identifier: { "filterMode.\($0?.rawValue ?? "none")" },
+            onSelect: { selection.onClick($0, NSEvent.modifierFlags.contains(.shift)) },
+            size: .small,
+            help: { $0.map { "Filter by \($0.title.lowercased()); Shift-click to combine with other modes" } ?? "Turn off the filters" })
     }
 }

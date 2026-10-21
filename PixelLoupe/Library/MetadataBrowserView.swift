@@ -79,6 +79,9 @@ final class MetadataBrowserView: NSView {
             stack.addArrangedSubview(view)
             return view
         }
+        // The lists read as one panel with rounded ends.
+        columnViews.first?.roundedCorners.formUnion([.layerMinXMinYCorner, .layerMinXMaxYCorner])
+        columnViews.last?.roundedCorners.formUnion([.layerMaxXMinYCorner, .layerMaxXMaxYCorner])
     }
 
     @objc private func contextDidSave(_ notification: Notification) {
@@ -139,6 +142,7 @@ final class MetadataColumnView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     private let index: Int
     private let header = NSPopUpButton()
     private let outline = NSOutlineView()
+    private let scroll = NSScrollView()
     private var values: [MetadataColumn.Value] = []
     private var isApplyingSelection = false
     /// The first row: every photo the column is counted from.
@@ -191,8 +195,11 @@ final class MetadataColumnView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         outline.delegate = self
         outline.setAccessibilityIdentifier("metadataColumn.\(index)")
 
-        let scroll = NSScrollView()
         scroll.documentView = outline
+        scroll.wantsLayer = true
+        scroll.layer?.cornerRadius = 6
+        scroll.layer?.maskedCorners = []
+        scroll.layer?.masksToBounds = true
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.borderType = .noBorder
@@ -215,6 +222,11 @@ final class MetadataColumnView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    /// The list's corners to round: the outer ones of the first and last columns.
+    var roundedCorners: CACornerMask = [] {
+        didSet { scroll.layer?.maskedCorners = roundedCorners }
+    }
 
     override func layout() {
         super.layout()

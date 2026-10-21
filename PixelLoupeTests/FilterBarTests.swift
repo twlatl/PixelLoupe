@@ -1,5 +1,6 @@
 import AppKit
 import CoreData
+import SwiftUI
 import Testing
 @testable import PixelLoupe
 
@@ -152,8 +153,11 @@ struct FilterBarWindowTests {
         let bar = try #require(view("libraryFilter", in: window))
         let grid = try #require(view("photoGrid", in: window)?.enclosingScrollView)
         #expect(bar is FilterBarBackground)
-        #expect(FilterBarBackground.white(for: NSAppearance(named: .aqua)!) == 0.6, "40% gray")
-        #expect(FilterBarBackground.white(for: NSAppearance(named: .darkAqua)!) == 0.4, "60% gray")
+        // Both modes lighten toward the grid.
+        for name in [NSAppearance.Name.aqua, .darkAqua] {
+            let stops = FilterBarBackground.stops(for: NSAppearance(named: name)!)
+            #expect(stops.first!.color.r < stops.last!.color.r)
+        }
         for modes: Set<LibraryFilter.Mode> in [[.text], [], [.text, .attribute]] {
             state(controller).filter.modes = modes
             state(controller).filter.text.query = "nothing matches this"
@@ -208,14 +212,25 @@ struct FilterBarWindowTests {
         let state = controller.state
         let window = controller.window
         #expect(LibraryFilter.Mode.allCases.allSatisfy { row($0, in: window)?.isHidden == true }, "None to start")
-        let modes = try #require(view("filterModes", in: window) as? NSSegmentedControl)
-        #expect(modes.isSelected(forSegment: 3), "None is selected")
+        let picker = try #require(view("filterModes", in: window) as? NSHostingView<FilterModePicker>)
+        let selection = picker.rootView.selection
+        #expect(selection.modes.isEmpty, "None is selected")
 
         state.filter.modes = [.text, .metadata]
         #expect(row(.text, in: window)?.isHidden == false && row(.metadata, in: window)?.isHidden == false)
         #expect(row(.attribute, in: window)?.isHidden == true)
-        #expect(modes.isSelected(forSegment: 0) && !modes.isSelected(forSegment: 1) && modes.isSelected(forSegment: 2))
-        #expect(!modes.isSelected(forSegment: 3))
+        #expect(selection.modes == [.text, .metadata])
+
+        // A click shows just that mode; Shift-click adds or removes it; None turns them all off.
+        selection.onClick(.attribute, true)
+        #expect(state.filter.modes == [.text, .attribute, .metadata] && selection.modes == state.filter.modes)
+        selection.onClick(.text, true)
+        #expect(state.filter.modes == [.attribute, .metadata])
+        selection.onClick(.metadata, false)
+        #expect(state.filter.modes == [.metadata])
+        selection.onClick(nil, false)
+        #expect(state.filter.modes.isEmpty)
+        state.filter.modes = [.text, .metadata]
 
         // Each row's × clears just its criteria.
         state.filter.text.query = "canon"
