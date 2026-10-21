@@ -611,8 +611,9 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         updateInspectorButton()
     }
 
+    /// Like the system's left sidebar button, it doesn't light up while its sidebar shows.
     private func updateInspectorButton() {
-        showToolbarToggle(inspectorButton, isOn: rootViewController.main.isRightSidebarVisible)
+        inspectorButton.setAccessibilityValue(rootViewController.main.isRightSidebarVisible ? "on" : "off")
     }
 
     private func updateLoupeButton() {
@@ -1292,7 +1293,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
             item.label = "Right Sidebar"
             item.toolTip = "Show or hide the right sidebar (Tab hides both sidebars)"
             inspectorButton.image = NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: "Right sidebar")
-            inspectorButton.setButtonType(.pushOnPushOff)
+            inspectorButton.setButtonType(.momentaryPushIn)
             inspectorButton.bezelStyle = .toolbar
             inspectorButton.imagePosition = .imageOnly
             inspectorButton.target = self

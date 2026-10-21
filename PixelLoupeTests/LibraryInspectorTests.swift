@@ -372,11 +372,13 @@ struct KeywordFocusTests {
         }
         let columns = main.splitView.arrangedSubviews.map(\.frame.width)
         #expect(columns.count == 3 && columns[2] >= 366, "the right column stays open, as wide as Develop's panel needs")
-        #expect(button()?.state == .on && main.isRightSidebarVisible)
+        // RAW-153: like the left sidebar button, it never shows the accent; only its accessibility value says on or off.
+        #expect(button()?.state == .off && button()?.accessibilityValue() as? String == "on" && main.isRightSidebarVisible)
         controller.toggleRightSidebar(nil)
         #expect(!main.isDevelopPanelVisible && !main.isRightSidebarVisible && button()?.state == .off)
+        #expect(button()?.accessibilityValue() as? String == "off")
         controller.toggleRightSidebar(nil)
-        #expect(main.isDevelopPanelVisible && button()?.state == .on)
+        #expect(main.isDevelopPanelVisible && button()?.state == .off && button()?.accessibilityValue() as? String == "on")
         controller.state.mode = .library
         #expect(main.isLibraryInspectorVisible == main.isRightSidebarVisible)
     }
