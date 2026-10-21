@@ -199,8 +199,8 @@ final class FilterBarViewController: NSViewController, NSSearchFieldDelegate, NS
         // Return applies the search at once; typing applies it after a pause (controlTextDidChange).
         searchField.sendsWholeSearchString = true
         searchField.setAccessibilityIdentifier("metadataSearch")
-        // 2pt shorter than standard, to sit with the small pop-ups beside it.
-        searchField.heightAnchor.constraint(equalToConstant: searchField.intrinsicContentSize.height - 2).isActive = true
+        // Shorter than standard, to sit with the small pop-ups beside it.
+        searchField.heightAnchor.constraint(equalToConstant: 20).isActive = true
         searchField.widthAnchor.constraint(equalToConstant: 260).isActive = true
         return [textFieldPopUp, textRulePopUp, searchField]
     }
