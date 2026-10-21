@@ -39,8 +39,21 @@ nonisolated final class Photo: NSManagedObject {
     @NSManaged var aperture: Double
     /// Exposure time in seconds, or 0.
     @NSManaged var shutterSpeed: Double
-    /// Whether the photo has a GPS position.
+    /// Whether the photo has a location: its override's, else its file's. Kept up to date by the
+    /// location setters (see `PhotoLocation.swift`), for smart collections and the Library Filter.
     @NSManaged var hasGPS: Bool
+    /// The location recorded in the file, in degrees and metres (model v16); nil when it has none.
+    /// Only meaningful once `locationRead` is set.
+    @NSManaged var fileLatitude: NSNumber?
+    @NSManaged var fileLongitude: NSNumber?
+    @NSManaged var fileAltitude: NSNumber?
+    /// Whether the file's location has been read into `fileLatitude`… (model v16). Photos from before
+    /// v16 are read by ``LocationBackfill``.
+    @NSManaged var locationRead: Bool
+    /// A location typed into the catalog (model v16): see ``LocationOverride``.
+    @NSManaged var locationOverride: Int16
+    @NSManaged var overrideLatitude: NSNumber?
+    @NSManaged var overrideLongitude: NSNumber?
     /// Whether the file is a video (shown view-only: poster-frame thumbnail, playable, no Develop; model v11).
     @NSManaged var isVideo: Bool
     /// A video's length in seconds.

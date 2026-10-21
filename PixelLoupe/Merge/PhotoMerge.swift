@@ -252,6 +252,8 @@ extension PhotoEditing {
         photo.focalLength = reference.focalLength
         photo.aperture = reference.aperture
         photo.shutterSpeed = reference.shutterSpeed
+        // The merge is where its reference photo was taken.
+        photo.copyLocation(from: reference)
         photo.folder = earliest.folder
         photo.tags = sources.reduce(into: Set<Tag>()) { $0.formUnion($1.tags) }
         if !output.adjustments.isDefault { photo.adjustments = output.adjustments }

@@ -39,6 +39,8 @@ final class CatalogStore: NSObject {
     private(set) lazy var thumbnailMaintenance = ThumbnailMaintenance(store: self)
     /// Writes Smart Previews in the background.
     private(set) lazy var smartPreviewBuilder = SmartPreviewBuilder(store: self)
+    /// Reads the locations of photos from before model v16 (see ``LocationBackfill``).
+    private(set) lazy var locationBackfill = LocationBackfill(store: self)
     /// Brings back edits other apps save to files sent with Photo ▸ Edit In (see ``ExternalEditMonitor``).
     private(set) lazy var externalEdits = ExternalEditMonitor(store: self)
 

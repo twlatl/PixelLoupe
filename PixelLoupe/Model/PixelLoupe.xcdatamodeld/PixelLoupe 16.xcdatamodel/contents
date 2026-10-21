@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0" lastSavedToolsVersion="24000" systemVersion="27A000" minimumToolsVersion="Automatic" sourceLanguage="Swift" userDefinedModelVersionIdentifier="16">
+    <entity name="DevelopHistoryStep" representedClassName="DevelopHistoryStep" syncable="YES">
+        <attribute name="data" optional="YES" attributeType="Binary"/>
+        <attribute name="date" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="id" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="lightroomData" optional="YES" attributeType="Binary"/>
+        <attribute name="name" attributeType="String" defaultValueString=""/>
+        <attribute name="processVersion" optional="YES" attributeType="String"/>
+        <attribute name="sequence" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <relationship name="photo" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Photo" inverseName="historySteps" inverseEntity="Photo"/>
+        <fetchIndex name="bySequenceIndex">
+            <fetchIndexElement property="sequence" type="Binary" order="ascending"/>
+        </fetchIndex>
+    </entity>
+    <entity name="DevelopSnapshot" representedClassName="DevelopSnapshot" syncable="YES">
+        <attribute name="data" optional="YES" attributeType="Binary"/>
+        <attribute name="date" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="id" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="lightroomData" optional="YES" attributeType="Binary"/>
+        <attribute name="name" attributeType="String" defaultValueString=""/>
+        <attribute name="processVersion" optional="YES" attributeType="String"/>
+        <relationship name="photo" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Photo" inverseName="snapshots" inverseEntity="Photo"/>
+    </entity>
+    <entity name="FaceRegion" representedClassName="FaceRegion" syncable="YES">
+        <attribute name="clusterID" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="height" attributeType="Double" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="id" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="statusValue" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="width" attributeType="Double" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="x" attributeType="Double" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="y" attributeType="Double" defaultValueString="0" usesScalarValueType="YES"/>
+        <relationship name="person" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Tag" inverseName="faceRegions" inverseEntity="Tag"/>
+        <relationship name="photo" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Photo" inverseName="faceRegions" inverseEntity="Photo"/>
+    </entity>
+    <entity name="Folder" representedClassName="Folder" syncable="YES">
+        <attribute name="colorLabel" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="isFavorite" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="name" attributeType="String" defaultValueString=""/>
+        <attribute name="path" attributeType="String" defaultValueString=""/>
+        <relationship name="children" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="Folder" inverseName="parent" inverseEntity="Folder"/>
+        <relationship name="parent" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Folder" inverseName="children" inverseEntity="Folder"/>
+        <relationship name="photos" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="Photo" inverseName="folder" inverseEntity="Photo"/>
+        <fetchIndex name="byPathIndex">
+            <fetchIndexElement property="path" type="Binary" order="ascending"/>
+        </fetchIndex>
+    </entity>
+    <entity name="Photo" representedClassName="Photo" syncable="YES">
+        <attribute name="adjustmentsData" optional="YES" attributeType="Binary"/>
+        <attribute name="aperture" attributeType="Double" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="captionText" optional="YES" attributeType="String"/>
+        <attribute name="cameraMake" optional="YES" attributeType="String"/>
+        <attribute name="cameraModel" optional="YES" attributeType="String"/>
+        <attribute name="captureDate" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="colorLabel" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="copyName" optional="YES" attributeType="String"/>
+        <attribute name="copyrightText" optional="YES" attributeType="String"/>
+        <attribute name="creatorText" optional="YES" attributeType="String"/>
+        <attribute name="dedupeKey" optional="YES" attributeType="String"/>
+        <attribute name="editDate" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="fileAltitude" optional="YES" attributeType="Double" usesScalarValueType="NO"/>
+        <attribute name="fileLatitude" optional="YES" attributeType="Double" usesScalarValueType="NO"/>
+        <attribute name="fileLongitude" optional="YES" attributeType="Double" usesScalarValueType="NO"/>
+        <attribute name="fileName" attributeType="String" defaultValueString=""/>
+        <attribute name="filePath" attributeType="String" defaultValueString=""/>
+        <attribute name="fileSize" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="fileType" attributeType="String" defaultValueString=""/>
+        <attribute name="duration" attributeType="Double" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="focalLength" attributeType="Double" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="flag" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="hasGPS" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="id" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="importDate" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="importID" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="importDifferences" optional="YES" attributeType="String"/>
+        <attribute name="isBlackAndWhite" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="isCropped" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="isVideo" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="isHiddenInStack" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="iso" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="labelText" optional="YES" attributeType="String"/>
+        <attribute name="lensModel" optional="YES" attributeType="String"/>
+        <attribute name="lightroomID" optional="YES" attributeType="String"/>
+        <attribute name="locationOverride" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="locationRead" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="metadataData" optional="YES" attributeType="Binary"/>
+        <attribute name="overrideLatitude" optional="YES" attributeType="Double" usesScalarValueType="NO"/>
+        <attribute name="overrideLongitude" optional="YES" attributeType="Double" usesScalarValueType="NO"/>
+        <attribute name="orientation" attributeType="Integer 16" defaultValueString="1" usesScalarValueType="YES"/>
+        <attribute name="originalPath" optional="YES" attributeType="String"/>
+        <attribute name="pixelHeight" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="pixelWidth" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="sidecarExtensions" optional="YES" attributeType="String"/>
+        <attribute name="stackPosition" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="shutterSpeed" attributeType="Double" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="titleText" optional="YES" attributeType="String"/>
+        <attribute name="rating" attributeType="Integer 16" minValueString="0" maxValueString="5" defaultValueString="0" usesScalarValueType="YES"/>
+        <relationship name="folder" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Folder" inverseName="photos" inverseEntity="Folder"/>
+        <relationship name="stack" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="PhotoStack" inverseName="photos" inverseEntity="PhotoStack"/>
+        <relationship name="master" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Photo" inverseName="virtualCopies" inverseEntity="Photo"/>
+        <relationship name="virtualCopies" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="Photo" inverseName="master" inverseEntity="Photo"/>
+        <relationship name="collections" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="PhotoCollection" inverseName="photos" inverseEntity="PhotoCollection"/>
+        <relationship name="tags" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="Tag" inverseName="photos" inverseEntity="Tag"/>
+        <relationship name="faceRegions" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="FaceRegion" inverseName="photo" inverseEntity="FaceRegion"/>
+        <relationship name="historySteps" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="DevelopHistoryStep" inverseName="photo" inverseEntity="DevelopHistoryStep"/>
+        <relationship name="snapshots" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="DevelopSnapshot" inverseName="photo" inverseEntity="DevelopSnapshot"/>
+        <fetchIndex name="byCaptureDateIndex">
+            <fetchIndexElement property="captureDate" type="Binary" order="ascending"/>
+        </fetchIndex>
+        <fetchIndex name="byFilePathIndex">
+            <fetchIndexElement property="filePath" type="Binary" order="ascending"/>
+        </fetchIndex>
+        <fetchIndex name="byDedupeKeyIndex">
+            <fetchIndexElement property="dedupeKey" type="Binary" order="ascending"/>
+        </fetchIndex>
+        <fetchIndex name="byLightroomIDIndex">
+            <fetchIndexElement property="lightroomID" type="Binary" order="ascending"/>
+        </fetchIndex>
+        <fetchIndex name="byIsHiddenInStackIndex">
+            <fetchIndexElement property="isHiddenInStack" type="Binary" order="ascending"/>
+        </fetchIndex>
+        <fetchIndex name="byColorLabelIndex">
+            <fetchIndexElement property="colorLabel" type="Binary" order="ascending"/>
+        </fetchIndex>
+        <fetchIndex name="byRatingIndex">
+            <fetchIndexElement property="rating" type="Binary" order="ascending"/>
+        </fetchIndex>
+        <fetchIndex name="byImportIDIndex">
+            <fetchIndexElement property="importID" type="Binary" order="ascending"/>
+        </fetchIndex>
+        <fetchIndex name="byImportDateIndex">
+            <fetchIndexElement property="importDate" type="Binary" order="ascending"/>
+        </fetchIndex>
+    </entity>
+    <entity name="PhotoCollection" representedClassName="PhotoCollection" syncable="YES">
+        <attribute name="createdDate" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="id" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="importWarning" optional="YES" attributeType="String"/>
+        <attribute name="kindValue" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="luaRules" optional="YES" attributeType="String"/>
+        <attribute name="name" attributeType="String" defaultValueString=""/>
+        <attribute name="orderData" optional="YES" attributeType="Binary"/>
+        <attribute name="rulesData" optional="YES" attributeType="Binary"/>
+        <relationship name="children" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="PhotoCollection" inverseName="parent" inverseEntity="PhotoCollection"/>
+        <relationship name="parent" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="PhotoCollection" inverseName="children" inverseEntity="PhotoCollection"/>
+        <relationship name="photos" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="Photo" inverseName="collections" inverseEntity="Photo"/>
+        <fetchIndex name="byIDIndex">
+            <fetchIndexElement property="id" type="Binary" order="ascending"/>
+        </fetchIndex>
+    </entity>
+    <entity name="PhotoStack" representedClassName="PhotoStack" syncable="YES">
+        <attribute name="isCollapsed" attributeType="Boolean" defaultValueString="YES" usesScalarValueType="YES"/>
+        <relationship name="photos" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="Photo" inverseName="stack" inverseEntity="Photo"/>
+    </entity>
+    <entity name="Tag" representedClassName="Tag" syncable="YES">
+        <attribute name="includeOnExport" attributeType="Boolean" defaultValueString="YES" usesScalarValueType="YES"/>
+        <attribute name="includeParents" attributeType="Boolean" defaultValueString="YES" usesScalarValueType="YES"/>
+        <attribute name="includeSynonyms" attributeType="Boolean" defaultValueString="YES" usesScalarValueType="YES"/>
+        <attribute name="isPerson" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="name" attributeType="String" defaultValueString=""/>
+        <attribute name="pathKey" attributeType="String" defaultValueString=""/>
+        <attribute name="synonymText" optional="YES" attributeType="String"/>
+        <relationship name="children" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="Tag" inverseName="parent" inverseEntity="Tag"/>
+        <relationship name="parent" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Tag" inverseName="children" inverseEntity="Tag"/>
+        <relationship name="faceRegions" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="FaceRegion" inverseName="person" inverseEntity="FaceRegion"/>
+        <relationship name="photos" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="Photo" inverseName="tags" inverseEntity="Photo"/>
+        <fetchIndex name="byNameIndex">
+            <fetchIndexElement property="name" type="Binary" order="ascending"/>
+        </fetchIndex>
+        <fetchIndex name="byPathKeyIndex">
+            <fetchIndexElement property="pathKey" type="Binary" order="ascending"/>
+        </fetchIndex>
+    </entity>
+</model>
