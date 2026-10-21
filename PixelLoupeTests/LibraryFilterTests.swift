@@ -107,6 +107,7 @@ struct LibraryFilterTests {
 
     @Test func searchMatchesCameraAndLensCaseInsensitively() throws {
         var filter = LibraryFilter()
+        filter.text.field = .cameraAndLens
         filter.text.query = "nikon"
         #expect(try names(filter) == ["b.NEF"])
         filter.text.query = "24-70"
@@ -115,6 +116,58 @@ struct LibraryFilterTests {
         #expect(try names(filter) == ["d.ARW"])
         filter.text.query = "a.CR3"
         #expect(try names(filter).isEmpty, "file names are not searched")
+    }
+
+    private func search(
+        _ query: String, in field: LibraryFilter.TextSearch.Field = .anySearchable,
+        _ rule: LibraryFilter.TextSearch.Rule = .containsAll
+    ) throws -> [String] {
+        var filter = LibraryFilter()
+        filter.text = .init(field: field, rule: rule, query: query)
+        return try names(filter)
+    }
+
+    @Test func anySearchableFieldSearchesFileNamesAndKeywords() throws {
+        #expect(try search("a.CR3") == ["a.CR3"])
+        #expect(try search("landscape") == ["a.CR3", "d.ARW"])
+        #expect(try search("canon landscape") == ["a.CR3"], "Contains All needs every word")
+        #expect(try search("family", in: .keywords) == ["c.jpg", "d.ARW"])
+        #expect(try search("canon", in: .keywords).isEmpty)
+        #expect(try search("a.CR3", in: .fileName) == ["a.CR3"])
+    }
+
+    @Test func rules() throws {
+        #expect(try search("nikon sony", in: .cameraAndLens, .contains) == ["b.NEF", "d.ARW"], "Contains needs any word")
+        #expect(try search("nikon sony", in: .cameraAndLens, .containsAll).isEmpty)
+        #expect(try search("70", in: .cameraAndLens, .contains) == ["a.CR3", "d.ARW"])
+        #expect(try search("70", in: .cameraAndLens, .containsWords).isEmpty, "70 is part of 70mm")
+        #expect(try search("24", in: .cameraAndLens, .containsWords) == ["d.ARW"], "RF24 isn't the word 24")
+        #expect(try search("canon apple", in: .cameraAndLens, .doesNotContain) == ["b.NEF", "d.ARW"])
+        #expect(try search("nik", in: .cameraAndLens, .startsWith) == ["b.NEF"])
+        #expect(try search("kon", in: .cameraAndLens, .startsWith).isEmpty)
+        #expect(try search("kon", in: .cameraAndLens, .endsWith) == ["b.NEF"])
+    }
+
+    @Test func doesNotContainLeavesOutKeywords() throws {
+        #expect(try search("family", in: .keywords, .doesNotContain) == ["b.NEF", "a.CR3"])
+        #expect(try search("rf24", in: .cameraAndLens, .doesNotContain) == ["b.NEF", "c.jpg", "d.ARW"],
+                "a photo with no lens doesn't contain the word")
+        #expect(try search("landscape", in: .anySearchable, .doesNotContain) == ["b.NEF", "c.jpg"])
+    }
+
+    @Test func inlineSyntaxOverridesTheRule() throws {
+        #expect(try search("24-70 !sony", in: .cameraAndLens) == ["a.CR3"])
+        #expect(try search("+nik", in: .cameraAndLens) == ["b.NEF"])
+        #expect(try search("kon+", in: .cameraAndLens) == ["b.NEF"])
+        #expect(try search("canon nikon !z", in: .cameraAndLens, .contains) == ["a.CR3"], "any plain word, but never z")
+        #expect(try search("! +", in: .cameraAndLens).count == 4, "a bare ! or + is no word")
+        #expect(LibraryFilter.TextSearch(query: " ! ").isEmpty)
+    }
+
+    @Test func textSearchSavedBeforeFieldsAndRulesStillLoads() throws {
+        let data = try PropertyListEncoder().encode(["query": "canon"])
+        let text = try PropertyListDecoder().decode(LibraryFilter.TextSearch.self, from: data)
+        #expect(text == .init(query: "canon"))
     }
 
     @Test func folderScopeIncludesSubfolders() throws {

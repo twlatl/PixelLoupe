@@ -18,6 +18,14 @@ final class FilterBarViewController: NSViewController, NSMenuDelegate, NSSearchF
 
     private let tagsPopUp = NSPopUpButton(frame: .zero, pullsDown: true)
     private let searchField = ClickToFocusSearchField()
+    private let textFieldPopUp = NSPopUpButton()
+    private let textRulePopUp = NSPopUpButton()
+    /// The search typed so far, applied after a short pause so each key doesn't refetch the grid.
+    private var pendingSearch: DispatchWorkItem?
+    static let searchDelay: TimeInterval = 0.15
+
+    /// Gives the keyboard back to the grid (Esc in the search field).
+    var onEndSearch: (() -> Void)?
 
     init(store: CatalogStore, state: LibraryState) {
         self.store = store
@@ -147,14 +155,30 @@ final class FilterBarViewController: NSViewController, NSMenuDelegate, NSSearchF
         return row
     }
 
+    /// Lightroom's Text row: which fields, how the words match, and the words.
     private func textRow() -> [NSView] {
-        searchField.placeholderString = "Search camera or lens"
+        for (popUp, titles, identifier, label) in [
+            (textFieldPopUp, LibraryFilter.TextSearch.Field.allCases.map(\.title), "textFilterField", "Fields to search"),
+            (textRulePopUp, LibraryFilter.TextSearch.Rule.allCases.map(\.title), "textFilterRule", "How the words match"),
+        ] {
+            popUp.controlSize = .small
+            popUp.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+            popUp.addItems(withTitles: titles)
+            popUp.target = self
+            popUp.action = #selector(textOptionChanged(_:))
+            popUp.setAccessibilityLabel(label)
+            popUp.setAccessibilityIdentifier(identifier)
+        }
+        searchField.placeholderString = "Search"
+        searchField.toolTip = "!word leaves out photos with the word, +word matches the start of a word, word+ the end"
         searchField.delegate = self
         searchField.target = self
         searchField.action = #selector(searchChanged(_:))
+        // Return applies the search at once; typing applies it after a pause (controlTextDidChange).
+        searchField.sendsWholeSearchString = true
         searchField.setAccessibilityIdentifier("metadataSearch")
         searchField.widthAnchor.constraint(equalToConstant: 260).isActive = true
-        return [searchField]
+        return [textFieldPopUp, textRulePopUp, searchField]
     }
 
     /// Lightroom's Attribute groups: Flag, Edit, Rating, Color, Kind, and (PixelLoupe's own) Stack.
@@ -230,7 +254,10 @@ final class FilterBarViewController: NSViewController, NSMenuDelegate, NSSearchF
             row.isHidden = !filter.modes.contains(mode)
         }
         updateTagsTitle()
-        if searchField.stringValue != filter.text.query {
+        textFieldPopUp.selectItem(at: LibraryFilter.TextSearch.Field.allCases.firstIndex(of: filter.text.field) ?? 0)
+        textRulePopUp.selectItem(at: LibraryFilter.TextSearch.Rule.allCases.firstIndex(of: filter.text.rule) ?? 0)
+        // Leave the field alone while a typed search is waiting to apply.
+        if pendingSearch == nil, searchField.stringValue != filter.text.query {
             searchField.stringValue = filter.text.query
         }
     }
@@ -269,7 +296,41 @@ final class FilterBarViewController: NSViewController, NSMenuDelegate, NSSearchF
     }
 
     @objc private func searchChanged(_ sender: NSSearchField) {
-        state.filter.text.query = sender.stringValue.trimmingCharacters(in: .whitespaces)
+        applySearch()
+    }
+
+    private func applySearch() {
+        pendingSearch?.cancel()
+        pendingSearch = nil
+        state.filter.text.query = searchField.stringValue.trimmingCharacters(in: .whitespaces)
+    }
+
+    @objc private func textOptionChanged(_ sender: NSPopUpButton) {
+        let index = sender.indexOfSelectedItem
+        if sender === textFieldPopUp {
+            state.filter.text.field = LibraryFilter.TextSearch.Field.allCases[index]
+        } else {
+            state.filter.text.rule = LibraryFilter.TextSearch.Rule.allCases[index]
+        }
+    }
+
+    // MARK: - NSSearchFieldDelegate
+
+    func controlTextDidChange(_ notification: Notification) {
+        guard notification.object as? NSSearchField === searchField else { return }
+        pendingSearch?.cancel()
+        let search = DispatchWorkItem { [weak self] in self?.applySearch() }
+        pendingSearch = search
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.searchDelay, execute: search)
+    }
+
+    /// Esc clears the search and gives the keyboard back to the grid.
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard control === searchField, commandSelector == #selector(NSResponder.cancelOperation(_:)) else { return false }
+        searchField.stringValue = ""
+        applySearch()
+        onEndSearch?()
+        return true
     }
 
     @objc private func toggleTag(_ sender: NSMenuItem) {

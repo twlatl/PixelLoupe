@@ -338,7 +338,14 @@ The Library Filter bar above the grid works like Lightroom's. Its header chooses
 **Metadata** or **None**. Click a mode to show just it (click it again to turn it off), or Shift-click to add or
 remove it; the active modes' rows all apply, so a photo must match every one. Each row's × clears that mode.
 
-- **Text** searches camera make, model and lens; every word must match.
+- **Text** searches the field chosen in its first menu (**Any Searchable Field**: file name, copy name, title,
+  caption, creator, copyright, camera, lens, label text and keywords with their synonyms; or just **Filename**,
+  **Copy Name**, **Title**, **Caption**, **Keywords**, **Camera & Lens** or **Creator & Copyright**) by the rule in
+  its second: **Contains** (any of the words), **Contains All** (every word, part of a word counts; the default),
+  **Contains Words** (every word, as a whole word), **Doesn't Contain** (none of the words), **Starts With** or
+  **Ends With** (each word starts or ends a word). As in Lightroom, `!word` leaves out photos with the word, `+word`
+  matches the start of a word and `word+` the end, whatever the rule. It searches as you type; `Esc` clears it and
+  returns to the grid.
 - **Attribute** has Lightroom's groups: **Flag** (Picked, Unflagged, Rejected), **Edit** (edited photos, which have
   Develop settings, or unedited ones), **Rating** (≥, = or ≤ a number of stars), **Color** (the five labels, another
   label such as a custom Lightroom one, or no label), **Kind** (originals, virtual copies, videos) and **Stack**

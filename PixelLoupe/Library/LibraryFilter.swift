@@ -203,21 +203,161 @@ nonisolated struct LibraryFilter: Equatable, Sendable {
         }
     }
 
-    /// The Text mode's criteria.
+    /// The Text mode's criteria, as Lightroom's: which fields to search, how the words must match,
+    /// and the words. A word written `!word` must not appear, `+word` must start a word and `word+`
+    /// must end one, whatever the rule.
     struct TextSearch: Equatable, Codable, Sendable {
-        /// Matched against camera make, model and lens.
+        enum Field: String, CaseIterable, Codable, Sendable {
+            case anySearchable, fileName, copyName, title, caption, keywords, cameraAndLens, creatorAndCopyright
+
+            var title: String {
+                switch self {
+                case .anySearchable: "Any Searchable Field"
+                case .fileName: "Filename"
+                case .copyName: "Copy Name"
+                case .title: "Title"
+                case .caption: "Caption"
+                case .keywords: "Keywords"
+                case .cameraAndLens: "Camera & Lens"
+                case .creatorAndCopyright: "Creator & Copyright"
+                }
+            }
+
+            /// The photo's text attributes the field searches.
+            fileprivate var keyPaths: [String] {
+                switch self {
+                case .anySearchable:
+                    ["fileName", "copyName", "titleText", "captionText", "creatorText", "copyrightText",
+                     "cameraMake", "cameraModel", "lensModel", "labelText"]
+                case .fileName: ["fileName"]
+                case .copyName: ["copyName"]
+                case .title: ["titleText"]
+                case .caption: ["captionText"]
+                case .keywords: []
+                case .cameraAndLens: ["cameraMake", "cameraModel", "lensModel"]
+                case .creatorAndCopyright: ["creatorText", "copyrightText"]
+                }
+            }
+
+            /// Keywords match by their full path (so a parent's name finds what's below it) or a synonym.
+            fileprivate var searchesKeywords: Bool { self == .anySearchable || self == .keywords }
+        }
+
+        enum Rule: String, CaseIterable, Codable, Sendable {
+            /// Any of the words, anywhere.
+            case contains
+            /// All of the words, anywhere (part of a word counts).
+            case containsAll
+            /// All of the words, as whole words.
+            case containsWords
+            /// None of the words.
+            case doesNotContain
+            /// Each word starts a word.
+            case startsWith
+            /// Each word ends a word.
+            case endsWith
+
+            var title: String {
+                switch self {
+                case .contains: "Contains"
+                case .containsAll: "Contains All"
+                case .containsWords: "Contains Words"
+                case .doesNotContain: "Doesn't Contain"
+                case .startsWith: "Starts With"
+                case .endsWith: "Ends With"
+                }
+            }
+        }
+
+        /// How one word must match.
+        fileprivate enum Match: Equatable {
+            case anywhere, wholeWord, startOfWord, endOfWord, absent
+        }
+
+        var field = Field.anySearchable
+        var rule = Rule.containsAll
         var query = ""
 
-        var isEmpty: Bool { query.allSatisfy(\.isWhitespace) }
+        init(field: Field = .anySearchable, rule: Rule = .containsAll, query: String = "") {
+            self.field = field
+            self.rule = rule
+            self.query = query
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            field = try container.decodeIfPresent(Field.self, forKey: .field) ?? .anySearchable
+            rule = try container.decodeIfPresent(Rule.self, forKey: .rule) ?? .containsAll
+            query = try container.decodeIfPresent(String.self, forKey: .query) ?? ""
+        }
+
+        var isEmpty: Bool { Self.words(in: query).isEmpty }
+
+        /// The query's words with how each must match: Lightroom's `!word`, `+word` and `word+`
+        /// override the rule. A bare `!` or `+` is no word.
+        fileprivate func matches() -> [(word: String, match: Match)] {
+            let ruleMatch: Match = switch rule {
+            case .contains, .containsAll: .anywhere
+            case .containsWords: .wholeWord
+            case .doesNotContain: .absent
+            case .startsWith: .startOfWord
+            case .endsWith: .endOfWord
+            }
+            return Self.words(in: query).compactMap { word in
+                if word.hasPrefix("!") { return Self.stripped(word.dropFirst()).map { ($0, .absent) } }
+                if word.hasPrefix("+") { return Self.stripped(word.dropFirst()).map { ($0, .startOfWord) } }
+                if word.hasSuffix("+") { return Self.stripped(word.dropLast()).map { ($0, .endOfWord) } }
+                return (word, ruleMatch)
+            }
+        }
+
+        private static func words(in query: String) -> [String] {
+            query.split(whereSeparator: \.isWhitespace).map(String.init).filter { $0 != "!" && $0 != "+" }
+        }
+
+        private static func stripped(_ word: Substring) -> String? {
+            word.isEmpty ? nil : String(word)
+        }
 
         fileprivate var predicates: [NSPredicate] {
-            // Every word must match at least one of the camera/lens fields.
-            query.split(whereSeparator: \.isWhitespace).map(String.init).map { word in
-                NSPredicate(
-                    format: "cameraMake CONTAINS[cd] %@ OR cameraModel CONTAINS[cd] %@ OR lensModel CONTAINS[cd] %@",
-                    word, word, word
-                )
+            let matches = matches()
+            guard !matches.isEmpty else { return [] }
+            // Contains needs any of its plain words; every other word (and every word for the other
+            // rules) must match on its own.
+            if rule == .contains {
+                let plain = matches.filter { $0.match == .anywhere }.map { predicate(for: $0.word, $0.match) }
+                let others = matches.filter { $0.match != .anywhere }.map { predicate(for: $0.word, $0.match) }
+                return (plain.isEmpty ? [] : [NSCompoundPredicate(orPredicateWithSubpredicates: plain)]) + others
             }
+            return matches.map { predicate(for: $0.word, $0.match) }
+        }
+
+        /// The word matches (or, for `.absent`, doesn't appear in) any of the field's attributes.
+        private func predicate(for word: String, _ match: Match) -> NSPredicate {
+            if match == .absent {
+                // Spelled out rather than NOT(…): SQLite can't negate ANY over keywords, and NOT of a
+                // missing value (no lens) is unknown, which would leave the photo out.
+                var predicates = field.keyPaths.map { NSPredicate(format: "\($0) == nil OR NOT (\($0) CONTAINS[cd] %@)", word) }
+                if field.searchesKeywords {
+                    predicates.append(NSPredicate(
+                        format: "SUBQUERY(tags, $t, $t.pathKey CONTAINS[cd] %@ OR $t.synonymText CONTAINS[cd] %@).@count == 0", word, word
+                    ))
+                }
+                return NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
+            }
+            let (comparison, value): (String, String) = switch match {
+            case .anywhere, .absent: ("CONTAINS[cd]", word)
+            // Word boundaries need a regular expression; (?is) is case-insensitive and lets . span lines.
+            case .wholeWord: ("MATCHES", "(?is).*\\b\(NSRegularExpression.escapedPattern(for: word))\\b.*")
+            case .startOfWord: ("MATCHES", "(?is).*\\b\(NSRegularExpression.escapedPattern(for: word)).*")
+            case .endOfWord: ("MATCHES", "(?is).*\(NSRegularExpression.escapedPattern(for: word))\\b.*")
+            }
+            var predicates = field.keyPaths.map { NSPredicate(format: "\($0) \(comparison) %@", value) }
+            if field.searchesKeywords {
+                predicates.append(NSPredicate(format: "ANY tags.pathKey \(comparison) %@", value))
+                predicates.append(NSPredicate(format: "ANY tags.synonymText \(comparison) %@", value))
+            }
+            return NSCompoundPredicate(orPredicateWithSubpredicates: predicates)
         }
     }
 

@@ -262,6 +262,32 @@ struct FilterBarWindowTests {
         #expect(controller.window?.firstResponder === search.currentEditor())
     }
 
+    @Test func typingSearchesAfterAPauseAndEscapeClears() async throws {
+        let controller = CatalogWindowController(store: try CatalogStore.open(at: packageURL))
+        defer { controller.close() }
+        controller.showWindow(nil)
+        let state = controller.state
+        controller.rootViewController.main.library.focusSearch(nil)
+        let search = try #require(view("metadataSearch", in: controller.window) as? NSSearchField)
+        let editor = try #require(search.currentEditor() as? NSTextView)
+        editor.insertText("a.jpg", replacementRange: editor.selectedRange())
+        #expect(state.filter.text.query.isEmpty, "not on every key")
+        try await Task.sleep(for: .seconds(FilterBarViewController.searchDelay + 0.2))
+        #expect(state.filter.text.query == "a.jpg")
+        #expect(state.photoCount == 1)
+
+        // The field and rule menus.
+        let rule = try #require(view("textFilterRule", in: controller.window) as? NSPopUpButton)
+        rule.selectItem(withTitle: "Doesn't Contain")
+        _ = rule.target?.perform(rule.action, with: rule)
+        #expect(state.filter.text.rule == .doesNotContain && state.photoCount == 2)
+
+        let handled = search.delegate?.control?(search, textView: editor, doCommandBy: #selector(NSResponder.cancelOperation(_:)))
+        #expect(handled == true)
+        #expect(state.filter.text.query.isEmpty && search.stringValue.isEmpty)
+        #expect(controller.window?.firstResponder !== editor, "the keyboard goes back to the grid")
+    }
+
     @Test func theBarAndItsCriteriaAreRestoredWhenTheCatalogReopens() throws {
         do {
             let controller = CatalogWindowController(store: try CatalogStore.open(at: packageURL))

@@ -86,6 +86,10 @@ final class LibraryViewController: NSViewController {
                 child.view.bottomAnchor.constraint(equalTo: bottom),
             ])
         }
+        filterBar.onEndSearch = { [weak self] in
+            guard let self else { return }
+            view.window?.makeFirstResponder(grid.preferredFirstResponder)
+        }
         updateFilterBar()
         state.addObserver(self) { [weak self] change in
             switch change {
