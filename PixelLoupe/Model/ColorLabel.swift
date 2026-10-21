@@ -2,7 +2,7 @@ import AppKit
 
 /// Lightroom's color labels: five colors in the default label set, shown on cells and used to filter
 /// and sort. Stored as `Photo.colorLabel`.
-nonisolated enum ColorLabel: Int16, CaseIterable, Sendable {
+nonisolated enum ColorLabel: Int16, CaseIterable, Codable, Sendable {
     case none = 0
     case red, yellow, green, blue, purple
 

@@ -107,11 +107,11 @@ enum LibraryTimings {
         }
 
         // Filter bar and sorting.
-        var rated = LibraryFilter(); rated.rating = 3
+        var rated = LibraryFilter(); rated.attributes.rating = 3
         _ = try gridFetch(rated, "Filter: rating >= 3")
-        var flagged = LibraryFilter(); flagged.flags = [.picked, .rejected]
+        var flagged = LibraryFilter(); flagged.attributes.flags = [.picked, .rejected]
         _ = try gridFetch(flagged, "Filter: flags")
-        var searched = LibraryFilter(); searched.searchText = "canon"
+        var searched = LibraryFilter(); searched.text.query = "canon"
         _ = try gridFetch(searched, "Filter: search 'canon'")
         for key in PhotoSortKey.allCases {
             var sorted = LibraryFilter(); sorted.sortKey = key; sorted.ascending = false
@@ -171,12 +171,12 @@ enum LibraryTimings {
         _ = grid
 
         let (_, filterRating) = time("Grid: filter rating >= 3 (refetch + snapshot)") {
-            state.filter.rating = 3
+            state.filter.attributes.rating = 3
             RunLoop.current.run(until: Date())
         }
         results.append(filterRating)
         let (_, filterClear) = time("Grid: clear filter (55k snapshot)") {
-            state.filter.rating = nil
+            state.filter.attributes.rating = nil
             RunLoop.current.run(until: Date())
         }
         results.append(filterClear)

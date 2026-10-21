@@ -16,6 +16,8 @@ final class FilmstripViewController: NSViewController, NSCollectionViewDelegate 
     private let layout = NSCollectionViewFlowLayout()
     private var dataSource: NSCollectionViewDiffableDataSource<Int, NSManagedObjectID>!
     private let infoLabel = NSTextField(labelWithString: "")
+    /// Shown while the filter bar's criteria leave photos out; a click shows the bar.
+    private let filteredButton = NSButton()
     private var isApplyingSelection = false
 
     init(store: CatalogStore, state: LibraryState) {
@@ -35,6 +37,16 @@ final class FilmstripViewController: NSViewController, NSCollectionViewDelegate 
         infoLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         infoLabel.setAccessibilityIdentifier("filmstripInfo")
 
+        filteredButton.image = NSImage(systemSymbolName: "line.3.horizontal.decrease.circle.fill", accessibilityDescription: nil)
+        filteredButton.isBordered = false
+        filteredButton.contentTintColor = Accent.color
+        filteredButton.target = self
+        filteredButton.action = #selector(showFilterBar(_:))
+        filteredButton.toolTip = "Photos are filtered; click to show the Library Filter bar"
+        filteredButton.setAccessibilityLabel("Show Library Filter")
+        filteredButton.setAccessibilityIdentifier("filmstripFiltered")
+        filteredButton.isHidden = true
+
         let filterLabel = NSTextField(labelWithString: "Filter:")
         filterLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         filterLabel.textColor = .secondaryLabelColor
@@ -49,11 +61,12 @@ final class FilmstripViewController: NSViewController, NSCollectionViewDelegate 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let header = NSStackView(views: [
-            infoLabel, spacer, filterLabel, FlagFilterControl(state: state), divider,
+            filteredButton, infoLabel, spacer, filterLabel, FlagFilterControl(state: state), divider,
             ColorLabelFilterControl(state: state, identifierPrefix: "filmstrip."), divider2,
             RatingFilterControl(state: state, identifierPrefix: "filmstrip."),
         ])
         header.spacing = 8
+        header.setCustomSpacing(4, after: filteredButton)
         header.setCustomSpacing(16, after: spacer)
         // Don't let the header's natural width shrink the window.
         header.setHuggingPriority(.defaultLow, for: .horizontal)
@@ -189,7 +202,8 @@ final class FilmstripViewController: NSViewController, NSCollectionViewDelegate 
         updateInfo()
     }
 
-    /// "Folder: 2026-09-07 · 88 photos / 1 selected / ~/Pictures/…/DSC0001.ARW"
+    /// "Folder: 2026-09-07 · 88 photos / 1 selected / ~/Pictures/…/DSC0001.ARW", or "42 of 88 photos"
+    /// while the filter bar leaves some out (even with the bar hidden).
     private func updateInfo() {
         let scope = switch state.filter.scope {
         case .allPhotos: "All Photographs"
@@ -198,7 +212,12 @@ final class FilmstripViewController: NSViewController, NSCollectionViewDelegate 
         case .collection(let id, _): "Collection: \(PhotoCollection.with(id: id, in: store.viewContext)?.name ?? "")"
         case .importDifference(let reason): "Lightroom import: \(LightroomImportReport.title(forReason: reason))"
         }
-        var parts = [scope, "\(state.photoCount.formatted()) photo\(state.photoCount == 1 ? "" : "s")"]
+        let filtered = state.filter.isFiltering
+        let count = filtered
+            ? "\(state.photoCount.formatted()) of \(state.scopePhotoCount.formatted()) photo\(state.scopePhotoCount == 1 ? "" : "s")"
+            : "\(state.photoCount.formatted()) photo\(state.photoCount == 1 ? "" : "s")"
+        filteredButton.isHidden = !filtered
+        var parts = [scope, count]
         let selected = state.selectedPhotoIDs
         if !selected.isEmpty {
             parts[1] += " / \(selected.count.formatted()) selected"
@@ -208,6 +227,15 @@ final class FilmstripViewController: NSViewController, NSCollectionViewDelegate 
         }
         infoLabel.stringValue = parts.joined(separator: "  ·  ")
         infoLabel.toolTip = infoLabel.stringValue
+    }
+
+    /// Shows the Library Filter bar, switching to Library from Develop (the bar is Library's).
+    @objc private func showFilterBar(_ sender: Any?) {
+        if state.mode != .library {
+            state.presentation = .grid
+            state.mode = .library
+        }
+        state.isFilterBarVisible = true
     }
 
     /// Refreshes visible cells whose rating, flag or edits changed.

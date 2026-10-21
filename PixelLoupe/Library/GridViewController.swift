@@ -245,9 +245,22 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
         return true
     }
 
+    /// The source's photo count before the filter bar's criteria: the photos shown when nothing
+    /// filters, or a count query (no objects fetched) when something does.
+    private func updateScopePhotoCount(shown: Int) {
+        guard state.filter.isFiltering else {
+            state.scopePhotoCount = shown
+            return
+        }
+        let request = Photo.fetchRequest()
+        request.predicate = state.filter.scopePredicate
+        state.scopePhotoCount = (try? store.viewContext.count(for: request)) ?? shown
+    }
+
     private func apply(_ snapshot: NSDiffableDataSourceSnapshot<String, NSManagedObjectID>, animated: Bool) {
         let selected = Set(state.selectedPhotoIDs)
         dataSource.apply(snapshot, animatingDifferences: animated && view.window != nil)
+        updateScopePhotoCount(shown: snapshot.numberOfItems)
         state.photoOrder = snapshot.itemIdentifiers
 
         // Preserve selection across re-sorts and filter changes where those photos remain visible.

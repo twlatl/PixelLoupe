@@ -95,6 +95,7 @@ import AppKit
     @objc optional func autoSettingsSelected(_ sender: Any?)
     @objc optional func convertToBlackAndWhite(_ sender: Any?)
     @objc optional func toggleFilmstrip(_ sender: Any?)
+    @objc optional func toggleFilterBar(_ sender: Any?)
     @objc optional func compare(_ sender: Any?)
     @objc optional func survey(_ sender: Any?)
     @objc optional func chooseLibraryView(_ sender: ViewModeControl)
@@ -362,6 +363,9 @@ enum MainMenu {
         menu.addItem(item("Smaller Thumbnails", #selector(PixelLoupeActions.decreaseThumbnailSize(_:))))
         menu.addItem(.separator())
         menu.addItem(item("Toggle Sidebar", #selector(NSSplitViewController.toggleSidebar(_:)), "s", modifiers: [.command, .control]))
+        // \, Lightroom's Library Filter bar key; handled by the window in Library (Develop's Before Only
+        // has it there).
+        menu.addItem(item("Hide Filter Bar", #selector(PixelLoupeActions.toggleFilterBar(_:)), "\\", modifiers: []))
         // F6, Lightroom's filmstrip shortcut.
         menu.addItem(item("Hide Filmstrip", #selector(PixelLoupeActions.toggleFilmstrip(_:)),
                           String(Character(UnicodeScalar(NSF6FunctionKey)!)), modifiers: []))

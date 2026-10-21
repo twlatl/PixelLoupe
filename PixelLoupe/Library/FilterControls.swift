@@ -49,24 +49,24 @@ final class RatingFilterControl: NSStackView {
 
     private func update() {
         let filter = state.filter
-        let rating = filter.rating ?? 0
+        let rating = filter.attributes.rating ?? 0
         for button in starButtons {
             let filled = button.tag <= rating
             button.image = NSImage(systemSymbolName: filled ? "star.fill" : "star", accessibilityDescription: "\(button.tag) stars")
             button.contentTintColor = filled ? .systemYellow : .tertiaryLabelColor
             button.setAccessibilityValue(filled ? "on" : "off")
         }
-        comparisonPopUp.selectItem(at: LibraryFilter.RatingComparison.allCases.firstIndex(of: filter.ratingComparison) ?? 0)
+        comparisonPopUp.selectItem(at: LibraryFilter.RatingComparison.allCases.firstIndex(of: filter.attributes.ratingComparison) ?? 0)
     }
 
     @objc private func starClicked(_ sender: NSButton) {
-        state.filter.rating = state.filter.rating == sender.tag ? nil : sender.tag
+        state.filter.attributes.rating = state.filter.attributes.rating == sender.tag ? nil : sender.tag
     }
 
     @objc private func comparisonChanged(_ sender: NSPopUpButton) {
         guard let raw = sender.selectedItem?.representedObject as? String,
               let comparison = LibraryFilter.RatingComparison(rawValue: raw) else { return }
-        state.filter.ratingComparison = comparison
+        state.filter.attributes.ratingComparison = comparison
     }
 }
 
@@ -76,7 +76,7 @@ final class FlagFilterControl: NSStackView {
     private let state: LibraryState
     private let buttons: [(flag: PhotoFlag, button: NSButton)]
 
-    init(state: LibraryState) {
+    init(state: LibraryState, identifierPrefix: String = "") {
         self.state = state
         buttons = [
             (.picked, "flag.fill", "Picked"),
@@ -91,7 +91,7 @@ final class FlagFilterControl: NSStackView {
             button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
             button.toolTip = "Show \(title.lowercased()) photos"
             button.setAccessibilityLabel("\(title) filter")
-            button.setAccessibilityIdentifier("flagFilter.\(title)")
+            button.setAccessibilityIdentifier("\(identifierPrefix)flagFilter.\(title)")
             return (flag, button)
         }
         super.init(frame: .zero)
@@ -112,7 +112,7 @@ final class FlagFilterControl: NSStackView {
 
     private func update() {
         for (flag, button) in buttons {
-            let on = state.filter.flags.contains(flag)
+            let on = state.filter.attributes.flags.contains(flag)
             button.state = on ? .on : .off
             button.contentTintColor = on ? (flag == .rejected ? .systemRed : Accent.color) : .tertiaryLabelColor
         }
@@ -120,19 +120,21 @@ final class FlagFilterControl: NSStackView {
 
     @objc private func toggled(_ sender: NSButton) {
         guard let flag = buttons.first(where: { $0.button === sender })?.flag else { return }
-        if state.filter.flags.contains(flag) {
-            state.filter.flags.remove(flag)
+        if state.filter.attributes.flags.contains(flag) {
+            state.filter.attributes.flags.remove(flag)
         } else {
-            state.filter.flags.insert(flag)
+            state.filter.attributes.flags.insert(flag)
         }
     }
 }
 
-/// Color label filter: a swatch for each color and one for "no label", like Lightroom's. Any
-/// combination can be on; with none on, photos aren't filtered by label.
+/// Color label filter: a swatch for each color, one for any other label (a custom Lightroom label,
+/// which has no color here) and one for "no label", like Lightroom's. Any combination can be on;
+/// with none on, photos aren't filtered by label.
 final class ColorLabelFilterControl: NSStackView {
     private let state: LibraryState
     private let buttons: [(label: ColorLabel, button: NSButton)]
+    private let otherButton = NSButton()
 
     init(state: LibraryState, identifierPrefix: String = "") {
         self.state = state
@@ -148,7 +150,94 @@ final class ColorLabelFilterControl: NSStackView {
             return (label, button)
         }
         super.init(frame: .zero)
-        for (_, button) in buttons {
+        otherButton.setButtonType(.pushOnPushOff)
+        otherButton.bezelStyle = .toolbar
+        otherButton.isBordered = false
+        otherButton.imagePosition = .imageOnly
+        otherButton.toolTip = "Show photos with another label (one with no color, such as a custom Lightroom label)"
+        otherButton.setAccessibilityLabel("Other label filter")
+        otherButton.setAccessibilityIdentifier("\(identifierPrefix)labelFilter.Other")
+        otherButton.target = self
+        otherButton.action = #selector(otherToggled(_:))
+        for (label, button) in buttons {
+            button.target = self
+            button.action = #selector(toggled(_:))
+            // Other label sits between the colors and "no label".
+            if label == .none { addArrangedSubview(otherButton) }
+            addArrangedSubview(button)
+        }
+        spacing = 2
+        update()
+        state.addObserver(self) { [weak self] change in
+            if change == .filter { self?.update() }
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    private func update() {
+        for (label, button) in buttons {
+            let on = state.filter.attributes.colorLabels.contains(label)
+            button.state = on ? .on : .off
+            // A filled swatch, bright when it filters and muted otherwise. "None" is an empty circle.
+            let symbol = label == .none ? (on ? "circle.slash" : "circle.dashed") : "circle.fill"
+            let tint: NSColor = label == .none ? (on ? .labelColor : .tertiaryLabelColor) : label.color.withAlphaComponent(on ? 1 : 0.5)
+            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label.title)
+            button.contentTintColor = tint
+            button.setAccessibilityValue(on ? "on" : "off")
+        }
+        let otherOn = state.filter.attributes.otherLabel
+        otherButton.state = otherOn ? .on : .off
+        otherButton.image = NSImage(systemSymbolName: "circle.lefthalf.filled", accessibilityDescription: "Other label")
+        otherButton.contentTintColor = otherOn ? .labelColor : .tertiaryLabelColor
+        otherButton.setAccessibilityValue(otherOn ? "on" : "off")
+    }
+
+    @objc private func otherToggled(_ sender: NSButton) {
+        state.filter.attributes.otherLabel.toggle()
+    }
+
+    @objc private func toggled(_ sender: NSButton) {
+        guard let label = buttons.first(where: { $0.button === sender })?.label else { return }
+        if state.filter.attributes.colorLabels.contains(label) {
+            state.filter.attributes.colorLabels.remove(label)
+        } else {
+            state.filter.attributes.colorLabels.insert(label)
+        }
+    }
+}
+
+/// A group of Attribute toggles (Edit, Kind, Stack): each shows photos with that attribute, any
+/// combination can be on, and with none on the group doesn't filter.
+final class AttributeToggleControl: NSStackView {
+    struct Choice {
+        let title: String
+        let symbol: String
+        let identifier: String
+        let isOn: (LibraryFilter.Attributes) -> Bool
+        let toggle: (inout LibraryFilter.Attributes) -> Void
+    }
+
+    private let state: LibraryState
+    private let choices: [(choice: Choice, button: NSButton)]
+
+    init(state: LibraryState, choices: [Choice]) {
+        self.state = state
+        self.choices = choices.map { choice in
+            let button = NSButton()
+            button.setButtonType(.pushOnPushOff)
+            button.bezelStyle = .toolbar
+            button.isBordered = false
+            button.imagePosition = .imageOnly
+            button.image = NSImage(systemSymbolName: choice.symbol, accessibilityDescription: choice.title)
+            button.toolTip = "Show \(choice.title.lowercased())"
+            button.setAccessibilityLabel("\(choice.title) filter")
+            button.setAccessibilityIdentifier(choice.identifier)
+            return (choice, button)
+        }
+        super.init(frame: .zero)
+        for (_, button) in self.choices {
             button.target = self
             button.action = #selector(toggled(_:))
             addArrangedSubview(button)
@@ -164,24 +253,36 @@ final class ColorLabelFilterControl: NSStackView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     private func update() {
-        for (label, button) in buttons {
-            let on = state.filter.colorLabels.contains(label)
+        for (choice, button) in choices {
+            let on = choice.isOn(state.filter.attributes)
             button.state = on ? .on : .off
-            // A filled swatch, bright when it filters and muted otherwise. "None" is an empty circle.
-            let symbol = label == .none ? (on ? "circle.slash" : "circle.dashed") : "circle.fill"
-            let tint: NSColor = label == .none ? (on ? .labelColor : .tertiaryLabelColor) : label.color.withAlphaComponent(on ? 1 : 0.5)
-            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label.title)
-            button.contentTintColor = tint
+            button.contentTintColor = on ? Accent.color : .tertiaryLabelColor
             button.setAccessibilityValue(on ? "on" : "off")
         }
     }
 
     @objc private func toggled(_ sender: NSButton) {
-        guard let label = buttons.first(where: { $0.button === sender })?.label else { return }
-        if state.filter.colorLabels.contains(label) {
-            state.filter.colorLabels.remove(label)
-        } else {
-            state.filter.colorLabels.insert(label)
+        guard let choice = choices.first(where: { $0.button === sender })?.choice else { return }
+        choice.toggle(&state.filter.attributes)
+    }
+
+    /// Toggles for each case of a set-valued attribute group.
+    static func choices<Value: Hashable>(
+        _ values: [Value], _ keyPath: WritableKeyPath<LibraryFilter.Attributes, Set<Value>>,
+        title: (Value) -> String, symbol: (Value) -> String, identifier: (Value) -> String
+    ) -> [Choice] {
+        values.map { value in
+            Choice(
+                title: title(value), symbol: symbol(value), identifier: identifier(value),
+                isOn: { $0[keyPath: keyPath].contains(value) },
+                toggle: { attributes in
+                    if attributes[keyPath: keyPath].contains(value) {
+                        attributes[keyPath: keyPath].remove(value)
+                    } else {
+                        attributes[keyPath: keyPath].insert(value)
+                    }
+                }
+            )
         }
     }
 }
