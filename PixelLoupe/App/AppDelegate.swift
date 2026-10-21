@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = MainMenu.make()
         AppSettings.shared.applyAppearance()
+        AppSettings.shared.startFollowingAppearance()
         Accent.startFollowingWindows()
         guard !Self.isRunningUnitTests, catalogWindowController == nil else { return }
         NSWorkspace.shared.notificationCenter.addObserver(

@@ -195,8 +195,8 @@ struct MatteTests {
         defer { settings.matte = saved }
 
         settings.matte = nil
-        #expect(abs(white(GridColors.background(for:), dark) - 0.13) < 0.01)
-        #expect(abs(white(GridColors.background(for:), light) - 0.80) < 0.01)
+        #expect(abs(white(GridColors.background(for:), dark) - 0.15) < 0.01, "85% in Dark Mode")
+        #expect(abs(white(GridColors.background(for:), light) - 0.90) < 0.01, "10% in Light Mode")
         #expect(GridColors.contentAppearance() == nil)
 
         settings.matte = 0           // white
@@ -208,6 +208,28 @@ struct MatteTests {
         #expect(white(GridColors.background(for:), light) < 0.01)
         #expect(white(GridColors.cell(for:), light) > white(GridColors.background(for:), light), "cells lighter on a dark matte")
         #expect(GridColors.contentAppearance()?.name == .darkAqua)
+    }
+
+    @Test("Switching between Light and Dark puts Matte Color back to the theme's 10% or 85% (RAW-152)")
+    func appearanceSwitchResetsMatte() {
+        let settings = AppSettings.shared
+        let saved = settings.matte
+        defer { settings.matte = saved }
+
+        settings.effectiveAppearanceDidChange(light)
+        settings.matte = 0.5
+        settings.effectiveAppearanceDidChange(light)
+        #expect(settings.matte == 0.5, "no switch, no reset")
+        settings.effectiveAppearanceDidChange(dark)
+        #expect(settings.matte == nil)
+        #expect(abs(white(GridColors.background(for:), dark) - 0.15) < 0.01)
+
+        settings.matte = 0.3
+        settings.effectiveAppearanceDidChange(NSAppearance(named: .vibrantDark)!)
+        #expect(settings.matte == 0.3, "still dark")
+        settings.effectiveAppearanceDidChange(light)
+        #expect(settings.matte == nil)
+        #expect(abs(white(GridColors.background(for:), light) - 0.90) < 0.01)
     }
 
     /// Views on the matte must repaint when the setting changes, not only when the theme does.
