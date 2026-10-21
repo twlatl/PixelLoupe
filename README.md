@@ -489,6 +489,10 @@ The `sidebar.right` toolbar button shows or hides the Library's right sidebar, f
     (the original files are never changed) and are undoable; Metadata Status shows "Has been changed".
   - **Target Photo / Selected Photos:** edit just the first selected photo, or all of them. Values that differ
     between the selected photos show ‹mixed›.
+  - **GPS** sets the photo's location in the catalog: type the shown form (`37°46′29.7″ N 122°25′9.9″ W`) or
+    decimal degrees (`37.7749, -122.4194`); clear it to remove the location even if the camera recorded one. Smart
+    collections' Has GPS and the Library Filter's GPS Data follow it. Catalogs from before this read their photos'
+    locations in the background after opening.
   - **Preset:** save the target photo's filled-in fields as a preset and apply it to other photos.
   - The arrow buttons show a photo's folder in the Library, reveal the file in the Finder, or show its GPS location
     in Maps.

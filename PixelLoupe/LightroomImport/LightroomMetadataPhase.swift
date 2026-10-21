@@ -65,6 +65,11 @@ nonisolated final class LightroomMetadataPhase: LightroomImportPhase {
                 if let copyright = candidate.values[.copyright] { photo.copyrightText = copyright }
                 if metadata != before {
                     photo.metadata = metadata
+                    // Lightroom's location at full precision, not the shown text's tenth of a second.
+                    if photo.locationKind == .set, let coordinate = candidate.coordinate,
+                       let location = GPSCoordinate(latitude: coordinate.latitude, longitude: coordinate.longitude) {
+                        photo.setLocationOverride(.set, location)
+                    }
                     changed += 1
                 }
             }

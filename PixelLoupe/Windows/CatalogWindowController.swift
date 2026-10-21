@@ -74,6 +74,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         modeSelection.onSelect = { [weak self] mode in self?.switchTo(mode) }
         store.availability.start()
         store.thumbnailMaintenance.start()
+        store.locationBackfill.start()
         store.smartPreviewBuilder.onProgress = { [weak self] progress in self?.state.smartPreviewStatus = progress }
         store.smartPreviewBuilder.start()
         Task { [store] in await store.smartPreviews.load() }
@@ -145,6 +146,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         saveSelection()
         store.availability.stop()
         store.thumbnailMaintenance.stop()
+        store.locationBackfill.stop()
         store.smartPreviewBuilder.stop()
         store.externalEdits.stop()
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }

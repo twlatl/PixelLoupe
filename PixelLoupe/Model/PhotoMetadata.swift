@@ -32,9 +32,38 @@ nonisolated struct PhotoMetadata: Codable, Equatable, Sendable {
 
 nonisolated extension Photo {
     /// Metadata entered in PixelLoupe (see `PhotoMetadata`).
+    ///
+    /// The GPS field isn't stored with the rest: it's the photo's location override (model v16), shown
+    /// as text: the location, or empty when it's been removed. Setting the field sets the override
+    /// (empty removes the location; leaving it out goes back to the file's). Text that isn't a
+    /// location, and GPS text stored before v16 that ``LocationBackfill`` hasn't converted yet, stay
+    /// in the JSON.
     var metadata: PhotoMetadata {
-        get { PhotoMetadata(data: metadataData) }
+        get {
+            var metadata = PhotoMetadata(data: metadataData)
+            switch locationKind {
+            case .set: metadata[.gps] = overrideLocation?.formatted
+            case .cleared: metadata[.gps] = ""
+            case .file: break
+            }
+            return metadata
+        }
         set {
+            var newValue = newValue
+            if let gps = newValue[.gps] {
+                if gps.isEmpty {
+                    setLocationOverride(.cleared)
+                    newValue[.gps] = nil
+                } else if gps == overrideLocation?.formatted {
+                    // Unchanged: keep the override's full precision rather than the shown text's.
+                    newValue[.gps] = nil
+                } else if let coordinate = GPSCoordinate(parsing: gps) {
+                    setLocationOverride(.set, coordinate)
+                    newValue[.gps] = nil
+                }
+            } else if locationKind != .file {
+                setLocationOverride(.file)
+            }
             let data = newValue.encoded
             if data != metadataData { metadataData = data }
             // What searches look at follows what is shown.

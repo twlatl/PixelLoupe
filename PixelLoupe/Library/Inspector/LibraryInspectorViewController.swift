@@ -464,6 +464,12 @@ final class LibraryInspectorViewController: NSViewController {
             updateMetadata()
             return
         }
+        // GPS is the photo's location: text that isn't one can't be stored (empty removes it).
+        if id == .gps, !value.trimmingCharacters(in: .whitespaces).isEmpty, GPSCoordinate(parsing: value) == nil {
+            NSSound.beep()
+            updateMetadata()
+            return
+        }
         // Only photos whose shown value changes.
         let changing = editing.photos(targets).filter { photo in
             MetadataValues(info: .init(photo: photo), file: fileMetadata[photo.objectID] ?? FileMetadata()).value(id) != value
@@ -500,7 +506,11 @@ final class LibraryInspectorViewController: NSViewController {
         case .revealInFinder:
             NSWorkspace.shared.activateFileViewerSelecting([photo.fileURL])
         case .openMap:
-            guard let coordinate = fileMetadata[photo.objectID]?.coordinate,
+            // The catalog's location; the file's while it hasn't been read into the catalog yet.
+            let location = photo.locationRead || photo.locationKind != .file
+                ? photo.location.map { (latitude: $0.latitude, longitude: $0.longitude) }
+                : fileMetadata[photo.objectID]?.coordinate
+            guard let coordinate = location,
                   let url = URL(string: "maps://?ll=\(coordinate.latitude),\(coordinate.longitude)&q=\(photo.fileName.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")")
             else { NSSound.beep(); return }
             NSWorkspace.shared.open(url)

@@ -195,7 +195,7 @@ extension PhotoEditing {
             photo.focalLength = source.focalLength
             photo.aperture = source.aperture
             photo.shutterSpeed = source.shutterSpeed
-            photo.hasGPS = source.hasGPS
+            photo.copyLocation(from: source)
             photo.metadataData = source.metadataData
             photo.titleText = source.titleText
             photo.captionText = source.captionText

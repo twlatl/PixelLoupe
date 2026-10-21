@@ -44,7 +44,8 @@ enum Fixtures {
         make: String? = "Canon",
         model: String? = "EOS R5",
         lens: String? = "RF24-70mm F2.8 L IS USM",
-        keywords: [String] = []
+        keywords: [String] = [],
+        gps: (latitude: Double, longitude: Double, altitude: Double?)? = nil
     ) throws -> URL {
         let context = CGContext(
             data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
@@ -68,6 +69,17 @@ enum Fixtures {
         ]
         if !keywords.isEmpty {
             properties[kCGImagePropertyIPTCDictionary] = [kCGImagePropertyIPTCKeywords: keywords]
+        }
+        if let gps {
+            var dictionary: [CFString: Any] = [
+                kCGImagePropertyGPSLatitude: abs(gps.latitude), kCGImagePropertyGPSLatitudeRef: gps.latitude < 0 ? "S" : "N",
+                kCGImagePropertyGPSLongitude: abs(gps.longitude), kCGImagePropertyGPSLongitudeRef: gps.longitude < 0 ? "W" : "E",
+            ]
+            if let altitude = gps.altitude {
+                dictionary[kCGImagePropertyGPSAltitude] = abs(altitude)
+                dictionary[kCGImagePropertyGPSAltitudeRef] = altitude < 0 ? 1 : 0
+            }
+            properties[kCGImagePropertyGPSDictionary] = dictionary
         }
 
         let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil)!

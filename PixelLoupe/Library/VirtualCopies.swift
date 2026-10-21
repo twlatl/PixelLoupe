@@ -84,7 +84,7 @@ nonisolated extension Photo {
         focalLength = source.focalLength
         aperture = source.aperture
         shutterSpeed = source.shutterSpeed
-        hasGPS = source.hasGPS
+        copyLocation(from: source)
         isCropped = source.isCropped
         isBlackAndWhite = source.isBlackAndWhite
         titleText = source.titleText

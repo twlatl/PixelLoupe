@@ -18,7 +18,11 @@ nonisolated struct ImageMetadata: Equatable, Sendable {
     var focalLength = 0.0
     var aperture = 0.0
     var shutterSpeed = 0.0
-    var hasGPS = false
+    /// Where the photo was taken, from the GPS metadata.
+    var location: GPSCoordinate?
+    /// Metres above sea level (negative below).
+    var altitude: Double?
+    var hasGPS: Bool { location != nil }
     var title: String?
     var caption: String?
     var creator: String?
@@ -62,8 +66,7 @@ nonisolated struct ImageMetadata: Equatable, Sendable {
         focalLength = shooting.focalLength ?? 0
         aperture = shooting.aperture ?? 0
         shutterSpeed = shooting.exposureTime ?? 0
-        let gps = properties[kCGImagePropertyGPSDictionary] as? [CFString: Any] ?? [:]
-        hasGPS = gps[kCGImagePropertyGPSLatitude] != nil && gps[kCGImagePropertyGPSLongitude] != nil
+        (location, altitude) = Self.location(properties)
         title = Self.clean(iptc[kCGImagePropertyIPTCObjectName] as? String)
         caption = Self.clean(iptc[kCGImagePropertyIPTCCaptionAbstract] as? String)
         creator = Self.clean(iptc[kCGImagePropertyIPTCByline] as? String) ?? Self.clean(tiff[kCGImagePropertyTIFFArtist] as? String)
@@ -108,6 +111,19 @@ nonisolated struct ImageMetadata: Equatable, Sendable {
         return (-1...5).contains(rating) && rating != 0 ? rating : nil
     }
 
+    /// The GPS position and altitude, with the signs the reference fields give them.
+    static func location(_ properties: [CFString: Any]) -> (GPSCoordinate?, Double?) {
+        let gps = properties[kCGImagePropertyGPSDictionary] as? [CFString: Any] ?? [:]
+        func number(_ key: CFString) -> Double? { (gps[key] as? NSNumber)?.doubleValue }
+        var coordinate: GPSCoordinate?
+        if let latitude = number(kCGImagePropertyGPSLatitude), let longitude = number(kCGImagePropertyGPSLongitude) {
+            coordinate = GPSCoordinate(latitude: (gps[kCGImagePropertyGPSLatitudeRef] as? String == "S" ? -1 : 1) * latitude,
+                                       longitude: (gps[kCGImagePropertyGPSLongitudeRef] as? String == "W" ? -1 : 1) * longitude)
+        }
+        let below = (gps[kCGImagePropertyGPSAltitudeRef] as? NSNumber)?.intValue == 1
+        return (coordinate, number(kCGImagePropertyGPSAltitude).map { below ? -$0 : $0 })
+    }
+
     private static func clean(_ value: String?) -> String? {
         guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines.union(.controlCharacters)),
               !trimmed.isEmpty else { return nil }
@@ -146,7 +162,8 @@ nonisolated extension ImageMetadata {
         var focalLength = 0.0
         var aperture = 0.0
         var shutterSpeed = 0.0
-        var hasGPS = false
+        var location: GPSCoordinate?
+        var altitude: Double?
         var title: String?
         var caption: String?
         var creator: String?
@@ -155,7 +172,7 @@ nonisolated extension ImageMetadata {
 
     var shooting: Shooting {
         Shooting(
-            iso: iso, focalLength: focalLength, aperture: aperture, shutterSpeed: shutterSpeed, hasGPS: hasGPS,
+            iso: iso, focalLength: focalLength, aperture: aperture, shutterSpeed: shutterSpeed, location: location, altitude: altitude,
             title: title, caption: caption, creator: creator, copyright: copyright)
     }
 }
@@ -167,7 +184,7 @@ nonisolated extension Photo {
         focalLength = shooting.focalLength
         aperture = shooting.aperture
         shutterSpeed = shooting.shutterSpeed
-        hasGPS = shooting.hasGPS
+        setFileLocation(shooting.location, altitude: shooting.altitude)
         titleText = shooting.title
         captionText = shooting.caption
         creatorText = shooting.creator
