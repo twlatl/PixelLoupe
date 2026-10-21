@@ -50,21 +50,111 @@ nonisolated struct LibraryFilter: Equatable, Sendable {
         }
     }
 
-    /// The Attribute mode's criteria: flags, rating and color labels.
+    /// The Attribute mode's criteria, in Lightroom's groups: flag, edit, rating, color label, kind
+    /// and stack. A photo matches a group if it matches any of the group's choices, and must match
+    /// every group that has choices.
     struct Attributes: Equatable, Codable, Sendable {
+        enum EditStatus: String, CaseIterable, Codable, Sendable {
+            case edited, unedited
+
+            var title: String {
+                switch self {
+                case .edited: "Edited"
+                case .unedited: "Unedited"
+                }
+            }
+        }
+
+        enum Kind: String, CaseIterable, Codable, Sendable {
+            /// A photo that isn't a virtual copy or a video (Lightroom's Master Photos).
+            case original
+            case virtualCopy
+            case video
+
+            var title: String {
+                switch self {
+                case .original: "Originals"
+                case .virtualCopy: "Virtual Copies"
+                case .video: "Videos"
+                }
+            }
+        }
+
+        enum StackStatus: String, CaseIterable, Codable, Sendable {
+            case stacked, unstacked
+
+            var title: String {
+                switch self {
+                case .stacked: "Stacked"
+                case .unstacked: "Not Stacked"
+                }
+            }
+        }
+
         /// 1–5, or `nil` for no rating filter.
         var rating: Int?
         var ratingComparison: RatingComparison = .atLeast
         /// Photos with any of these flags are shown. Empty means no flag filter.
         var flags: Set<PhotoFlag> = []
-        /// Photos with any of these color labels are shown (`.none` for unlabelled photos). Empty
-        /// means no label filter.
+        /// Edited photos (with Develop settings), unedited ones, or (empty) either.
+        var editStatus: Set<EditStatus> = []
+        /// Photos with any of these color labels are shown (`.none` for photos with no label at all).
+        /// With `otherLabel`, so are photos with a label that has no color here (a custom Lightroom
+        /// label). Neither set means no label filter.
         var colorLabels: Set<ColorLabel> = []
+        var otherLabel = false
+        /// Photos of any of these kinds are shown. Empty means no kind filter.
+        var kinds: Set<Kind> = []
+        /// Photos in a stack, photos in none, or (empty) either.
+        var stackStatus: Set<StackStatus> = []
 
-        var isEmpty: Bool { rating == nil && flags.isEmpty && colorLabels.isEmpty }
+        init(
+            rating: Int? = nil, ratingComparison: RatingComparison = .atLeast, flags: Set<PhotoFlag> = [],
+            editStatus: Set<EditStatus> = [], colorLabels: Set<ColorLabel> = [], otherLabel: Bool = false,
+            kinds: Set<Kind> = [], stackStatus: Set<StackStatus> = []
+        ) {
+            self.rating = rating
+            self.ratingComparison = ratingComparison
+            self.flags = flags
+            self.editStatus = editStatus
+            self.colorLabels = colorLabels
+            self.otherLabel = otherLabel
+            self.kinds = kinds
+            self.stackStatus = stackStatus
+        }
+
+        init(from decoder: Decoder) throws {
+            // Groups added later are missing from filters saved before them.
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            rating = try container.decodeIfPresent(Int.self, forKey: .rating)
+            ratingComparison = try container.decodeIfPresent(RatingComparison.self, forKey: .ratingComparison) ?? .atLeast
+            flags = try container.decodeIfPresent(Set<PhotoFlag>.self, forKey: .flags) ?? []
+            editStatus = try container.decodeIfPresent(Set<EditStatus>.self, forKey: .editStatus) ?? []
+            colorLabels = try container.decodeIfPresent(Set<ColorLabel>.self, forKey: .colorLabels) ?? []
+            otherLabel = try container.decodeIfPresent(Bool.self, forKey: .otherLabel) ?? false
+            kinds = try container.decodeIfPresent(Set<Kind>.self, forKey: .kinds) ?? []
+            stackStatus = try container.decodeIfPresent(Set<StackStatus>.self, forKey: .stackStatus) ?? []
+        }
+
+        var isEmpty: Bool {
+            rating == nil && flags.isEmpty && editStatus.isEmpty && colorLabels.isEmpty && !otherLabel
+                && kinds.isEmpty && stackStatus.isEmpty
+        }
 
         fileprivate var predicates: [NSPredicate] {
             var predicates: [NSPredicate] = []
+            if !flags.isEmpty {
+                predicates.append(NSPredicate(format: "flag IN %@", flags.map { NSNumber(value: $0.rawValue) }))
+            }
+            if !editStatus.isEmpty {
+                predicates.append(anyOf(EditStatus.allCases.filter(editStatus.contains).map {
+                    switch $0 {
+                    // The same test as the smart-collection rule "Has Adjustments".
+                    case .edited: NSPredicate(format: "adjustmentsData != nil")
+                    case .unedited: NSPredicate(format: "adjustmentsData == nil")
+                    }
+                }))
+            }
             if let rating {
                 let format = switch ratingComparison {
                 case .atLeast: "rating >= %d"
@@ -73,13 +163,43 @@ nonisolated struct LibraryFilter: Equatable, Sendable {
                 }
                 predicates.append(NSPredicate(format: format, rating))
             }
-            if !flags.isEmpty {
-                predicates.append(NSPredicate(format: "flag IN %@", flags.map { NSNumber(value: $0.rawValue) }))
+            if !colorLabels.isEmpty || otherLabel {
+                var labels: [NSPredicate] = []
+                let colors = colorLabels.subtracting([.none])
+                if !colors.isEmpty {
+                    labels.append(NSPredicate(format: "colorLabel IN %@", colors.map { NSNumber(value: $0.rawValue) }))
+                }
+                // A custom label has no color, so "no label" is no color and no label text.
+                if colorLabels.contains(.none) {
+                    labels.append(NSPredicate(format: "colorLabel == 0 AND labelText == nil"))
+                }
+                if otherLabel {
+                    labels.append(NSPredicate(format: "colorLabel == 0 AND labelText != nil"))
+                }
+                predicates.append(anyOf(labels))
             }
-            if !colorLabels.isEmpty {
-                predicates.append(NSPredicate(format: "colorLabel IN %@", colorLabels.map { NSNumber(value: $0.rawValue) }))
+            if !kinds.isEmpty {
+                predicates.append(anyOf(Kind.allCases.filter(kinds.contains).map {
+                    switch $0 {
+                    case .original: NSPredicate(format: "master == nil AND isVideo == NO")
+                    case .virtualCopy: NSPredicate(format: "master != nil")
+                    case .video: NSPredicate(format: "isVideo == YES")
+                    }
+                }))
+            }
+            if !stackStatus.isEmpty {
+                predicates.append(anyOf(StackStatus.allCases.filter(stackStatus.contains).map {
+                    switch $0 {
+                    case .stacked: NSPredicate(format: "stack != nil")
+                    case .unstacked: NSPredicate(format: "stack == nil")
+                    }
+                }))
             }
             return predicates
+        }
+
+        private func anyOf(_ predicates: [NSPredicate]) -> NSPredicate {
+            predicates.count == 1 ? predicates[0] : NSCompoundPredicate(orPredicateWithSubpredicates: predicates)
         }
     }
 

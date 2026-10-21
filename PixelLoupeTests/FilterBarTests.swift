@@ -226,6 +226,28 @@ struct FilterBarWindowTests {
         #expect(state.filter.modes == [.text, .attribute, .metadata], "the mode stays on")
     }
 
+    @Test func theAttributeRowsTogglesSetItsGroups() throws {
+        let controller = CatalogWindowController(store: try CatalogStore.open(at: packageURL))
+        defer { controller.close() }
+        controller.showWindow(nil)
+        let state = controller.state
+        let window = controller.window
+        state.filter.modes = [.attribute]
+        for identifier in ["editFilter.edited", "kindFilter.video", "stackFilter.unstacked", "labelFilter.Other", "filterBar.flagFilter.Picked"] {
+            try #require(view(identifier, in: window) as? NSButton).performClick(nil)
+        }
+        #expect(state.filter.attributes == .init(
+            flags: [.picked], editStatus: [.edited], otherLabel: true, kinds: [.video], stackStatus: [.unstacked]
+        ))
+        #expect(state.photoCount == 0)
+        try #require(view("kindFilter.video", in: window) as? NSButton).performClick(nil)
+        #expect(state.filter.attributes.kinds.isEmpty, "a second click turns it off")
+
+        // The filmstrip's filters are the same criteria.
+        let filmstripLabel = try #require(view("filmstrip.labelFilter.Other", in: window) as? NSButton)
+        #expect(filmstripLabel.state == .on)
+    }
+
     @Test func commandFShowsTheTextModeAndFocusesIt() throws {
         let controller = CatalogWindowController(store: try CatalogStore.open(at: packageURL))
         defer { controller.close() }

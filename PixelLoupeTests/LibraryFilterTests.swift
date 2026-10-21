@@ -148,6 +148,89 @@ struct LibraryFilterTests {
         #expect(try names(filter) == ["a.CR3", "b.NEF", "c.jpg", "d.ARW"])
     }
 
+    /// a.CR3 is edited, labelled red and stacked with b.NEF; c.jpg has a custom Lightroom label;
+    /// d.ARW is a video; e.CR3 is a virtual copy of a.CR3.
+    private func addAttributes() throws {
+        let context = store.viewContext
+        let photos = Dictionary(uniqueKeysWithValues: try context.fetch(Photo.fetchRequest()).map { ($0.fileName, $0) })
+        let a = try #require(photos["a.CR3"]), b = try #require(photos["b.NEF"])
+        a.adjustmentsData = Data([1])
+        a.label = .red
+        try #require(photos["c.jpg"]).labelText = "Approved"
+        try #require(photos["d.ARW"]).isVideo = true
+        let stack = PhotoStack(context: context)
+        a.stack = stack
+        b.stack = stack
+        stack.renumber([a, b])
+        insert("e.CR3", rating: 0, flag: .unflagged, camera: ("Canon", "EOS R5"), lens: nil,
+               folder: try #require(a.folder), tags: [], day: 5)
+        let copy = try #require(try context.fetch(Photo.fetchRequest()).first { $0.fileName == "e.CR3" })
+        copy.master = a
+        try context.save()
+    }
+
+    @Test(arguments: [
+        ([LibraryFilter.Attributes.EditStatus.edited], ["a.CR3"]),
+        ([.unedited], ["b.NEF", "c.jpg", "d.ARW", "e.CR3"]),
+        ([.edited, .unedited], ["b.NEF", "c.jpg", "a.CR3", "d.ARW", "e.CR3"]),
+    ])
+    func editFilter(status: [LibraryFilter.Attributes.EditStatus], expected: [String]) throws {
+        try addAttributes()
+        var filter = LibraryFilter()
+        filter.attributes.editStatus = Set(status)
+        #expect(try names(filter) == expected)
+    }
+
+    @Test func otherLabelIsALabelWithNoColor() throws {
+        try addAttributes()
+        var filter = LibraryFilter()
+        filter.attributes.otherLabel = true
+        #expect(try names(filter) == ["c.jpg"])
+        filter.attributes.colorLabels = [.red]
+        #expect(try names(filter) == ["c.jpg", "a.CR3"])
+        filter.attributes = .init(colorLabels: [.none])
+        #expect(try names(filter) == ["b.NEF", "d.ARW", "e.CR3"], "a custom label isn't \"no label\"")
+    }
+
+    @Test(arguments: [
+        ([LibraryFilter.Attributes.Kind.original], ["b.NEF", "c.jpg", "a.CR3"]),
+        ([.virtualCopy], ["e.CR3"]),
+        ([.video], ["d.ARW"]),
+        ([.virtualCopy, .video], ["d.ARW", "e.CR3"]),
+    ])
+    func kindFilter(kinds: [LibraryFilter.Attributes.Kind], expected: [String]) throws {
+        try addAttributes()
+        var filter = LibraryFilter()
+        filter.attributes.kinds = Set(kinds)
+        #expect(try names(filter) == expected)
+    }
+
+    @Test func stackFilter() throws {
+        try addAttributes()
+        var filter = LibraryFilter()
+        filter.attributes.stackStatus = [.stacked]
+        #expect(try names(filter) == ["b.NEF", "a.CR3"])
+        filter.attributes.stackStatus = [.unstacked]
+        #expect(try names(filter) == ["c.jpg", "d.ARW", "e.CR3"])
+    }
+
+    @Test func attributeGroupsCombine() throws {
+        try addAttributes()
+        var filter = LibraryFilter()
+        filter.attributes.flags = [.unflagged]
+        filter.attributes.kinds = [.original, .virtualCopy]
+        filter.attributes.stackStatus = [.unstacked]
+        #expect(try names(filter) == ["e.CR3"], "a photo must match every group")
+        filter.attributes.kinds = []
+        #expect(try names(filter) == ["d.ARW", "e.CR3"])
+    }
+
+    @Test func attributesSavedBeforeTheNewGroupsStillLoad() throws {
+        let data = try PropertyListEncoder().encode(["rating": 3])
+        let attributes = try PropertyListDecoder().decode(LibraryFilter.Attributes.self, from: data)
+        #expect(attributes == .init(rating: 3))
+    }
+
     @Test func combinedFilters() throws {
         var filter = LibraryFilter()
         filter.scope = .folder(path: "/Photos/Home")

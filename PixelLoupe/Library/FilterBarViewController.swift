@@ -111,11 +111,7 @@ final class FilterBarViewController: NSViewController, NSMenuDelegate, NSSearchF
         case .text:
             textRow()
         case .attribute:
-            [
-                label("Flag"), FlagFilterControl(state: state, identifierPrefix: "filterBar."), divider(),
-                label("Rating"), RatingFilterControl(state: state), divider(),
-                label("Color"), ColorLabelFilterControl(state: state),
-            ]
+            attributeRow()
         case .metadata:
             metadataRow()
         }
@@ -146,6 +142,40 @@ final class FilterBarViewController: NSViewController, NSMenuDelegate, NSSearchF
         searchField.setAccessibilityIdentifier("metadataSearch")
         searchField.widthAnchor.constraint(equalToConstant: 260).isActive = true
         return [searchField]
+    }
+
+    /// Lightroom's Attribute groups: Flag, Edit, Rating, Color, Kind, and (PixelLoupe's own) Stack.
+    private func attributeRow() -> [NSView] {
+        typealias Attributes = LibraryFilter.Attributes
+        let edit = AttributeToggleControl(state: state, choices: AttributeToggleControl.choices(
+            Attributes.EditStatus.allCases, \.editStatus, title: { "\($0.title) Photos" },
+            symbol: { $0 == .edited ? "slider.horizontal.3" : "photo" },
+            identifier: { "editFilter.\($0.rawValue)" }
+        ))
+        let kind = AttributeToggleControl(state: state, choices: AttributeToggleControl.choices(
+            Attributes.Kind.allCases, \.kinds, title: \.title,
+            symbol: { kind in
+                switch kind {
+                case .original: "photo.fill"
+                case .virtualCopy: "square.on.square"
+                case .video: "video.fill"
+                }
+            },
+            identifier: { "kindFilter.\($0.rawValue)" }
+        ))
+        let stack = AttributeToggleControl(state: state, choices: AttributeToggleControl.choices(
+            Attributes.StackStatus.allCases, \.stackStatus, title: { "\($0.title) Photos" },
+            symbol: { $0 == .stacked ? "square.stack.3d.up.fill" : "square" },
+            identifier: { "stackFilter.\($0.rawValue)" }
+        ))
+        return [
+            label("Flag"), FlagFilterControl(state: state, identifierPrefix: "filterBar."), divider(),
+            label("Edit"), edit, divider(),
+            label("Rating"), RatingFilterControl(state: state), divider(),
+            label("Color"), ColorLabelFilterControl(state: state), divider(),
+            label("Kind"), kind, divider(),
+            label("Stack"), stack,
+        ]
     }
 
     private func metadataRow() -> [NSView] {

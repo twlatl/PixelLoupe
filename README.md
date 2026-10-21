@@ -339,7 +339,11 @@ The Library Filter bar above the grid works like Lightroom's. Its header chooses
 remove it; the active modes' rows all apply, so a photo must match every one. Each row's × clears that mode.
 
 - **Text** searches camera make, model and lens; every word must match.
-- **Attribute** filters by flag (Picked, Unflagged, Rejected), rating (≥, = or ≤ a number of stars) and color label.
+- **Attribute** has Lightroom's groups: **Flag** (Picked, Unflagged, Rejected), **Edit** (edited photos, which have
+  Develop settings, or unedited ones), **Rating** (≥, = or ≤ a number of stars), **Color** (the five labels, another
+  label such as a custom Lightroom one, or no label), **Kind** (originals, virtual copies, videos) and **Stack**
+  (photos in a stack or not; a collapsed stack still shows only its top photo). A photo matches a group if it matches
+  any of the group's choices that are on, and must match every group that has some.
 - **Metadata** filters by keyword (and the keywords below it).
 
 Turning a mode off (or choosing None) stops it filtering but keeps what it was set to, so turning it back on brings it
