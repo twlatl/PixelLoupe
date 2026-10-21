@@ -54,6 +54,8 @@ nonisolated struct CatalogViewState: Codable, Equatable, Sendable {
     var filterCriteria: LibraryFilter.Criteria?
     /// Whether the Library Filter bar is showing (\ hides it).
     var isFilterBarVisible = true
+    /// The height of the Library Filter's Metadata columns; nil for the default.
+    var metadataBrowserHeight: Double?
 
     /// Selections larger than this (Select All in a big catalog) aren't worth restoring in full.
     static let maximumSavedSelection = 1000
@@ -76,6 +78,7 @@ nonisolated struct CatalogViewState: Codable, Equatable, Sendable {
         // A filter saved by a later version that this one can't read is dropped rather than losing the rest.
         filterCriteria = try? container.decodeIfPresent(LibraryFilter.Criteria.self, forKey: .filterCriteria)
         isFilterBarVisible = try container.decodeIfPresent(Bool.self, forKey: .isFilterBarVisible) ?? true
+        metadataBrowserHeight = try container.decodeIfPresent(Double.self, forKey: .metadataBrowserHeight)
     }
 
     /// Reads the state saved in a catalog package; a missing or unreadable file means the defaults.

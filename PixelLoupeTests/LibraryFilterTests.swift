@@ -88,9 +88,9 @@ struct LibraryFilterTests {
 
     @Test func tagFilterMatchesAnySelectedTag() throws {
         var filter = LibraryFilter()
-        filter.metadata.tags = ["Landscape"]
+        filter.metadata.select(keywords: ["Landscape"])
         #expect(try names(filter) == ["a.CR3", "d.ARW"])
-        filter.metadata.tags = ["Landscape", "Family"]
+        filter.metadata.select(keywords: ["Landscape", "Family"])
         #expect(try names(filter) == ["c.jpg", "a.CR3", "d.ARW"])
     }
 
@@ -285,10 +285,100 @@ struct LibraryFilterTests {
         #expect(attributes == .init(rating: 3))
     }
 
+    // MARK: - Metadata columns
+
+    private func columnValues(_ columns: [LibraryFilter.MetadataBrowser.Column]) throws -> [[MetadataColumn.Value]] {
+        try LibraryFilter.MetadataBrowser.values(for: columns, base: LibraryFilter().scopePredicate, in: store.viewContext)
+    }
+
+    private func metadata(_ columns: [LibraryFilter.MetadataBrowser.Column]) throws -> [String] {
+        var filter = LibraryFilter()
+        filter.metadata = .init(columns: columns)
+        return try names(filter)
+    }
+
+    @Test func columnsCascadeFromLeftToRight() throws {
+        let all = try columnValues([.init(kind: .camera), .init(kind: .lens)])
+        #expect(all[0].map(\.title) == ["EOS R5", "ILCE-7RM5", "iPhone 17 Pro", "Z 8"])
+        #expect(all[0].allSatisfy { $0.count == 1 })
+        #expect(all[1].map(\.title) == ["FE 24-70mm GM II", "NIKKOR Z 50mm", "RF24-70mm", "Unknown Lens"], "unknown last")
+
+        let canon = try columnValues([.init(kind: .camera, selection: ["EOS R5"]), .init(kind: .lens)])
+        #expect(canon[1].map(\.title) == ["RF24-70mm"], "the lens column counts only what the camera leaves")
+        #expect(try metadata([.init(kind: .camera, selection: ["EOS R5", "Z 8"])]) == ["b.NEF", "a.CR3"], "values in a column are OR'd")
+        #expect(try metadata([.init(kind: .camera, selection: ["EOS R5", "Z 8"]), .init(kind: .lens, selection: ["RF24-70mm"])]) == ["a.CR3"])
+        #expect(try metadata([.init(kind: .lens, selection: [""])]) == ["c.jpg"], "Unknown Lens")
+    }
+
+    @Test func keywordColumnCountsEachKeyword() throws {
+        let values = try columnValues([.init(kind: .keyword)])[0]
+        #expect(values.map(\.key) == ["Family", "Landscape"])
+        #expect(values.map(\.count) == [2, 2])
+        #expect(try metadata([.init(kind: .keyword, selection: ["Landscape"])]) == ["a.CR3", "d.ARW"])
+    }
+
+    @Test func dateColumnNestsMonthsAndDays() throws {
+        let years = try columnValues([.init(kind: .date)])[0]
+        #expect(years.count == 1 && years[0].count == 4)
+        let days = years[0].children.flatMap(\.children)
+        #expect(days.map(\.count).reduce(0, +) == 4)
+        // b.NEF was taken on day 1; its day's key finds just it.
+        let captured = Date(timeIntervalSince1970: 86_400)
+        let components = Calendar.current.dateComponents([.year, .month, .day], from: captured)
+        let key = String(format: "%04ld-%02ld-%02ld", components.year!, components.month!, components.day!)
+        #expect(days.contains { $0.key == key })
+        #expect(try metadata([.init(kind: .date, selection: [key])]) == ["b.NEF"])
+        #expect(try metadata([.init(kind: .date, selection: [String(components.year!)])]).count == 4)
+    }
+
+    @Test func aspectRatioFollowsOrientation() throws {
+        let photos = Dictionary(uniqueKeysWithValues: try store.viewContext.fetch(Photo.fetchRequest()).map { ($0.fileName, $0) })
+        for (name, width, height, orientation) in [("a.CR3", 6000, 4000, 1), ("b.NEF", 6000, 4000, 6), ("c.jpg", 3000, 4000, 1), ("d.ARW", 100, 100, 1)] {
+            let photo = try #require(photos[name])
+            photo.pixelWidth = Int32(width)
+            photo.pixelHeight = Int32(height)
+            photo.orientation = Int16(orientation)
+        }
+        try store.viewContext.save()
+        let values = try columnValues([.init(kind: .aspectRatio)])[0]
+        #expect(Dictionary(uniqueKeysWithValues: values.map { ($0.title, $0.count) }) == ["Landscape": 1, "Portrait": 2, "Square": 1])
+        #expect(try metadata([.init(kind: .aspectRatio, selection: ["portrait"])]) == ["b.NEF", "c.jpg"])
+    }
+
+    @Test func aChosenValueTheSourceLacksStillHasARow() throws {
+        var filter = LibraryFilter()
+        filter.scope = .folder(path: "/Photos/Home")
+        let values = try LibraryFilter.MetadataBrowser.values(
+            for: [.init(kind: .camera, selection: ["Z 8"])], base: filter.scopePredicate, in: store.viewContext
+        )[0]
+        #expect(values.last?.title == "Z 8" && values.last?.count == 0)
+    }
+
+    @Test func selectingKeywordsUsesOrAddsAKeywordColumn() {
+        var browser = LibraryFilter.MetadataBrowser()
+        browser.columns[1].selection = ["EOS R5"]
+        browser.select(keywords: ["Family"])
+        #expect(browser.columns.map(\.kind) == [.keyword, .date, .camera, .lens, .label])
+        #expect(browser.columns[0].selection == ["Family"])
+        let othersAreAll = browser.columns.dropFirst().allSatisfy { $0.selection.isEmpty }
+        #expect(othersAreAll, "the other columns go back to All")
+        browser.select(keywords: ["Landscape"])
+        #expect(browser.columns.count == 5 && browser.columns[0].selection == ["Landscape"], "an existing Keyword column is reused")
+
+        var full = LibraryFilter.MetadataBrowser(columns: Array(repeating: .init(kind: .camera), count: 8))
+        full.select(keywords: ["Family"])
+        #expect(full.columns.count == 8 && full.columns[0].kind == .keyword)
+    }
+
+    @Test func metadataSavedWithoutColumnsGetsTheDefaults() throws {
+        let decoded = try PropertyListDecoder().decode(LibraryFilter.MetadataBrowser.self, from: PropertyListEncoder().encode([String: String]()))
+        #expect(decoded.columns.map(\.kind) == [.date, .camera, .lens, .label])
+    }
+
     @Test func combinedFilters() throws {
         var filter = LibraryFilter()
         filter.scope = .folder(path: "/Photos/Home")
-        filter.metadata.tags = ["Family"]
+        filter.metadata.select(keywords: ["Family"])
         filter.attributes.rating = 1
         #expect(try names(filter) == ["c.jpg"])
     }

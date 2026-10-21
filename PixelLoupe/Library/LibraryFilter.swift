@@ -361,22 +361,51 @@ nonisolated struct LibraryFilter: Equatable, Sendable {
         }
     }
 
-    /// The Metadata mode's criteria.
+    /// The Metadata mode's criteria: Lightroom's columns, each listing one kind of metadata (Date,
+    /// Camera, Keyword…) with the values the photos have. Values chosen in a column are OR'd, columns
+    /// are AND'd, and each column lists only what the columns to its left leave (see
+    /// ``MetadataColumn``).
     struct MetadataBrowser: Equatable, Codable, Sendable {
-        /// Photos with any of these keywords, or a keyword below one, are shown. Each is a keyword's
-        /// full path (`Places > Ireland`, which is just the name for a root keyword). Empty means no
-        /// keyword filter.
-        var tags: Set<String> = []
+        struct Column: Equatable, Codable, Sendable {
+            var kind: MetadataColumn
+            /// The chosen values' keys (``MetadataColumn/predicate(forKey:)``); empty is "All".
+            var selection: Set<String> = []
+        }
 
-        var isEmpty: Bool { tags.isEmpty }
+        static let defaultColumns: [MetadataColumn] = [.date, .camera, .lens, .label]
+        static let columnCountRange = 1...8
 
-        fileprivate var predicates: [NSPredicate] {
-            guard !tags.isEmpty else { return [] }
-            // A keyword and everything below it: its own path, or a path that starts with it.
-            return [NSCompoundPredicate(orPredicateWithSubpredicates: tags.sorted().flatMap { path in [
-                NSPredicate(format: "ANY tags.pathKey ==[c] %@", path),
-                NSPredicate(format: "ANY tags.pathKey BEGINSWITH[c] %@", path + Tag.pathSeparator),
-            ] })]
+        var columns: [Column] = MetadataBrowser.defaultColumns.map { Column(kind: $0) }
+
+        init(columns: [Column] = MetadataBrowser.defaultColumns.map { Column(kind: $0) }) {
+            self.columns = columns
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let columns = try container.decodeIfPresent([Column].self, forKey: .columns) ?? []
+            self.columns = columns.isEmpty ? Self.defaultColumns.map { Column(kind: $0) } : columns
+        }
+
+        var isEmpty: Bool { columns.allSatisfy(\.selection.isEmpty) }
+
+        /// What the columns before `index` leave: the cascade's filter for that column.
+        func predicates(before index: Int) -> [NSPredicate] {
+            columns.prefix(index).compactMap(\.predicate)
+        }
+
+        fileprivate var predicates: [NSPredicate] { columns.compactMap(\.predicate) }
+
+        /// Shows photos with these keywords (and those below them): selects them in the first Keyword
+        /// column, adding one at the left if there's none, and resets the other columns to All.
+        mutating func select(keywords: Set<String>) {
+            for index in columns.indices { columns[index].selection = [] }
+            if let index = columns.firstIndex(where: { $0.kind == .keyword }) {
+                columns[index].selection = keywords
+                return
+            }
+            if columns.count == Self.columnCountRange.upperBound { columns.removeFirst() }
+            columns.insert(Column(kind: .keyword, selection: keywords), at: 0)
         }
     }
 
@@ -436,6 +465,13 @@ nonisolated struct LibraryFilter: Equatable, Sendable {
             LightroomImportReport.predicate(forReason: reason)
         }
         return scoped.map { NSCompoundPredicate(andPredicateWithSubpredicates: [hidden, $0]) } ?? hidden
+    }
+
+    /// What the Metadata columns count from: the source and the other active modes' criteria.
+    var metadataBasePredicate: NSPredicate {
+        let predicates = (modes.contains(.text) ? text.predicates : []) + (modes.contains(.attribute) ? attributes.predicates : [])
+        guard !predicates.isEmpty else { return scopePredicate }
+        return NSCompoundPredicate(andPredicateWithSubpredicates: [scopePredicate] + predicates)
     }
 
     /// The active modes' criteria, Text then Attribute then Metadata.

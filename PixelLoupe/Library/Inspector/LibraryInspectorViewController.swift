@@ -330,13 +330,15 @@ final class LibraryInspectorViewController: NSViewController {
         keywordList.updateMembership(for: selectedPhotos)
     }
 
-    /// The arrow beside a keyword's count: shows its photos (and those of keywords below it).
+    /// The arrow beside a keyword's count: shows its photos (and those of keywords below it) in All
+    /// Photographs, chosen in the Library Filter's Keyword column, as in Lightroom.
     func showPhotos(withKeyword pathKey: String) {
         state.presentation = .grid
         var filter = state.filter
         filter.scope = .allPhotos
-        filter.metadata.tags = [pathKey]
+        filter.metadata.select(keywords: [pathKey])
         state.filter = filter
+        state.isFilterBarVisible = true
     }
 
     private func perform(_ command: KeywordListView.Command, on id: NSManagedObjectID?) {

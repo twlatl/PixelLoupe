@@ -146,7 +146,7 @@ struct KeywordTests {
 
         func matches(_ paths: Set<String>) throws -> Int {
             var filter = LibraryFilter()
-            filter.metadata.tags = paths
+            filter.metadata.select(keywords: paths)
             return try count(filter.predicate, in: context)
         }
         #expect(try matches(["Places"]) == 3)
@@ -238,7 +238,7 @@ struct KeywordTests {
         #expect(tag.includeOnExport && tag.includeParents && tag.includeSynonyms && !tag.isPerson)
         // The old keyword filter still works.
         var filter = LibraryFilter()
-        filter.metadata.tags = ["Family"]
+        filter.metadata.select(keywords: ["Family"])
         #expect(try count(filter.predicate, in: store.viewContext) == 1)
     }
 

@@ -22,7 +22,7 @@ struct FilterModeTests {
         filter.attributes.rating = 3
         #expect(filter.modes == [.attribute])
         filter.text.query = "canon"
-        filter.metadata.tags = ["Family"]
+        filter.metadata.select(keywords: ["Family"])
         #expect(filter.modes == [.text, .attribute, .metadata])
 
         // Clearing doesn't turn a mode on, or off.
@@ -68,7 +68,7 @@ struct FilterModeTests {
         criteria.modes = [.attribute, .metadata]
         criteria.attributes = .init(rating: 2, ratingComparison: .atMost, flags: [.rejected], colorLabels: [.red, .none])
         criteria.text.query = "24-70"
-        criteria.metadata.tags = ["Places > Ireland"]
+        criteria.metadata.select(keywords: ["Places > Ireland"])
         state.filterCriteria = criteria
         state.isFilterBarVisible = false
 
@@ -286,6 +286,74 @@ struct FilterBarWindowTests {
         #expect(handled == true)
         #expect(state.filter.text.query.isEmpty && search.stringValue.isEmpty)
         #expect(controller.window?.firstResponder !== editor, "the keyboard goes back to the grid")
+    }
+
+    private func waitFor(_ controller: CatalogWindowController, _ condition: () -> Bool) async throws {
+        for _ in 0..<50 where !condition() {
+            controller.window?.contentView?.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(100))
+        }
+    }
+
+    @Test func metadataColumnsListCountAndFilter() async throws {
+        let controller = CatalogWindowController(store: try CatalogStore.open(at: packageURL))
+        defer { controller.close() }
+        controller.showWindow(nil)
+        let state = controller.state
+        state.filter.metadata = .init(columns: [.init(kind: .rating), .init(kind: .camera)])
+        state.filter.modes = [.metadata]
+        let columns = try #require(controller.window?.contentView?.descendants.compactMap { $0 as? MetadataColumnView })
+        #expect(columns.map(\.kind) == [.rating, .camera])
+        try await waitFor(controller) { columns[0].shownTitles.count > 1 }
+        #expect(columns[0].shownTitles == ["All", "★★★★★", "★★★", "Unrated"])
+        #expect(columns[1].shownTitles == ["All", "Unknown Camera"], "the photos have a make but no model")
+
+        // Choosing rows in a column filters the grid.
+        let outline = try #require(view("metadataColumn.0", in: controller.window) as? NSOutlineView)
+        outline.selectRowIndexes([1, 2], byExtendingSelection: false)
+        #expect(state.filter.metadata.columns[0].selection == ["5", "3"])
+        #expect(state.photoCount == 2)
+        outline.selectRowIndexes([0], byExtendingSelection: false)
+        #expect(state.filter.metadata.columns[0].selection.isEmpty, "All")
+
+        // The header changes the column's kind, adds and removes columns.
+        let header = try #require(view("metadataColumnHeader.1", in: controller.window) as? NSPopUpButton)
+        let menu = try #require(header.menu)
+        menu.performActionForItem(at: menu.indexOfItem(withTitle: "File Type"))
+        #expect(state.filter.metadata.columns.map(\.kind) == [.rating, .fileType])
+        let newHeader = try #require(view("metadataColumnHeader.1", in: controller.window) as? NSPopUpButton)
+        let newMenu = try #require(newHeader.menu)
+        newMenu.performActionForItem(at: newMenu.indexOfItem(withTitle: "Add Column"))
+        #expect(state.filter.metadata.columns.count == 3)
+        newMenu.performActionForItem(at: newMenu.indexOfItem(withTitle: "Remove Column"))
+        #expect(state.filter.metadata.columns.map(\.kind) == [.rating, .date])
+    }
+
+    @Test func theKeywordArrowShowsTheBarWithTheKeywordChosen() throws {
+        let controller = CatalogWindowController(store: try CatalogStore.open(at: packageURL))
+        defer { controller.close() }
+        controller.showWindow(nil)
+        let state = controller.state
+        state.isFilterBarVisible = false
+        state.filter.scope = .folder(path: "/Elsewhere")
+        controller.rootViewController.main.inspector.showPhotos(withKeyword: "Places > Ireland")
+        #expect(state.isFilterBarVisible && state.filter.scope == .allPhotos)
+        #expect(state.filter.modes.contains(.metadata))
+        #expect(state.filter.metadata.columns.first == .init(kind: .keyword, selection: ["Places > Ireland"]))
+    }
+
+    @Test func theMetadataHeightIsSavedWithTheCatalog() throws {
+        do {
+            let controller = CatalogWindowController(store: try CatalogStore.open(at: packageURL))
+            controller.showWindow(nil)
+            controller.state.metadataBrowserHeight = 1000
+            #expect(controller.state.metadataBrowserHeight == LibraryState.metadataBrowserHeightRange.upperBound)
+            controller.state.metadataBrowserHeight = 220
+            controller.close()
+        }
+        let controller = CatalogWindowController(store: try CatalogStore.open(at: packageURL))
+        defer { controller.close() }
+        #expect(controller.state.metadataBrowserHeight == 220)
     }
 
     @Test func theBarAndItsCriteriaAreRestoredWhenTheCatalogReopens() throws {

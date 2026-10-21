@@ -105,7 +105,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
             case .loupe:
                 updateLoupeButton()
             case .presentation: updateFullScreen()
-            case .filter, .filterBar, .selection: scheduleSelectionSave()
+            case .filter, .filterBar, .metadataBrowserHeight, .selection: scheduleSelectionSave()
             default: break
             }
             // Selecting a folder rechecks its files, in case a drive came back or went away.
@@ -174,6 +174,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
     private static func restoreSelection(_ viewState: CatalogViewState, into state: LibraryState, context: NSManagedObjectContext) {
         state.isFilterBarVisible = viewState.isFilterBarVisible
         if let criteria = viewState.filterCriteria { state.filter.criteria = criteria }
+        if let height = viewState.metadataBrowserHeight { state.metadataBrowserHeight = height }
         if let id = viewState.collectionID, let collection = PhotoCollection.with(id: id, in: context) {
             state.filter.scope = .collection(id: id, content: collection.content)
         } else if viewState.showsPreviousImport, let id = Photo.latestImportID(in: context) {
@@ -208,6 +209,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         if case .previousImport = state.filter.scope { viewState.showsPreviousImport = true } else { viewState.showsPreviousImport = false }
         viewState.filterCriteria = state.filter.criteria
         viewState.isFilterBarVisible = state.isFilterBarVisible
+        viewState.metadataBrowserHeight = state.metadataBrowserHeight
         viewState.selectedPhotos = state.selectedPhotoIDs.prefix(CatalogViewState.maximumSavedSelection).compactMap {
             (try? store.viewContext.existingObject(with: $0) as? Photo)?.id
         }

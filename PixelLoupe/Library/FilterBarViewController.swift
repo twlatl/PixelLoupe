@@ -5,7 +5,7 @@ import CoreData
 /// Metadata or None), then a row of criteria for each active mode. Click a mode to show just it,
 /// Shift-click to add or remove it; the active modes' criteria all apply. \ hides the bar without
 /// clearing it.
-final class FilterBarViewController: NSViewController, NSMenuDelegate, NSSearchFieldDelegate {
+final class FilterBarViewController: NSViewController, NSSearchFieldDelegate {
     private let store: CatalogStore
     private let state: LibraryState
 
@@ -16,7 +16,7 @@ final class FilterBarViewController: NSViewController, NSMenuDelegate, NSSearchF
     /// The Attribute groups in two halves, side by side or (in a narrow grid) one above the other.
     private let attributeHalves = NSStackView()
 
-    private let tagsPopUp = NSPopUpButton(frame: .zero, pullsDown: true)
+    private lazy var metadataBrowser = MetadataBrowserView(store: store, state: state)
     private let searchField = ClickToFocusSearchField()
     private let textFieldPopUp = NSPopUpButton()
     private let textRulePopUp = NSPopUpButton()
@@ -134,8 +134,10 @@ final class FilterBarViewController: NSViewController, NSMenuDelegate, NSSearchF
         case .metadata:
             metadataRow()
         }
+        // The Metadata columns fill the row; the other rows' controls sit at its left.
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        spacer.isHidden = mode == .metadata
 
         let clear = NSButton(image: NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: nil)!,
                              target: self, action: #selector(clearMode(_:)))
@@ -151,6 +153,7 @@ final class FilterBarViewController: NSViewController, NSMenuDelegate, NSSearchF
         row.edgeInsets = NSEdgeInsets(top: 4, left: 12, bottom: 4, right: 12)
         // A row wider than the grid (Attribute in a narrow window) clips rather than widening the window.
         row.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        if mode == .metadata { row.alignment = .top }
         row.setAccessibilityIdentifier("filterRow.\(mode.rawValue)")
         return row
     }
@@ -223,12 +226,7 @@ final class FilterBarViewController: NSViewController, NSMenuDelegate, NSSearchF
     }
 
     private func metadataRow() -> [NSView] {
-        tagsPopUp.controlSize = .small
-        tagsPopUp.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        tagsPopUp.menu?.delegate = self
-        tagsPopUp.setAccessibilityIdentifier("tagFilter")
-        tagsPopUp.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
-        return [label("Keyword"), tagsPopUp]
+        [metadataBrowser]
     }
 
     private func label(_ string: String, emphasized: Bool = false) -> NSTextField {
@@ -253,24 +251,12 @@ final class FilterBarViewController: NSViewController, NSMenuDelegate, NSSearchF
         for (mode, row) in rows {
             row.isHidden = !filter.modes.contains(mode)
         }
-        updateTagsTitle()
         textFieldPopUp.selectItem(at: LibraryFilter.TextSearch.Field.allCases.firstIndex(of: filter.text.field) ?? 0)
         textRulePopUp.selectItem(at: LibraryFilter.TextSearch.Rule.allCases.firstIndex(of: filter.text.rule) ?? 0)
         // Leave the field alone while a typed search is waiting to apply.
         if pendingSearch == nil, searchField.stringValue != filter.text.query {
             searchField.stringValue = filter.text.query
         }
-    }
-
-    private func updateTagsTitle() {
-        let tags = state.filter.metadata.tags
-        let title = switch tags.count {
-        case 0: "Any"
-        case 1: tags.first!.components(separatedBy: Tag.pathSeparator).last ?? tags.first!
-        default: "\(tags.count) tags"
-        }
-        tagsPopUp.removeAllItems()
-        tagsPopUp.addItem(withTitle: title)
     }
 
     // MARK: - Actions
@@ -331,60 +317,6 @@ final class FilterBarViewController: NSViewController, NSMenuDelegate, NSSearchF
         applySearch()
         onEndSearch?()
         return true
-    }
-
-    @objc private func toggleTag(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String else { return }
-        if state.filter.metadata.tags.contains(name) {
-            state.filter.metadata.tags.remove(name)
-        } else {
-            state.filter.metadata.tags.insert(name)
-        }
-    }
-
-    @objc private func clearTags(_ sender: Any?) {
-        state.filter.metadata.tags = []
-    }
-
-    // MARK: - NSMenuDelegate
-
-    /// Rebuilds the tag list each time the menu opens so it reflects newly imported keywords.
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        let title = menu.items.first?.title ?? "Any"
-        menu.removeAllItems()
-        // Pull-down menus use the first item as the button title.
-        menu.addItem(withTitle: title, action: nil, keyEquivalent: "")
-
-        // Keywords that have photos, and their parents (a parent matches everything below it).
-        let request = Tag.fetchRequest()
-        request.predicate = NSPredicate(format: "photos.@count > 0")
-        var included = Set<Tag>()
-        for tag in (try? store.viewContext.fetch(request)) ?? [] {
-            var current: Tag? = tag
-            while let tag = current, included.insert(tag).inserted { current = tag.parent }
-        }
-        let tags = included.sorted { $0.pathKey.localizedStandardCompare($1.pathKey) == .orderedAscending }
-
-        if tags.isEmpty {
-            let empty = NSMenuItem(title: "No Tags", action: nil, keyEquivalent: "")
-            empty.isEnabled = false
-            menu.addItem(empty)
-            return
-        }
-        let clear = NSMenuItem(title: "Any Tag", action: #selector(clearTags(_:)), keyEquivalent: "")
-        clear.target = self
-        clear.state = state.filter.metadata.tags.isEmpty ? .on : .off
-        menu.addItem(clear)
-        menu.addItem(.separator())
-        for tag in tags {
-            let item = NSMenuItem(title: tag.name, action: #selector(toggleTag(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = tag.pathKey
-            item.indentationLevel = tag.pathComponents.count - 1
-            item.toolTip = tag.displayPath
-            item.state = state.filter.metadata.tags.contains(tag.pathKey) ? .on : .off
-            menu.addItem(item)
-        }
     }
 }
 

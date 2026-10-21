@@ -44,6 +44,8 @@ final class LibraryState {
         case filter
         /// The Library Filter bar was shown or hidden (\).
         case filterBar
+        /// The Library Filter's Metadata columns were resized.
+        case metadataBrowserHeight
         case selection
         case thumbnailSize
         case mode
@@ -156,6 +158,18 @@ final class LibraryState {
     /// filters, as in Lightroom; the filmstrip says when photos are filtered out.
     var isFilterBarVisible = true {
         didSet { if isFilterBarVisible != oldValue { notify(.filterBar) } }
+    }
+
+    static let metadataBrowserHeightRange: ClosedRange<Double> = 80...480
+
+    /// The height of the Library Filter's Metadata columns (drag their bottom edge), saved with the
+    /// catalog. Not part of the filter, so resizing doesn't refetch the grid.
+    var metadataBrowserHeight: Double = 160 {
+        didSet {
+            let clamped = metadataBrowserHeight.clamped(to: Self.metadataBrowserHeightRange)
+            if clamped != metadataBrowserHeight { metadataBrowserHeight = clamped; return }
+            if metadataBrowserHeight != oldValue { notify(.metadataBrowserHeight) }
+        }
     }
 
     /// Number of photos currently shown in the grid.

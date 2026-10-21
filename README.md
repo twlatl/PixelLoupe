@@ -351,7 +351,14 @@ remove it; the active modes' rows all apply, so a photo must match every one. Ea
   label such as a custom Lightroom one, or no label), **Kind** (originals, virtual copies, videos) and **Stack**
   (photos in a stack or not; a collapsed stack still shows only its top photo). A photo matches a group if it matches
   any of the group's choices that are on, and must match every group that has some.
-- **Metadata** filters by keyword (and the keywords below it).
+- **Metadata** shows columns of metadata, Date, Camera, Lens and Label to start, each listing the values the photos
+  have with how many have each. Click a value to show its photos, `⌘`-click to add more, or **All** to clear the
+  column; each column lists only what the columns to its left leave, and the photos must match every column. The
+  Date column opens into months and days. A column's header changes what it shows: Date, File Type, Keyword, Label,
+  Flag, Rating, Camera, Lens, Focal Length, Shutter Speed, Aperture, ISO Speed, GPS Data, Treatment (color or black &
+  white), Aspect Ratio, Creator, Copyright or Folder. It also adds a column (up to eight) or removes one. Drag the
+  bottom edge to make the columns taller. The keyword list's arrow shows a keyword's photos (and those below it) by
+  choosing it in a Keyword column.
 
 Turning a mode off (or choosing None) stops it filtering but keeps what it was set to, so turning it back on brings it
 back. The filter stays as you move between folders and collections, and the bar, its modes and their criteria are
