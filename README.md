@@ -195,11 +195,18 @@ Corrections and History tools (Crop, Masking and Spot Removal use clicks themsel
 except Crop, which always shows the whole photo). Zoomed in with Spot Removal, the pointer is a hand too: drag off the spots
 to move around, and click to place one. Zoomed views render only the part on screen, at full resolution.
 
+## Appearance
+
+**Settings ▸ Appearance ▸ Appearance** follows the system or sets Light, Gray or Dark. **Gray** is Aperture's look, in
+between the other two: Light Mode's controls and text on mid-gray panels, toolbar and sidebars, with a black matte
+behind photos. Choosing a theme (or macOS switching between Light and Dark) puts **Matte Color** back to the theme's own:
+10% in Light, black in Gray, 85% in Dark. Move the slider to change it from there.
+
 ## Monochrome Mode
 
 **Settings ▸ Appearance ▸ Monochrome Mode** (off by default) replaces the accent color on sliders, buttons, icons
 (including the sidebar's folder, catalog and collection icons) and selection highlights with dark gray in Dark Mode
-and black (#000000) in Light Mode, so nothing in the interface competes with the
+and black (#000000) in Light Mode and Gray, so nothing in the interface competes with the
 colors in your photos. Colors that carry meaning (color labels, the rejected flag, curve channels) stay as they are.
 Checkboxes, switches and focus rings have no color of their own to change; Monochrome Mode sets PixelLoupe's system
 accent to Graphite for those (macOS's gray, the closest it offers), which macOS applies the next time PixelLoupe opens.

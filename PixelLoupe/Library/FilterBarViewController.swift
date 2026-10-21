@@ -485,16 +485,32 @@ final class FilterBarBackground: NSView {
         needsDisplay = true
     }
 
+    // Light and Gray share an appearance, so switching between them only shows up as a setting change.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        NotificationCenter.default.removeObserver(self, name: AppSettings.didChangeNotification, object: nil)
+        guard window != nil else { return }
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(settingsDidChange(_:)), name: AppSettings.didChangeNotification, object: nil)
+    }
+
+    @objc private func settingsDidChange(_ notification: Notification) {
+        needsDisplay = true
+    }
+
     typealias Stop = (location: CGFloat, color: (r: CGFloat, g: CGFloat, b: CGFloat))
 
-    /// From the top of the bar down. Light mode holds a warm gray for the top half, then lightens.
+    /// From the top of the bar down. Light mode holds a warm gray for the top half, then lightens; Gray
+    /// sits a shade darker than its chrome, as Aperture's bars did.
     static func stops(for appearance: NSAppearance) -> [Stop] {
         func rgb(_ hex: UInt32) -> (r: CGFloat, g: CGFloat, b: CGFloat) {
             (CGFloat(hex >> 16 & 0xFF) / 255, CGFloat(hex >> 8 & 0xFF) / 255, CGFloat(hex & 0xFF) / 255)
         }
-        return appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? [(0, rgb(0x393939)), (1, rgb(0x4A4A4A))]
-            : [(0, rgb(0xD3D0D1)), (0.48, rgb(0xD3D1D2)), (1, rgb(0xF1F1F1))]
+        return switch AppSettings.theme(for: appearance) {
+        case .dark: [(0, rgb(0x393939)), (1, rgb(0x4A4A4A))]
+        case .gray: [(0, rgb(0xAFAFAF)), (1, rgb(0xBEBEBE))]
+        default: [(0, rgb(0xD3D0D1)), (0.48, rgb(0xD3D1D2)), (1, rgb(0xF1F1F1))]
+        }
     }
 }
 

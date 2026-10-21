@@ -9,8 +9,10 @@ final class AppSettings {
 
     static let didChangeNotification = Notification.Name("AppSettingsDidChange")
 
-    enum Appearance: String, CaseIterable, Identifiable {
-        case system, light, dark
+    /// Gray is Aperture's look, between Light and Dark: Light Mode's controls and text on mid-gray
+    /// chrome (see ``GrayChrome``), with a black matte.
+    nonisolated enum Appearance: String, CaseIterable, Identifiable {
+        case system, light, gray, dark
 
         var id: Self { self }
 
@@ -18,12 +20,13 @@ final class AppSettings {
             switch self {
             case .system: "System"
             case .light: "Light"
+            case .gray: "Gray"
             case .dark: "Dark"
             }
         }
     }
 
-    private static let appearanceKey = "Appearance"
+    nonisolated private static let appearanceKey = "Appearance"
     nonisolated private static let matteKey = "MatteColor"
     nonisolated private static let separateJPEGsKey = "TreatJPEGsAsSeparate"
     private static let monochromeKey = "MonochromeMode"
@@ -40,15 +43,27 @@ final class AppSettings {
         }
     }
 
-    /// The theme's matte when `matte` is `nil`: 10% in Light Mode, 85% in Dark Mode.
+    /// The theme's matte when `matte` is `nil`: 10% in Light Mode, 85% in Dark Mode, black in Gray.
     nonisolated static let lightMatte = 0.10
     nonisolated static let darkMatte = 0.85
+    nonisolated static let grayMatte = 1.0
 
     nonisolated static func themeMatte(for appearance: NSAppearance) -> Double {
-        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? darkMatte : lightMatte
+        switch theme(for: appearance) {
+        case .gray: grayMatte
+        case .dark: darkMatte
+        default: lightMatte
+        }
     }
 
-    /// Matte behind photos: 0 is white, 1 is black. `nil` follows the light/dark theme.
+    /// The theme the app shows in `appearance`: Light, Gray or Dark (never System). Gray whatever
+    /// `appearance` is: views on Gray's black matte are dark (see ``GridColors/contentAppearance()``).
+    nonisolated static func theme(for appearance: NSAppearance) -> Appearance {
+        if storedAppearance() == .gray { return .gray }
+        return appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light
+    }
+
+    /// Matte behind photos: 0 is white, 1 is black. `nil` follows the theme.
     var matte: Double? {
         didSet {
             if let matte {
@@ -115,7 +130,7 @@ final class AppSettings {
         confirmsQuit = Defaults.store.object(forKey: Self.confirmQuitKey) as? Bool ?? true
         treatJPEGsAsSeparate = Self.treatsJPEGsAsSeparate
         opensImportOnCardInsert = Defaults.store.bool(forKey: Self.importOnCardKey)
-        appearance = Defaults.store.string(forKey: Self.appearanceKey).flatMap(Appearance.init) ?? .system
+        appearance = Self.storedAppearance()
         matte = Self.storedMatte()
         isMonochrome = Defaults.store.bool(forKey: Self.monochromeKey)
     }
@@ -125,32 +140,40 @@ final class AppSettings {
         Defaults.store.object(forKey: matteKey) as? Double
     }
 
-    /// Whether the app last looked dark, to tell a light/dark switch from other appearance changes.
-    private var isDark: Bool?
+    /// The Appearance setting, readable from any thread.
+    nonisolated static func storedAppearance() -> Appearance {
+        Defaults.store.string(forKey: appearanceKey).flatMap(Appearance.init) ?? .system
+    }
+
+    /// The theme the app last showed, to tell a switch between themes from other appearance changes.
+    private var theme: Appearance?
     private var appearanceObservation: NSKeyValueObservation?
 
-    /// Puts Matte Color back to the theme's each time the app switches between Light and Dark,
+    /// Puts Matte Color back to the theme's each time the app switches between Light, Gray and Dark,
     /// whether from the Appearance setting or from macOS.
     func startFollowingAppearance() {
-        isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        theme = Self.theme(for: NSApp.effectiveAppearance)
         appearanceObservation = NSApp.observe(\.effectiveAppearance) { [weak self] app, _ in
             MainActor.assumeIsolated { self?.effectiveAppearanceDidChange(app.effectiveAppearance) }
         }
     }
 
     func effectiveAppearanceDidChange(_ appearance: NSAppearance) {
-        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        defer { isDark = dark }
-        guard let isDark, isDark != dark, matte != nil else { return }
+        let new = Self.theme(for: appearance)
+        defer { theme = new }
+        guard let theme, theme != new, matte != nil else { return }
         matte = nil
     }
 
     func applyAppearance() {
         NSApp.appearance = switch appearance {
         case .system: nil
-        case .light: NSAppearance(named: .aqua)
+        case .light, .gray: NSAppearance(named: .aqua)
         case .dark: NSAppearance(named: .darkAqua)
         }
+        // Light and Gray look the same to macOS, so switching between them changes no appearance.
+        effectiveAppearanceDidChange(NSApp.effectiveAppearance)
+        GrayChrome.applyToAllWindows()
     }
 }
 
@@ -180,10 +203,10 @@ nonisolated enum GridColors {
         NSColor(white: offset(matteWhite(for: appearance), dark: 0.19, light: 0.18), alpha: 1)
     }
 
-    /// Appearance for content drawn on the matte, so labels stay readable on a custom matte. `nil`
-    /// when the matte follows the theme.
+    /// Appearance for content drawn on the matte, so labels stay readable on a custom matte or Gray's
+    /// black one. `nil` when the matte follows the Light or Dark theme.
     static func contentAppearance() -> NSAppearance? {
-        guard let matte = AppSettings.storedMatte() else { return nil }
+        guard let matte = AppSettings.storedMatte() ?? (AppSettings.storedAppearance() == .gray ? AppSettings.grayMatte : nil) else { return nil }
         return NSAppearance(named: matte > 0.5 ? .darkAqua : .aqua)
     }
 }

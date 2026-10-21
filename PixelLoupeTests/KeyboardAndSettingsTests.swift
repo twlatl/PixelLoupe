@@ -232,6 +232,77 @@ struct MatteTests {
         #expect(abs(white(GridColors.background(for:), light) - 0.90) < 0.01)
     }
 
+    @Test("Gray is Light Mode with a black matte, whatever appearance a view on the matte has (RAW-155)")
+    func grayHasABlackMatte() {
+        let settings = AppSettings.shared
+        let (savedAppearance, savedMatte) = (settings.appearance, settings.matte)
+        defer { settings.appearance = savedAppearance; settings.matte = savedMatte }
+
+        settings.matte = nil
+        settings.appearance = .gray
+        #expect(NSApp.appearance?.name == .aqua)
+        #expect(AppSettings.theme(for: light) == .gray)
+        // The grid's matte view turns dark for its labels; it must still get Gray's matte.
+        #expect(AppSettings.theme(for: dark) == .gray)
+        #expect(white(GridColors.background(for:), light) < 0.01)
+        #expect(white(GridColors.background(for:), dark) < 0.01)
+        #expect(GridColors.contentAppearance()?.name == .darkAqua, "labels on the black matte are light")
+        let grayBar = FilterBarBackground.stops(for: light)
+        #expect(grayBar.first!.color.r < grayBar.last!.color.r, "lightens toward the grid")
+
+        settings.appearance = .light
+        #expect(grayBar.last!.color.r < FilterBarBackground.stops(for: light).first!.color.r, "Gray's bar is darker than Light's")
+        #expect(abs(white(GridColors.background(for:), light) - 0.90) < 0.01)
+        #expect(GridColors.contentAppearance() == nil)
+    }
+
+    @Test("Choosing Gray puts a custom matte back to black, and leaving it to the theme's (RAW-155)")
+    func switchingToGrayResetsMatte() {
+        let settings = AppSettings.shared
+        let (savedAppearance, savedMatte) = (settings.appearance, settings.matte)
+        defer { settings.appearance = savedAppearance; settings.matte = savedMatte }
+
+        settings.appearance = .light
+        settings.matte = 0.4
+        settings.appearance = .gray      // same appearance to macOS, but a different theme
+        #expect(settings.matte == nil)
+        #expect(white(GridColors.background(for:), light) < 0.01)
+
+        settings.matte = 0.6
+        settings.appearance = .gray
+        #expect(settings.matte == 0.6, "no switch, no reset")
+        settings.appearance = .light
+        #expect(settings.matte == nil)
+    }
+
+    @Test("Gray paints windows' chrome and puts it back, leaving windows with their own (RAW-155)")
+    func grayPaintsWindowChrome() {
+        let settings = AppSettings.shared
+        let savedAppearance = settings.appearance
+        defer { settings.appearance = savedAppearance }
+        settings.appearance = .light
+
+        let plain = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled], backing: .buffered, defer: true)
+        let black = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled], backing: .buffered, defer: true)
+        black.backgroundColor = .black
+        plain.isReleasedWhenClosed = false
+        black.isReleasedWhenClosed = false
+        defer { plain.close(); black.close() }
+
+        settings.appearance = .gray
+        GrayChrome.apply(to: plain)
+        GrayChrome.apply(to: black)
+        #expect(plain.backgroundColor == GrayChrome.color)
+        #expect(plain.titlebarAppearsTransparent)
+        #expect(black.backgroundColor == .black, "the full-screen viewer and slideshow stay black")
+
+        settings.appearance = .light
+        GrayChrome.apply(to: plain)
+        #expect(plain.backgroundColor == .windowBackgroundColor)
+        #expect(!plain.titlebarAppearsTransparent)
+        #expect(black.backgroundColor == .black)
+    }
+
     /// Views on the matte must repaint when the setting changes, not only when the theme does.
     @Test func matteViewsRepaintWhenSettingChanges() {
         let settings = AppSettings.shared
