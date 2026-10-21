@@ -312,4 +312,142 @@ struct RetouchOverlayTests {
         panel.setMode(.clone)
         #expect(panel.mode == .clone)
     }
+
+    @Test("Zoomed in, dragging off the spots pans; a click still places, and spots still drag (RAW-151)")
+    func zoomedPan() {
+        var pans: [CGVector] = []
+        overlay.isZoomed = { true }
+        overlay.onPan = { pans.append($0) }
+        overlay.mouseDown(with: event(.leftMouseDown, 210, 160))
+        overlay.mouseDragged(with: event(.leftMouseDragged, 220, 150))
+        overlay.mouseDragged(with: event(.leftMouseDragged, 230, 145))
+        overlay.mouseUp(with: event(.leftMouseUp, 230, 145))
+        #expect(pans == [CGVector(dx: 10, dy: -10), CGVector(dx: 10, dy: -5)])
+        #expect(log.placed.isEmpty && log.changes.isEmpty)
+
+        overlay.mouseDown(with: event(.leftMouseDown, 210, 160))
+        overlay.mouseDragged(with: event(.leftMouseDragged, 211, 160))
+        overlay.mouseUp(with: event(.leftMouseUp, 211, 160))
+        #expect(pans.count == 2 && log.placed.count == 1)
+
+        overlay.spots = [spot()]
+        overlay.mouseDown(with: event(.leftMouseDown, 110, 160))
+        overlay.mouseDragged(with: event(.leftMouseDragged, 150, 190))
+        overlay.mouseUp(with: event(.leftMouseUp, 150, 190))
+        #expect(pans.count == 2 && log.changes.last?.action == "Move Spot")
+    }
+
+    @Test("The selected spot's handles resize it, down to the smallest size (RAW-151)")
+    func handlesResize() {
+        let spot = spot()
+        overlay.spots = [spot]
+        overlay.selectedID = spot.id
+        // The spot is at view (110, 160) with a 12-point radius: its right handle is at (122, 160).
+        overlay.mouseDown(with: event(.leftMouseDown, 122, 160))
+        overlay.mouseDragged(with: event(.leftMouseDragged, 130, 160))
+        overlay.mouseUp(with: event(.leftMouseUp, 130, 160))
+        let resized = log.changes.last!
+        #expect(resized.action == "Resize Spot" && resized.isFinal)
+        #expect(abs(resized.spots[0].radius - 0.05) < 1e-9, "20 points of a 400-point long edge")
+        #expect(resized.spots[0].center == spot.center && resized.spots[0].source == spot.source)
+
+        // Dragged in past the smallest size, it stops there.
+        overlay.mouseDown(with: event(.leftMouseDown, 110, 172))
+        overlay.mouseDragged(with: event(.leftMouseDragged, 110, 160))
+        #expect(log.changes.last!.spots[0].radius == RetouchOverlayView.radiusRange.lowerBound)
+    }
+
+    @Test("Hovering a spot shows its handles, so it resizes without selecting it first; red eyes too")
+    func hoverHandles() {
+        let spot = spot(), eye = PhotoAdjustments.RedEyeSpot(center: .init(x: 0.75, y: 0.25), radius: 0.01)
+        overlay.spots = [spot]
+        overlay.redEyes = [eye]
+        #expect(overlay.hoveredID == nil)
+        overlay.mouseMoved(with: event(.mouseMoved, 112, 161))
+        #expect(overlay.hoveredID == spot.id)
+        overlay.mouseMoved(with: event(.mouseMoved, 121, 160))
+        #expect(overlay.hoveredID == spot.id, "on the edge, by the handle")
+        overlay.mouseMoved(with: event(.mouseMoved, 210, 250))
+        #expect(overlay.hoveredID == nil)
+
+        // The eye at view (310, 85) is drawn 1.4 × its 4-point radius: its top handle is 5.6 points up.
+        overlay.mouseMoved(with: event(.mouseMoved, 310, 86))
+        #expect(overlay.hoveredID == eye.id)
+        overlay.mouseDown(with: event(.leftMouseDown, 310, 90.6))
+        overlay.mouseDragged(with: event(.leftMouseDragged, 310, 99))
+        overlay.mouseUp(with: event(.leftMouseUp, 310, 99))
+        #expect(log.selected.last == .some(eye.id))
+        #expect(log.changes.last?.action == "Resize Spot" && abs(log.changes.last!.eyes[0].radius - 14 / 1.4 / 400) < 1e-9)
+    }
+
+    @Test("The cursor: resize over a handle, a pointing hand over a spot, a hand or crosshair elsewhere")
+    func cursors() {
+        let spot = spot()
+        overlay.spots = [spot]
+        overlay.selectedID = spot.id
+        #expect(overlay.cursor(at: CGPoint(x: 122, y: 160)) == .columnResize)
+        #expect(overlay.cursor(at: CGPoint(x: 110, y: 172)) == .rowResize)
+        #expect(overlay.cursor(at: CGPoint(x: 110, y: 160)) == .pointingHand)
+        #expect(overlay.cursor(at: CGPoint(x: 310, y: 160)) == .pointingHand, "the source")
+        #expect(overlay.cursor(at: CGPoint(x: 210, y: 250)) == .crosshair)
+        overlay.isZoomed = { true }
+        #expect(overlay.cursor(at: CGPoint(x: 210, y: 250)) == .openHand)
+    }
+
+    @Test("Zoomed in, the zoom factor is how much bigger than the view the photo is drawn (RAW-151)")
+    func zoomFactor() {
+        #expect(overlay.zoomFactor == 1)
+        overlay.frameRect = CGRect(x: -500, y: -400, width: 1600, height: 1200)
+        #expect(overlay.zoomFactor == 1, "not zoomed: Fill")
+        overlay.isZoomed = { true }
+        #expect(abs(overlay.zoomFactor - 1600.0 / 420) < 1e-9)
+    }
+
+    @Test("Without a zoom, dragging off the spots doesn't pan")
+    func fitDoesNotPan() {
+        var pans = 0
+        overlay.onPan = { _ in pans += 1 }
+        overlay.mouseDown(with: event(.leftMouseDown, 210, 160))
+        overlay.mouseDragged(with: event(.leftMouseDragged, 260, 160))
+        overlay.mouseUp(with: event(.leftMouseUp, 260, 160))
+        #expect(pans == 0 && log.placed.count == 1)
+    }
+
+    @Test("Each spot's row has a button that deletes it, at the right edge of the list (RAW-151)")
+    func rowDeleteButton() throws {
+        let panel = RetouchPanelViewController()
+        let window = TestWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 700), styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = panel.view
+        let a = spot(), b = spot(), eye = PhotoAdjustments.RedEyeSpot()
+        panel.display(spots: [a, b], redEyes: [eye], selecting: a.id)
+        window.layoutIfNeeded()
+        window.setContentSize(NSSize(width: 340, height: 700))
+        window.layoutIfNeeded()
+
+        var sent: (spots: [PhotoAdjustments.Spot], eyes: [PhotoAdjustments.RedEyeSpot], action: String)?
+        panel.onChange = { spots, eyes, isFinal, action in
+            sent = (spots, eyes, action)
+            #expect(isFinal)
+        }
+        let table = try #require(subview("spotList", of: NSTableView.self, in: panel.view))
+        let row = try #require(table.view(atColumn: 0, row: 1, makeIfNecessary: true))
+        let delete = try #require(subview("deleteSpot.1", of: NSButton.self, in: row))
+        #expect(delete.accessibilityLabel() == "Delete Clone 2")
+        let list = try #require(table.enclosingScrollView)
+        let frame = delete.convert(delete.bounds, to: list)
+        #expect(list.bounds.contains(frame) && frame.maxX > list.bounds.maxX - 30, "button \(frame) list \(list.bounds)")
+
+        delete.performClick(nil)
+        #expect(sent?.spots.map(\.id) == [a.id] && sent?.eyes.map(\.id) == [eye.id] && sent?.action == "Delete Spot")
+        #expect(panel.selectedID == a.id, "deleting another row leaves the selection alone")
+
+        let eyeRow = try #require(table.view(atColumn: 0, row: 1, makeIfNecessary: true))
+        try #require(subview("deleteSpot.1", of: NSButton.self, in: eyeRow)).performClick(nil)
+        #expect(sent?.spots.map(\.id) == [a.id] && sent?.eyes.isEmpty == true)
+    }
+
+    private func subview<View: NSView>(_ identifier: String, of type: View.Type, in view: NSView) -> View? {
+        if let view = view as? View, view.accessibilityIdentifier() == identifier { return view }
+        return view.subviews.lazy.compactMap { self.subview(identifier, of: type, in: $0) }.first
+    }
 }

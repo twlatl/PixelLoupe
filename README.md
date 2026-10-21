@@ -192,7 +192,8 @@ to move around. Zooming in and out animates, in the view and in the Navigator. C
 preview to jump there. `Z` or `Space` does the same as a click. The zoom carries
 over from photo to photo and between Library and Develop. In Develop, click-to-zoom works with the Adjust, Lens
 Corrections and History tools (Crop, Masking and Spot Removal use clicks themselves; the Navigator still zooms there,
-except Crop, which always shows the whole photo). Zoomed views render only the part on screen, at full resolution.
+except Crop, which always shows the whole photo). Zoomed in with Spot Removal, the pointer is a hand too: drag off the spots
+to move around, and click to place one. Zoomed views render only the part on screen, at full resolution.
 
 ## Monochrome Mode
 
@@ -521,9 +522,12 @@ compressed Lightroom settings that are converted the first time the photo's Hist
 ## Spot removal and red eye (Develop)
 
 The **Spot Removal** tool (**Q**) removes blemishes: pick Heal or Clone, then click the photo. A circle marks the spot and a
-dashed one its source (chosen beside it); drag either, scroll to resize, and use the sliders for Size, Feather and Opacity. Heal
+dashed one its source (chosen beside it); drag either, and use the sliders for Size, Feather and Opacity. To resize a spot,
+drag one of the four handles on the circle under the pointer or the selected one, or scroll. A new spot takes the size of
+the last one you resized, as it looked on screen, so zoomed in it covers less of the photo. Heal
 keeps the source's texture and takes the colors and brightness around the spot; Clone copies it as it is. Choose Red Eye and click
-an eye: PixelLoupe finds the red pupil near the click, takes the red out and darkens it. Delete removes the selected spot. Spots
+an eye: PixelLoupe finds the red pupil near the click, takes the red out and darkens it. Delete, or the ⓧ button on its row in
+the list, removes a spot. Spots
 are drawn on the photo as decoded, before the other edits, and stored as shapes. A Lightroom import brings in spots (heal and
 clone) and red eyes; generative or AI removals can't be imported and are reported.
 
