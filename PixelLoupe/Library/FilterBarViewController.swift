@@ -39,8 +39,18 @@ final class FilterBarViewController: NSViewController, NSMenuDelegate, NSSearchF
         for view in stack.arrangedSubviews {
             view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
-        stack.setAccessibilityIdentifier("libraryFilter")
-        view = stack
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let background = FilterBarBackground()
+        background.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: background.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: background.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: background.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: background.bottomAnchor),
+        ])
+        background.setAccessibilityIdentifier("libraryFilter")
+        view = background
     }
 
     override func viewDidLoad() {
@@ -269,5 +279,32 @@ nonisolated extension LibraryFilter.Mode {
         guard let mode else { return [] }
         if extending { return current.symmetricDifference([mode]) }
         return current == [mode] ? [] : [mode]
+    }
+}
+
+/// The bar's gray, set apart from the grid and panels around it: 40% gray in light mode, 60% in dark.
+final class FilterBarBackground: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.backgroundColor = NSColor(white: Self.white(for: effectiveAppearance), alpha: 1).cgColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    /// Brightness (0 black … 1 white): a 40% gray is 60% white.
+    static func white(for appearance: NSAppearance) -> CGFloat {
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? 0.4 : 0.6
     }
 }

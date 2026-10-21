@@ -144,6 +144,31 @@ struct FilterBarWindowTests {
         #expect(filtered.isHidden)
     }
 
+    @Test func theBarKeepsItsOwnHeightAndTheGridGetsTheRest() throws {
+        let controller = CatalogWindowController(store: try CatalogStore.open(at: packageURL))
+        defer { controller.close() }
+        controller.showWindow(nil)
+        let window = try #require(controller.window)
+        let bar = try #require(view("libraryFilter", in: window))
+        let grid = try #require(view("photoGrid", in: window)?.enclosingScrollView)
+        #expect(bar is FilterBarBackground)
+        #expect(FilterBarBackground.white(for: NSAppearance(named: .aqua)!) == 0.6, "40% gray")
+        #expect(FilterBarBackground.white(for: NSAppearance(named: .darkAqua)!) == 0.4, "60% gray")
+        for modes: Set<LibraryFilter.Mode> in [[.text], [], [.text, .attribute]] {
+            state(controller).filter.modes = modes
+            state(controller).filter.text.query = "nothing matches this"
+            window.contentView?.layoutSubtreeIfNeeded()
+            #expect(bar.frame.height < 100, "the bar doesn't grow into the grid")
+            #expect(grid.frame.height > 200)
+            state(controller).filter.text.query = ""
+            window.contentView?.layoutSubtreeIfNeeded()
+            #expect(bar.frame.height < 100)
+            #expect(grid.frame.height > 200)
+        }
+    }
+
+    private func state(_ controller: CatalogWindowController) -> LibraryState { controller.state }
+
     @Test func backslashIsBeforeOnlyInDevelop() throws {
         let controller = CatalogWindowController(store: try CatalogStore.open(at: packageURL))
         defer { controller.close() }
