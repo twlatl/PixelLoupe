@@ -5,9 +5,12 @@ import CoreData
 /// Metadata or None), then a row of criteria for each active mode. Click a mode to show just it,
 /// Shift-click to add or remove it; the active modes' criteria all apply. \ hides the bar without
 /// clearing it.
-final class FilterBarViewController: NSViewController, NSSearchFieldDelegate {
+final class FilterBarViewController: NSViewController, NSSearchFieldDelegate, NSMenuDelegate {
     private let store: CatalogStore
     private let state: LibraryState
+    private let presets: FilterPresets
+    /// The filter presets, at the right of the header, titled with the preset the filter matches.
+    private let presetsPopUp = NSPopUpButton(frame: .zero, pullsDown: true)
 
     /// Text, Attribute, Metadata and None, in that order.
     private let modeControl = NSSegmentedControl()
@@ -29,9 +32,10 @@ final class FilterBarViewController: NSViewController, NSSearchFieldDelegate {
     /// Gives the keyboard back to the grid (Esc in the search field).
     var onEndSearch: (() -> Void)?
 
-    init(store: CatalogStore, state: LibraryState) {
+    init(store: CatalogStore, state: LibraryState, presets: FilterPresets = .shared) {
         self.store = store
         self.state = state
+        self.presets = presets
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -85,6 +89,9 @@ final class FilterBarViewController: NSViewController, NSSearchFieldDelegate {
         state.addObserver(self) { [weak self] change in
             if change == .filter { self?.update() }
         }
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(presetsDidChange(_:)), name: FilterPresets.didChangeNotification, object: presets
+        )
     }
 
     /// ⌘F: shows the bar and the Text mode (alongside any others) and puts the cursor in its field.
@@ -124,6 +131,21 @@ final class FilterBarViewController: NSViewController, NSSearchFieldDelegate {
         header.spacing = 8
         header.edgeInsets = NSEdgeInsets(top: 2, left: 12, bottom: 2, right: 12)
         leading.widthAnchor.constraint(equalTo: trailing.widthAnchor).isActive = true
+
+        // Outside the centered arrangement, so the modes stay centered.
+        presetsPopUp.controlSize = .small
+        presetsPopUp.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        presetsPopUp.menu?.delegate = self
+        presetsPopUp.toolTip = "Filter presets"
+        presetsPopUp.setAccessibilityLabel("Filter presets")
+        presetsPopUp.setAccessibilityIdentifier("filterPresets")
+        presetsPopUp.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(presetsPopUp)
+        NSLayoutConstraint.activate([
+            presetsPopUp.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -12),
+            presetsPopUp.centerYAnchor.constraint(equalTo: modeControl.centerYAnchor),
+            presetsPopUp.leadingAnchor.constraint(greaterThanOrEqualTo: modeControl.trailingAnchor, constant: 12),
+        ])
         return header
     }
 
@@ -269,6 +291,7 @@ final class FilterBarViewController: NSViewController, NSSearchFieldDelegate {
             row.isHidden = !filter.modes.contains(mode)
         }
         if filter.modes.contains(.metadata) { installMetadataBrowser() }
+        updatePresetsTitle()
         textFieldPopUp.selectItem(at: LibraryFilter.TextSearch.Field.allCases.firstIndex(of: filter.text.field) ?? 0)
         textRulePopUp.selectItem(at: LibraryFilter.TextSearch.Rule.allCases.firstIndex(of: filter.text.rule) ?? 0)
         // Leave the field alone while a typed search is waiting to apply.
@@ -315,6 +338,120 @@ final class FilterBarViewController: NSViewController, NSSearchFieldDelegate {
             state.filter.text.field = LibraryFilter.TextSearch.Field.allCases[index]
         } else {
             state.filter.text.rule = LibraryFilter.TextSearch.Rule.allCases[index]
+        }
+    }
+
+    // MARK: - Presets
+
+    /// The matching preset's name, or Custom Filter.
+    var presetTitle: String { presets.preset(matching: state.filter.criteria)?.name ?? "Custom Filter" }
+
+    /// The custom preset the filter matches, which Update, Rename and Delete act on.
+    private var currentCustomPreset: FilterPreset? {
+        presets.custom.first { $0.criteria.filtersLike(state.filter.criteria) }
+    }
+
+    private func updatePresetsTitle() {
+        presetsPopUp.removeAllItems()
+        presetsPopUp.addItem(withTitle: presetTitle)
+    }
+
+    @objc private func presetsDidChange(_ notification: Notification) {
+        updatePresetsTitle()
+    }
+
+    /// Built-in presets, then the user's, then Save, Update, Rename and Delete.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === presetsPopUp.menu else { return }
+        let title = presetTitle
+        menu.removeAllItems()
+        // Pull-down menus use the first item as the button title.
+        menu.addItem(withTitle: title, action: nil, keyEquivalent: "")
+        func add(_ preset: FilterPreset) {
+            let item = NSMenuItem(title: preset.name, action: #selector(applyPreset(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = preset.name
+            item.state = preset.name == title ? .on : .off
+            menu.addItem(item)
+        }
+        FilterPreset.builtIn.forEach(add)
+        if !presets.custom.isEmpty {
+            menu.addItem(.separator())
+            presets.custom.forEach(add)
+        }
+        menu.addItem(.separator())
+        let save = NSMenuItem(title: "Save Current Settings as New Preset…", action: #selector(saveNewPreset(_:)), keyEquivalent: "")
+        save.target = self
+        menu.addItem(save)
+        if let custom = currentCustomPreset {
+            for (title, action) in [
+                ("Update Preset \u{201C}\(custom.name)\u{201D}", #selector(updatePreset(_:))),
+                ("Rename Preset \u{201C}\(custom.name)\u{201D}…", #selector(renamePreset(_:))),
+                ("Delete Preset \u{201C}\(custom.name)\u{201D}", #selector(deletePreset(_:))),
+            ] {
+                let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+                item.target = self
+                item.representedObject = custom.name
+                menu.addItem(item)
+            }
+        }
+    }
+
+    @objc private func applyPreset(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String,
+              let preset = (presets.custom + FilterPreset.builtIn).first(where: { $0.name == name }) else { return }
+        state.filter.apply(preset)
+    }
+
+    @objc private func saveNewPreset(_ sender: Any?) {
+        askForPresetName(message: "New Preset", button: "Create", initial: "") { [weak self] name in
+            guard let self else { return }
+            presets.save(state.filter.criteria, as: name)
+        }
+    }
+
+    @objc private func updatePreset(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        presets.save(state.filter.criteria, as: name)
+    }
+
+    @objc private func renamePreset(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        askForPresetName(message: "Rename Preset", button: "Rename", initial: name) { [weak self] newName in
+            self?.presets.rename(name, to: newName)
+        }
+    }
+
+    @objc private func deletePreset(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        presets.delete(name)
+    }
+
+    /// Asks for a preset's name in a sheet; a built-in preset's name isn't accepted.
+    private func askForPresetName(message: String, button: String, initial: String, then save: @escaping (String) -> Void) {
+        guard let window = view.window else { return }
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.informativeText = "Saves the Library Filter's modes and their settings, for every catalog."
+        alert.addButton(withTitle: button)
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: initial)
+        field.placeholderString = "Preset Name"
+        field.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
+        field.setAccessibilityIdentifier("presetName")
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            let name = field.stringValue.trimmingCharacters(in: .whitespaces)
+            guard let self, response == .alertFirstButtonReturn, !name.isEmpty else { return }
+            guard !presets.isBuiltIn(name) else {
+                let taken = NSAlert()
+                taken.messageText = "\u{201C}\(name)\u{201D} is a built-in preset."
+                taken.informativeText = "Choose another name."
+                taken.beginSheetModal(for: window)
+                return
+            }
+            save(name)
         }
     }
 

@@ -360,6 +360,12 @@ remove it; the active modes' rows all apply, so a photo must match every one. Ea
   bottom edge to make the columns taller. The keyword list's arrow shows a keyword's photos (and those below it) by
   choosing it in a Keyword column.
 
+The menu at the header's right shows the preset the filter matches (or Custom Filter) and applies one: Lightroom's
+**Filters Off**, **Default Columns**, **Exposure Info** (Focal Length, Shutter Speed, Aperture and ISO columns),
+**Flagged** and **Rated**, then your own. **Save Current Settings as New Preset…** saves the modes and their settings
+under a name, for every catalog; while the filter matches one of yours, the menu also updates, renames or deletes it.
+Applying a preset turns on its modes with its settings; the modes it leaves off keep theirs.
+
 Turning a mode off (or choosing None) stops it filtering but keeps what it was set to, so turning it back on brings it
 back. The filter stays as you move between folders and collections, and the bar, its modes and their criteria are
 saved with the catalog. `\` hides the bar without clearing it; while it leaves photos out the filmstrip says so
