@@ -13,6 +13,8 @@ final class FilterBarViewController: NSViewController, NSMenuDelegate, NSSearchF
     private let modeControl = NSSegmentedControl()
     private static let segmentModes: [LibraryFilter.Mode?] = LibraryFilter.Mode.allCases + [nil]
     private var rows: [LibraryFilter.Mode: NSStackView] = [:]
+    /// The Attribute groups in two halves, side by side or (in a narrow grid) one above the other.
+    private let attributeHalves = NSStackView()
 
     private let tagsPopUp = NSPopUpButton(frame: .zero, pullsDown: true)
     private let searchField = ClickToFocusSearchField()
@@ -56,6 +58,15 @@ final class FilterBarViewController: NSViewController, NSMenuDelegate, NSSearchF
         compact.isActive = true
         background.setAccessibilityIdentifier("libraryFilter")
         view = background
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        // Room for the row's title, its × and margins besides the groups.
+        let halves = attributeHalves.arrangedSubviews.map(\.fittingSize.width)
+        let needed = halves.reduce(0, +) + attributeHalves.spacing + 160
+        let orientation: NSUserInterfaceLayoutOrientation = view.bounds.width >= needed ? .horizontal : .vertical
+        if attributeHalves.orientation != orientation { attributeHalves.orientation = orientation }
     }
 
     override func viewDidLoad() {
@@ -130,6 +141,8 @@ final class FilterBarViewController: NSViewController, NSMenuDelegate, NSSearchF
         let row = NSStackView(views: [label(mode.title + ":", emphasized: true)] + content + [spacer, clear])
         row.spacing = 8
         row.edgeInsets = NSEdgeInsets(top: 4, left: 12, bottom: 4, right: 12)
+        // A row wider than the grid (Attribute in a narrow window) clips rather than widening the window.
+        row.setClippingResistancePriority(.defaultLow, for: .horizontal)
         row.setAccessibilityIdentifier("filterRow.\(mode.rawValue)")
         return row
     }
@@ -168,14 +181,21 @@ final class FilterBarViewController: NSViewController, NSMenuDelegate, NSSearchF
             symbol: { $0 == .stacked ? "square.stack.3d.up.fill" : "square" },
             identifier: { "stackFilter.\($0.rawValue)" }
         ))
-        return [
+        let first = NSStackView(views: [
             label("Flag"), FlagFilterControl(state: state, identifierPrefix: "filterBar."), divider(),
             label("Edit"), edit, divider(),
-            label("Rating"), RatingFilterControl(state: state), divider(),
+            label("Rating"), RatingFilterControl(state: state),
+        ])
+        let second = NSStackView(views: [
             label("Color"), ColorLabelFilterControl(state: state), divider(),
             label("Kind"), kind, divider(),
             label("Stack"), stack,
-        ]
+        ])
+        for half in [first, second] { half.spacing = 8 }
+        attributeHalves.setViews([first, second], in: .leading)
+        attributeHalves.spacing = 16
+        attributeHalves.alignment = .leading
+        return [attributeHalves]
     }
 
     private func metadataRow() -> [NSView] {

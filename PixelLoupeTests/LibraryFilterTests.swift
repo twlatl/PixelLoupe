@@ -159,6 +159,7 @@ struct LibraryFilterTests {
         try #require(photos["c.jpg"]).labelText = "Approved"
         try #require(photos["d.ARW"]).isVideo = true
         let stack = PhotoStack(context: context)
+        stack.isCollapsed = false
         a.stack = stack
         b.stack = stack
         stack.renumber([a, b])
