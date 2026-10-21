@@ -299,6 +299,56 @@ struct PhotoExporterTests {
         #expect(xmp(copyright, "dc:rights") == "© Example Studio", "the copyright is kept")
     }
 
+    /// The exported file's GPS position, signed, from its EXIF.
+    private func gps(_ url: URL) throws -> (latitude: Double, longitude: Double)? {
+        guard let gps = try properties(url)[kCGImagePropertyGPSDictionary] as? [CFString: Any],
+              let latitude = gps[kCGImagePropertyGPSLatitude] as? Double, let longitude = gps[kCGImagePropertyGPSLongitude] as? Double
+        else { return nil }
+        return ((gps[kCGImagePropertyGPSLatitudeRef] as? String == "S" ? -1 : 1) * latitude,
+                (gps[kCGImagePropertyGPSLongitudeRef] as? String == "W" ? -1 : 1) * longitude)
+    }
+
+    @Test("The catalog's location replaces the original's, a removed one leaves none, and Remove Location Info wins")
+    func catalogLocation() async throws {
+        let directory = try TemporaryDirectory()
+        var item = try makeItem(in: directory)
+        var settings = ExportSettings()
+        #expect(try properties(try await export(item, settings, in: directory))[kCGImagePropertyGPSDictionary] != nil, "the original's")
+
+        item.gps = .set(GPSCoordinate(latitude: -33.856_784, longitude: 151.215_297)!)
+        let typed = try #require(try gps(try await export(item, settings, in: directory)))
+        #expect(abs(typed.latitude + 33.856_784) < 0.000_01 && abs(typed.longitude - 151.215_297) < 0.000_01)
+        let tiff = try await export(item, { var tiff = settings; tiff.format = .tiff; return tiff }(), in: directory)
+        #expect(try gps(tiff).map { abs($0.longitude - 151.215_297) < 0.000_01 } == true)
+
+        settings.removesLocationInfo = true
+        #expect(try properties(try await export(item, settings, in: directory))[kCGImagePropertyGPSDictionary] == nil)
+
+        settings.removesLocationInfo = false
+        item.gps = .cleared
+        #expect(try properties(try await export(item, settings, in: directory))[kCGImagePropertyGPSDictionary] == nil)
+    }
+
+    @Test func xmpCoordinatesAreDegreesAndDecimalMinutes() {
+        #expect(PhotoExporter.xmpCoordinate(37.774_929, positive: "N", negative: "S") == "37,46.495740N")
+        #expect(PhotoExporter.xmpCoordinate(-122.419_416, positive: "E", negative: "W") == "122,25.164960W")
+    }
+
+    @Test("Exporting a photo carries its catalog location")
+    @MainActor
+    func itemFromPhoto() throws {
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: try TemporaryDirectory().url.appending(path: "E.pixelloupe"))
+        let photo = Photo(context: store.viewContext)
+        photo.id = UUID(); photo.fileName = "a.jpg"; photo.filePath = "/x/a.jpg"
+        photo.captureDate = Date(); photo.importDate = Date(); photo.editDate = Date()
+        #expect(ExportItem(photo).gps == .file)
+        let place = GPSCoordinate(latitude: 1, longitude: 2)!
+        photo.setLocationOverride(.set, place)
+        #expect(ExportItem(photo).gps == .set(place))
+        photo.setLocationOverride(.cleared)
+        #expect(ExportItem(photo).gps == .cleared)
+    }
+
     @Test func watermarksAreDrawn() async throws {
         let directory = try TemporaryDirectory()
         let item = try makeItem(in: directory)

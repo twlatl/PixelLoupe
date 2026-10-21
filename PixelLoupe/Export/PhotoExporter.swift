@@ -14,6 +14,8 @@ nonisolated struct ExportItem: Sendable {
     let captureDate: Date
     /// The photo's Smart Preview, exported from (at its size) when the original can't be read.
     var smartPreview: URL? = nil
+    /// The location set in the catalog, which replaces the original's in the exported file.
+    var gps: ExportGPS = .file
 
     var fileName: String { source.lastPathComponent }
     var location: PhotoSourceLocation { PhotoSourceLocation(original: source, smartPreview: smartPreview) }
@@ -24,8 +26,26 @@ extension ExportItem {
         self.init(
             source: photo.fileURL, adjustments: photo.adjustments, metadata: photo.metadata,
             keywords: Tag.exportNames(for: photo.tags),
-            rating: Int(photo.rating), captureDate: photo.captureDate, smartPreview: smartPreview
+            rating: Int(photo.rating), captureDate: photo.captureDate, smartPreview: smartPreview, gps: ExportGPS(photo)
         )
+    }
+}
+
+/// An exported photo's location, from the catalog (RAW-164).
+nonisolated enum ExportGPS: Sendable, Equatable {
+    /// The original's location (or none) is kept.
+    case file
+    /// The location typed into the catalog replaces the original's.
+    case set(GPSCoordinate)
+    /// The location was removed in the catalog: the exported file has none.
+    case cleared
+
+    init(_ photo: Photo) {
+        self = switch photo.locationKind {
+        case .file: .file
+        case .set: photo.overrideLocation.map(ExportGPS.set) ?? .file
+        case .cleared: .cleared
+        }
     }
 }
 
@@ -388,10 +408,19 @@ nonisolated enum PhotoExporter {
                 removed.insert("aux")
                 for path in cameraPaths { CGImageMetadataRemoveTagWithPath(result, nil, path as CFString) }
             }
-            if settings.removesLocationInfo {
+            // The catalog's location replaces the original's (its altitude and direction go too, since
+            // they were measured somewhere else); Remove Location Info removes either.
+            if settings.removesLocationInfo || item.gps != .file {
                 for path in topLevelPaths(result) where path.hasPrefix("exif:GPS") {
                     CGImageMetadataRemoveTagWithPath(result, nil, path as CFString)
                 }
+            }
+            if !settings.removesLocationInfo, case .set(let coordinate) = item.gps {
+                CGImageMetadataSetValueWithPath(result, nil, "exif:GPSVersionID" as CFString, "2.2.0.0" as CFString)
+                CGImageMetadataSetValueWithPath(result, nil, "exif:GPSLatitude" as CFString,
+                                                xmpCoordinate(coordinate.latitude, positive: "N", negative: "S") as CFString)
+                CGImageMetadataSetValueWithPath(result, nil, "exif:GPSLongitude" as CFString,
+                                                xmpCoordinate(coordinate.longitude, positive: "E", negative: "W") as CFString)
             }
             if settings.removesPersonInfo {
                 for path in ["Iptc4xmpExt:PersonInImage", "Iptc4xmpExt:PersonInImageWDetails", "mwg-rs:Regions"] {
@@ -436,6 +465,12 @@ nonisolated enum PhotoExporter {
             CGImageMetadataSetValueWithPath(result, nil, "exif:PixelYDimension" as CFString, Int(size.height) as CFNumber)
         }
         return result
+    }
+
+    /// XMP's form of a GPS coordinate, degrees and decimal minutes with the direction: `37,46.4957N`.
+    static func xmpCoordinate(_ value: Double, positive: String, negative: String) -> String {
+        let absolute = abs(value), degrees = Int(absolute)
+        return String(format: "%d,%.6f%@", degrees, (absolute - Double(degrees)) * 60, value < 0 ? negative : positive)
     }
 
     private static func register(_ metadata: CGMutableImageMetadata) {
