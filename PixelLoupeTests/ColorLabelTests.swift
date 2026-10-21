@@ -154,7 +154,7 @@ struct ColorLabelTests {
         try store.viewContext.save()
         func count(_ set: Set<ColorLabel>) throws -> Int {
             var filter = LibraryFilter()
-            filter.colorLabels = set
+            filter.attributes.colorLabels = set
             let request = Photo.fetchRequest()
             request.predicate = filter.predicate
             return try store.viewContext.count(for: request)

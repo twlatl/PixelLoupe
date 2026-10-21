@@ -49,24 +49,24 @@ final class RatingFilterControl: NSStackView {
 
     private func update() {
         let filter = state.filter
-        let rating = filter.rating ?? 0
+        let rating = filter.attributes.rating ?? 0
         for button in starButtons {
             let filled = button.tag <= rating
             button.image = NSImage(systemSymbolName: filled ? "star.fill" : "star", accessibilityDescription: "\(button.tag) stars")
             button.contentTintColor = filled ? .systemYellow : .tertiaryLabelColor
             button.setAccessibilityValue(filled ? "on" : "off")
         }
-        comparisonPopUp.selectItem(at: LibraryFilter.RatingComparison.allCases.firstIndex(of: filter.ratingComparison) ?? 0)
+        comparisonPopUp.selectItem(at: LibraryFilter.RatingComparison.allCases.firstIndex(of: filter.attributes.ratingComparison) ?? 0)
     }
 
     @objc private func starClicked(_ sender: NSButton) {
-        state.filter.rating = state.filter.rating == sender.tag ? nil : sender.tag
+        state.filter.attributes.rating = state.filter.attributes.rating == sender.tag ? nil : sender.tag
     }
 
     @objc private func comparisonChanged(_ sender: NSPopUpButton) {
         guard let raw = sender.selectedItem?.representedObject as? String,
               let comparison = LibraryFilter.RatingComparison(rawValue: raw) else { return }
-        state.filter.ratingComparison = comparison
+        state.filter.attributes.ratingComparison = comparison
     }
 }
 
@@ -76,7 +76,7 @@ final class FlagFilterControl: NSStackView {
     private let state: LibraryState
     private let buttons: [(flag: PhotoFlag, button: NSButton)]
 
-    init(state: LibraryState) {
+    init(state: LibraryState, identifierPrefix: String = "") {
         self.state = state
         buttons = [
             (.picked, "flag.fill", "Picked"),
@@ -91,7 +91,7 @@ final class FlagFilterControl: NSStackView {
             button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
             button.toolTip = "Show \(title.lowercased()) photos"
             button.setAccessibilityLabel("\(title) filter")
-            button.setAccessibilityIdentifier("flagFilter.\(title)")
+            button.setAccessibilityIdentifier("\(identifierPrefix)flagFilter.\(title)")
             return (flag, button)
         }
         super.init(frame: .zero)
@@ -112,7 +112,7 @@ final class FlagFilterControl: NSStackView {
 
     private func update() {
         for (flag, button) in buttons {
-            let on = state.filter.flags.contains(flag)
+            let on = state.filter.attributes.flags.contains(flag)
             button.state = on ? .on : .off
             button.contentTintColor = on ? (flag == .rejected ? .systemRed : Accent.color) : .tertiaryLabelColor
         }
@@ -120,10 +120,10 @@ final class FlagFilterControl: NSStackView {
 
     @objc private func toggled(_ sender: NSButton) {
         guard let flag = buttons.first(where: { $0.button === sender })?.flag else { return }
-        if state.filter.flags.contains(flag) {
-            state.filter.flags.remove(flag)
+        if state.filter.attributes.flags.contains(flag) {
+            state.filter.attributes.flags.remove(flag)
         } else {
-            state.filter.flags.insert(flag)
+            state.filter.attributes.flags.insert(flag)
         }
     }
 }
@@ -165,7 +165,7 @@ final class ColorLabelFilterControl: NSStackView {
 
     private func update() {
         for (label, button) in buttons {
-            let on = state.filter.colorLabels.contains(label)
+            let on = state.filter.attributes.colorLabels.contains(label)
             button.state = on ? .on : .off
             // A filled swatch, bright when it filters and muted otherwise. "None" is an empty circle.
             let symbol = label == .none ? (on ? "circle.slash" : "circle.dashed") : "circle.fill"
@@ -178,10 +178,10 @@ final class ColorLabelFilterControl: NSStackView {
 
     @objc private func toggled(_ sender: NSButton) {
         guard let label = buttons.first(where: { $0.button === sender })?.label else { return }
-        if state.filter.colorLabels.contains(label) {
-            state.filter.colorLabels.remove(label)
+        if state.filter.attributes.colorLabels.contains(label) {
+            state.filter.attributes.colorLabels.remove(label)
         } else {
-            state.filter.colorLabels.insert(label)
+            state.filter.attributes.colorLabels.insert(label)
         }
     }
 }

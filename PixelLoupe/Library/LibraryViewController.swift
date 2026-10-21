@@ -1,6 +1,7 @@
 import AppKit
 
-/// The Library module: filter bar across the top, photo grid, and size/sort toolbar below.
+/// The Library module: the Library Filter bar across the top (\ hides it), photo grid, and size/sort
+/// toolbar below.
 final class LibraryViewController: NSViewController {
     private let store: CatalogStore
     private let state: LibraryState
@@ -14,6 +15,10 @@ final class LibraryViewController: NSViewController {
         return compare
     }()
     private lazy var survey = SurveyViewController(store: store, state: state)
+    private var topSeparator: NSBox!
+    /// The grid starts below the filter bar, or at the top when \ hides it.
+    private var gridBelowFilterBar: NSLayoutConstraint!
+    private var gridAtTop: NSLayoutConstraint!
 
     init(store: CatalogStore, state: LibraryState) {
         self.store = store
@@ -37,8 +42,10 @@ final class LibraryViewController: NSViewController {
             child.view.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(child.view)
         }
-        let topSeparator = separator()
+        topSeparator = separator()
         let bottomSeparator = separator()
+        gridBelowFilterBar = grid.view.topAnchor.constraint(equalTo: topSeparator.bottomAnchor)
+        gridAtTop = grid.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor)
 
         NSLayoutConstraint.activate([
             filterBar.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -49,7 +56,6 @@ final class LibraryViewController: NSViewController {
             topSeparator.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topSeparator.trailingAnchor.constraint(equalTo: view.trailingAnchor),
 
-            grid.view.topAnchor.constraint(equalTo: topSeparator.bottomAnchor),
             grid.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             grid.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
 
@@ -80,9 +86,23 @@ final class LibraryViewController: NSViewController {
                 child.view.bottomAnchor.constraint(equalTo: bottom),
             ])
         }
+        updateFilterBar()
         state.addObserver(self) { [weak self] change in
-            if change == .presentation { self?.updatePresentation() }
+            switch change {
+            case .presentation: self?.updatePresentation()
+            case .filterBar: self?.updateFilterBar()
+            default: break
+            }
         }
+    }
+
+    private func updateFilterBar() {
+        let visible = state.isFilterBarVisible
+        filterBar.view.isHidden = !visible
+        topSeparator.isHidden = !visible
+        // Deactivate first so the two never conflict.
+        NSLayoutConstraint.deactivate(visible ? [gridAtTop] : [gridBelowFilterBar])
+        NSLayoutConstraint.activate(visible ? [gridBelowFilterBar] : [gridAtTop])
     }
 
     private func updatePresentation() {

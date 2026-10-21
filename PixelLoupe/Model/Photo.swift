@@ -147,7 +147,7 @@ nonisolated final class Photo: NSManagedObject {
 }
 
 /// Pick/reject state of a photo.
-nonisolated enum PhotoFlag: Int16, CaseIterable, Sendable {
+nonisolated enum PhotoFlag: Int16, CaseIterable, Codable, Sendable {
     case rejected = -1
     case unflagged = 0
     case picked = 1

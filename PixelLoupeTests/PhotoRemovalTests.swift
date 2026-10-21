@@ -245,11 +245,11 @@ struct RemoveCommandTests {
     @Test func deleteRejectedShowsOnlyRejectedThenRestoresTheView() throws {
         let (controller, order, directory) = try makeWindow()
         defer { controller.close(); _ = directory }
-        controller.state.filter.rating = nil
+        controller.state.filter.attributes.rating = nil
         controller.state.selectedPhotoIDs = [order[0], order[1]]
         let before = controller.state.filter
         controller.deleteRejectedPhotos(nil)
-        #expect(controller.state.filter.flags == [.rejected], "only the rejected photos are shown")
+        #expect(controller.state.filter.attributes.flags == [.rejected], "only the rejected photos are shown")
         #expect(controller.state.photoOrder == [order[1], order[3]])
         let alert = try #require(controller.window?.attachedSheet)
         let message = alert.contentView?.descendants.compactMap { ($0 as? NSTextField)?.stringValue } ?? []
@@ -265,7 +265,7 @@ struct RemoveCommandTests {
         defer { controller.close(); _ = directory }
         controller.state.filter.scope = .folder(path: "/nowhere")
         controller.deleteRejectedPhotos(nil)
-        #expect(controller.state.filter.flags.isEmpty, "the view doesn't change")
+        #expect(controller.state.filter.attributes.flags.isEmpty, "the view doesn't change")
         try answer(controller, .alertFirstButtonReturn)
         #expect(order.count == 4)
     }

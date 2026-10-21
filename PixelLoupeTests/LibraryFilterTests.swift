@@ -81,39 +81,39 @@ struct LibraryFilterTests {
     ])
     func ratingFilter(comparison: LibraryFilter.RatingComparison, rating: Int, expected: [String]) throws {
         var filter = LibraryFilter()
-        filter.rating = rating
-        filter.ratingComparison = comparison
+        filter.attributes.rating = rating
+        filter.attributes.ratingComparison = comparison
         #expect(try names(filter) == expected)
     }
 
     @Test func tagFilterMatchesAnySelectedTag() throws {
         var filter = LibraryFilter()
-        filter.tags = ["Landscape"]
+        filter.metadata.tags = ["Landscape"]
         #expect(try names(filter) == ["a.CR3", "d.ARW"])
-        filter.tags = ["Landscape", "Family"]
+        filter.metadata.tags = ["Landscape", "Family"]
         #expect(try names(filter) == ["c.jpg", "a.CR3", "d.ARW"])
     }
 
     @Test func flagFilterMatchesAnySelectedFlag() throws {
         var filter = LibraryFilter()
-        filter.flags = [.picked]
+        filter.attributes.flags = [.picked]
         #expect(try names(filter) == ["a.CR3"])
-        filter.flags = [.unflagged, .rejected]
+        filter.attributes.flags = [.unflagged, .rejected]
         #expect(try names(filter) == ["b.NEF", "c.jpg", "d.ARW"])
-        filter.flags = [.picked, .rejected]
-        filter.rating = 1
+        filter.attributes.flags = [.picked, .rejected]
+        filter.attributes.rating = 1
         #expect(try names(filter) == ["c.jpg", "a.CR3"], "flags combine with the rating filter")
     }
 
     @Test func searchMatchesCameraAndLensCaseInsensitively() throws {
         var filter = LibraryFilter()
-        filter.searchText = "nikon"
+        filter.text.query = "nikon"
         #expect(try names(filter) == ["b.NEF"])
-        filter.searchText = "24-70"
+        filter.text.query = "24-70"
         #expect(try names(filter) == ["a.CR3", "d.ARW"])
-        filter.searchText = "sony 24-70"
+        filter.text.query = "sony 24-70"
         #expect(try names(filter) == ["d.ARW"])
-        filter.searchText = "a.CR3"
+        filter.text.query = "a.CR3"
         #expect(try names(filter).isEmpty, "file names are not searched")
     }
 
@@ -151,8 +151,8 @@ struct LibraryFilterTests {
     @Test func combinedFilters() throws {
         var filter = LibraryFilter()
         filter.scope = .folder(path: "/Photos/Home")
-        filter.tags = ["Family"]
-        filter.rating = 1
+        filter.metadata.tags = ["Family"]
+        filter.attributes.rating = 1
         #expect(try names(filter) == ["c.jpg"])
     }
 }

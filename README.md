@@ -140,7 +140,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `⇧⌘R` | Revert to Original (selected photos) |
 | `⇧⌘C` / `⇧⌘V` | Copy Settings (the selected photo's) / Paste Settings (a copied preset or photo's settings onto every selected photo) |
 | `⇧⌘I` | Import Photos: opens the import window (see [Importing photos](#importing-photos)); in it, `Space` checks or unchecks the selected photos, and while a photo is enlarged `←` / `→` step and `Esc` returns to the grid |
-| `⌘F` | Search camera and lens |
+| `⌘F` | Show the Library Filter bar's Text mode (alongside any other active modes) and put the cursor in its search field |
 | `` ` `` | Show or hide the Develop loupe (hold and click to place it) |
 | `⌘,` | Settings (General: confirm when quitting; Appearance: appearance, matte color and Monochrome Mode; Import: JPEG sidecars and opening the import window when a card is inserted; Displays: the secondary window's display; External Editing) |
 | `⌘Q` | Quit, after asking "Are you sure you want to quit?" (Return quits; turn the question off in Settings ▸ General or with its Don't ask again box) |
@@ -152,7 +152,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `R` | Crop & Straighten (Develop); in the crop tool `Return` applies, `Esc` cancels, `X` flips the orientation |
 | `J` | Show or hide shadow and highlight clipping on the Develop preview |
 | `Y` / `⌥Y` / `⇧Y` | Develop's Before/After (View ▸ Before/After): the photo before its edits left of / above the edited photo, or Split Screen (one photo, before left of a line down the middle and after right of it); the same key again goes back to the edited photo |
-| `\` | Before Only: show the Develop photo before its edits; `\` again shows it edited |
+| `\` | Library: show or hide the Library Filter bar (View ▸ Hide Filter Bar; hiding it keeps its filters, and the filmstrip shows "42 of 310 photos" while they leave photos out). Develop: Before Only, the photo before its edits; `\` again shows it edited |
 | `W` | White Balance Selector: click something that should be neutral gray (Develop ▸ Adjust) |
 | `⌘K` | Add Keywords: the cursor in the right sidebar's Keywords field (in Library; shows the sidebar if hidden) |
 | `Tab` | Show or hide both sidebars (in Develop: the folder sidebar and the adjustment panel) |
@@ -332,12 +332,28 @@ Control-click photos in the grid for **Develop Settings ▸**, below Add to Coll
 
 Each is one undoable step (`⌘Z`) and is recorded in each photo's History.
 
+## Library Filter
+
+The Library Filter bar above the grid works like Lightroom's. Its header chooses the modes: **Text**, **Attribute**,
+**Metadata** or **None**. Click a mode to show just it (click it again to turn it off), or Shift-click to add or
+remove it; the active modes' rows all apply, so a photo must match every one. Each row's × clears that mode.
+
+- **Text** searches camera make, model and lens; every word must match.
+- **Attribute** filters by flag (Picked, Unflagged, Rejected), rating (≥, = or ≤ a number of stars) and color label.
+- **Metadata** filters by keyword (and the keywords below it).
+
+Turning a mode off (or choosing None) stops it filtering but keeps what it was set to, so turning it back on brings it
+back. The filter stays as you move between folders and collections, and the bar, its modes and their criteria are
+saved with the catalog. `\` hides the bar without clearing it; while it leaves photos out the filmstrip says so
+("42 of 310 photos") with a filter icon that shows the bar again. `⌘F` shows the bar's Text mode and puts the cursor
+in its field.
+
 ## Filmstrip
 
 The filmstrip along the bottom of the window shows the photos in the current folder (with the current filters), in
 both Library and Develop. Its selection stays in sync with the grid. The header shows the folder, photo count,
 selection and the selected photo's path, with flag filters (Picked, Unflagged, Rejected) and the star filter on the
-right; the star filter is shared with the Library's filter bar.
+right. They're the Library Filter's Attribute criteria: changing them here turns its Attribute mode on.
 
 ## Dragging photos out
 

@@ -335,7 +335,7 @@ final class LibraryInspectorViewController: NSViewController {
         state.presentation = .grid
         var filter = state.filter
         filter.scope = .allPhotos
-        filter.tags = [pathKey]
+        filter.metadata.tags = [pathKey]
         state.filter = filter
     }
 

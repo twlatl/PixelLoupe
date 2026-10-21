@@ -105,7 +105,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
             case .loupe:
                 updateLoupeButton()
             case .presentation: updateFullScreen()
-            case .filter, .selection: scheduleSelectionSave()
+            case .filter, .filterBar, .selection: scheduleSelectionSave()
             default: break
             }
             // Selecting a folder rechecks its files, in case a drive came back or went away.
@@ -170,8 +170,10 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
 
     private var selectionSave: DispatchWorkItem?
 
-    /// Shows the folder and photos that were selected when the catalog was last closed.
+    /// Shows the folder, filters and photos that were selected when the catalog was last closed.
     private static func restoreSelection(_ viewState: CatalogViewState, into state: LibraryState, context: NSManagedObjectContext) {
+        state.isFilterBarVisible = viewState.isFilterBarVisible
+        if let criteria = viewState.filterCriteria { state.filter.criteria = criteria }
         if let id = viewState.collectionID, let collection = PhotoCollection.with(id: id, in: context) {
             state.filter.scope = .collection(id: id, content: collection.content)
         } else if viewState.showsPreviousImport, let id = Photo.latestImportID(in: context) {
@@ -204,6 +206,8 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         if case .folder(let path) = state.filter.scope { viewState.folderPath = path } else { viewState.folderPath = nil }
         viewState.collectionID = state.filter.scope.collectionID
         if case .previousImport = state.filter.scope { viewState.showsPreviousImport = true } else { viewState.showsPreviousImport = false }
+        viewState.filterCriteria = state.filter.criteria
+        viewState.isFilterBarVisible = state.isFilterBarVisible
         viewState.selectedPhotos = state.selectedPhotoIDs.prefix(CatalogViewState.maximumSavedSelection).compactMap {
             (try? store.viewContext.existingObject(with: $0) as? Photo)?.id
         }
@@ -390,6 +394,9 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         case .maskOverlay:
             guard state.mode == .develop, state.developTool == .mask else { return false }
             develop.toggleMaskOverlay()
+        case .beforeAfter(.beforeOnly) where state.mode == .library:
+            // \ is Lightroom's Library Filter bar key in Library, Before Only in Develop.
+            toggleFilterBar(nil)
         case .beforeAfter(let view):
             // The same key again goes back to the edited photo. Crop, Masking and Spot Removal show the
             // photo their own way, so they close (as in Lightroom).
@@ -543,6 +550,11 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
     @objc func showBeforeAfter(_ sender: NSMenuItem) {
         guard let view = BeforeAfterView(rawValue: sender.tag) else { return }
         _ = perform(.beforeAfter(view))
+    }
+
+    /// \ in Library, as in Lightroom. Hiding the bar keeps its filters.
+    @objc func toggleFilterBar(_ sender: Any?) {
+        state.isFilterBarVisible.toggle()
     }
 
     /// F6, as in Lightroom.
@@ -717,7 +729,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         guard let window, window.attachedSheet == nil else { return }
         var rejected = LibraryFilter()
         rejected.scope = state.filter.scope
-        rejected.flags = [.rejected]
+        rejected.attributes.flags = [.rejected]
         rejected.sortKey = state.filter.sortKey
         rejected.ascending = state.filter.ascending
         let request = Photo.fetchRequest()
@@ -1115,6 +1127,13 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         case #selector(toggleFilmstrip(_:)):
             (item as? NSMenuItem)?.title = state.isFilmstripVisible ? "Hide Filmstrip" : "Show Filmstrip"
             return true
+        case #selector(toggleFilterBar(_:)):
+            // Shown with \ in Library (Develop's Before Only has it there); disabled while typing so
+            // the key reaches the text field.
+            let typing = (window?.firstResponder as? NSText)?.isEditable ?? false
+            (item as? NSMenuItem)?.title = state.isFilterBarVisible ? "Hide Filter Bar" : "Show Filter Bar"
+            (item as? NSMenuItem)?.keyEquivalent = state.mode == .library ? "\\" : ""
+            return !typing && state.mode == .library
         case #selector(toggleLoupe(_:)):
             (item as? NSMenuItem)?.title = state.isLoupeVisible && state.mode == .develop ? "Hide Loupe" : "Show Loupe"
             return true
@@ -1155,6 +1174,8 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
             let typing = (window?.firstResponder as? NSText)?.isEditable ?? false
             let view = (item as? NSMenuItem).flatMap { BeforeAfterView(rawValue: $0.tag) }
             (item as? NSMenuItem)?.state = state.mode == .develop && view != nil && state.beforeAfter == view ? .on : .off
+            // \ belongs to Show Filter Bar in Library.
+            if view == .beforeOnly { (item as? NSMenuItem)?.keyEquivalent = state.mode == .develop ? "\\" : "" }
             return !typing && state.mode == .develop && !state.selectedPhotoIDs.isEmpty
         case #selector(whiteBalanceSelector(_:)):
             // Shown with W in the menu; disabled while typing so the key reaches the text field.

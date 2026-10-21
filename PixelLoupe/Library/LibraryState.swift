@@ -42,6 +42,8 @@ enum PhotoPresentation {
 final class LibraryState {
     enum Change {
         case filter
+        /// The Library Filter bar was shown or hidden (\).
+        case filterBar
         case selection
         case thumbnailSize
         case mode
@@ -150,9 +152,21 @@ final class LibraryState {
         }
     }
 
+    /// Whether the Library Filter bar is showing above the grid (\ in Library). Hiding it keeps its
+    /// filters, as in Lightroom; the filmstrip says when photos are filtered out.
+    var isFilterBarVisible = true {
+        didSet { if isFilterBarVisible != oldValue { notify(.filterBar) } }
+    }
+
     /// Number of photos currently shown in the grid.
     private(set) var photoCount = 0 {
         didSet { if photoCount != oldValue { notify(.photoCount) } }
+    }
+
+    /// Number of photos in the grid's source (folder, collection…) before the filter bar's criteria,
+    /// for the filmstrip's "42 of 310 photos". Set by the grid.
+    var scopePhotoCount = 0 {
+        didSet { if scopePhotoCount != oldValue { notify(.photoCount) } }
     }
 
     /// Selects the photo `offset` places from the current one in grid order. Returns false at either end.
