@@ -14,7 +14,7 @@ final class AdjustmentsPanelViewController: NSViewController {
     private(set) var isRaw = true
 
     var onChange: ((_ adjustments: Adjustments, _ isFinal: Bool, _ actionName: String) -> Void)?
-    /// Called while a profile is highlighted in the Profile menu, with the settings it would give the
+    /// Called while a profile or white balance is highlighted in its menu, with the settings it would give the
     /// photo (to preview it without applying), and with `nil` when the menu closes.
     var onPreview: ((Adjustments?) -> Void)?
     var autoLight: (() -> Adjustments.Light?)?
@@ -656,6 +656,7 @@ final class AdjustmentsPanelViewController: NSViewController {
         }
         whiteBalancePopUp.target = target
         whiteBalancePopUp.action = #selector(ActionTarget.fire(_:))
+        whiteBalancePopUp.menu?.delegate = whiteBalancePreview
         actionTargets.append(target)
 
         whiteBalanceEyedropper.image = NSImage(systemSymbolName: "eyedropper", accessibilityDescription: "White balance selector")?
@@ -692,27 +693,71 @@ final class AdjustmentsPanelViewController: NSViewController {
     }
 
     private func selectWhiteBalance(named name: String) {
+        onPreview?(nil)
+        guard isEditingEnabled else { return refresh() }
+        defer { menuAutoWhiteBalance = nil }
+        guard let whiteBalance = whiteBalance(named: name) else {
+            if name == Adjustments.WhiteBalance.autoName { NSSound.beep() }
+            return refresh()
+        }
+        change("White Balance", isFinal: true) { $0.whiteBalance = whiteBalance }
+        refresh()
+    }
+
+    /// Auto's estimate, taken when the pop-up opens: it measures the photo on screen, which shows
+    /// whichever white balance is being previewed once the pointer moves.
+    private var menuAutoWhiteBalance: (temperature: Double, tint: Double)??
+
+    /// The white balance a choice in the pop-up gives the photo; `nil` when Auto can't be worked out.
+    private func whiteBalance(named name: String) -> Adjustments.WhiteBalance? {
         typealias WB = Adjustments.WhiteBalance
+        var whiteBalance = adjustments.whiteBalance
         switch name {
         case WB.asShotName:
-            change("White Balance", isFinal: true) { $0.whiteBalance = .init(isEnabled: $0.whiteBalance.isEnabled) }
+            return .init(isEnabled: whiteBalance.isEnabled)
         case WB.autoName:
-            guard let estimate = autoWhiteBalance?() else {
-                NSSound.beep()
-                refresh()
-                return
-            }
-            applyWhiteBalance(temperature: estimate.temperature, tint: estimate.tint, preset: WB.autoName)
+            guard let estimate = menuAutoWhiteBalance ?? autoWhiteBalance?() else { return nil }
+            return .init(isEnabled: true, temperature: estimate.temperature, tint: estimate.tint, preset: WB.autoName)
         case WB.customName:
-            change("White Balance", isFinal: true) {
-                // Keeps the values; just no longer a preset.
-                if $0.whiteBalance.isActive { $0.whiteBalance.preset = nil }
-            }
+            // Keeps the values; just no longer a preset.
+            if whiteBalance.isActive { whiteBalance.preset = nil }
+            return whiteBalance
         default:
-            guard let preset = WB.presets.first(where: { $0.name == name }) else { return }
-            applyWhiteBalance(temperature: preset.temperature, tint: preset.tint, preset: preset.name)
+            guard let preset = WB.presets.first(where: { $0.name == name }) else { return nil }
+            return .init(isEnabled: true, temperature: preset.temperature, tint: preset.tint, preset: preset.name)
         }
-        refresh()
+    }
+
+    /// Previews the highlighted white balance as the pointer (or arrow keys) moves through the pop-up,
+    /// as the Profile menu does; closing the menu ends the preview.
+    final class WhiteBalancePreview: NSObject, NSMenuDelegate {
+        weak var panel: AdjustmentsPanelViewController?
+
+        func menuWillOpen(_ menu: NSMenu) { panel?.menuAutoWhiteBalance = panel?.autoWhiteBalance?() }
+
+        func menuDidClose(_ menu: NSMenu) { panel?.previewWhiteBalance(named: nil) }
+
+        func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
+            guard let item else { return }
+            panel?.previewWhiteBalance(named: item.title)
+        }
+    }
+
+    private lazy var whiteBalancePreview: WhiteBalancePreview = {
+        let preview = WhiteBalancePreview()
+        preview.panel = self
+        return preview
+    }()
+
+    /// Shows the white balance named `name` on the photo without applying it (`nil` ends the preview).
+    func previewWhiteBalance(named name: String?) {
+        guard let name, let whiteBalance = whiteBalance(named: name) else {
+            onPreview?(nil)
+            return
+        }
+        var previewed = adjustments
+        previewed.whiteBalance = whiteBalance
+        onPreview?(previewed)
     }
 
     /// Sets the white balance to a temperature and tint, as one undoable edit.
