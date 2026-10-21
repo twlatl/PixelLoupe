@@ -10,7 +10,7 @@ import MapKit
 final class MapViewController: NSViewController, MKMapViewDelegate {
     private let store: CatalogStore
     private let state: LibraryState
-    let mapView = PhotoMapView()
+    let mapView = MKMapView()
     private lazy var filterBar = FilterBarViewController(store: store, state: state)
     private let topSeparator = NSBox()
     private var mapBelowFilterBar: NSLayoutConstraint!
@@ -63,10 +63,9 @@ final class MapViewController: NSViewController, MKMapViewDelegate {
         mapView.showsCompass = true
         mapView.showsScale = true
         mapView.register(PhotoMarkerView.self, forAnnotationViewWithReuseIdentifier: PhotoMarkerView.reuseIdentifier)
-        mapView.register(MKMarkerAnnotationView.self, forAnnotationViewWithReuseIdentifier: MKMapViewDefaultClusterAnnotationViewReuseIdentifier)
+        mapView.register(PhotoClusterView.self, forAnnotationViewWithReuseIdentifier: MKMapViewDefaultClusterAnnotationViewReuseIdentifier)
         mapView.setAccessibilityLabel("Map of photos")
         mapView.setAccessibilityIdentifier("photoMap")
-        mapView.onDoubleClick = { [weak self] view in self?.doubleClicked(view) }
 
         zoomSlider.target = self
         zoomSlider.action = #selector(zoomChanged(_:))
@@ -246,8 +245,14 @@ final class MapViewController: NSViewController, MKMapViewDelegate {
         updateSelection(reveal: false)
     }
 
+    /// Room kept around fitted pins: for the scale and controls, and the bar along the bottom.
+    private static let fitPadding = NSEdgeInsets(top: 60, left: 50, bottom: 100, right: 80)
+
     private func fit(_ pins: [any MKAnnotation], animated: Bool) {
-        mapView.showAnnotations(pins, animated: animated)
+        let rect = pins.map { MKMapRect(origin: MKMapPoint($0.coordinate), size: MKMapSize(width: 0, height: 0)) }
+            .reduce(MKMapRect.null) { $0.union($1) }
+        guard !rect.isNull else { return }
+        mapView.setVisibleMapRect(rect, edgePadding: Self.fitPadding, animated: animated)
         // One pin (or several in one place) would zoom to the street; a neighbourhood reads better.
         if mapView.camera.centerCoordinateDistance < 2_000 {
             let camera = mapView.camera.copy() as! MKMapCamera
@@ -300,6 +305,13 @@ final class MapViewController: NSViewController, MKMapViewDelegate {
         guard let annotation = view.annotation else { return }
         // Selecting is the filmstrip's; the map only shows it.
         mapView.deselectAnnotation(annotation, animated: false)
+        // The second click of a double-click selects the pin again (MapKit handles pins' clicks
+        // itself); acted on after MapKit finishes with the click, which would otherwise cancel a zoom.
+        // (clickCount is only valid for mouse events; VoiceOver and the keyboard select pins too.)
+        if let event = NSApp.currentEvent, [.leftMouseDown, .leftMouseUp].contains(event.type), event.clickCount == 2 {
+            DispatchQueue.main.async { [weak self] in self?.doubleClicked(annotation) }
+            return
+        }
         let ids = Set(Self.photos(in: annotation))
         guard !ids.isEmpty else { return }
         // In the grid's order, so the first is the active photo.
@@ -333,13 +345,13 @@ final class MapViewController: NSViewController, MKMapViewDelegate {
 
     /// A cluster is highlighted when any of its photos is selected.
     private func clusterTint(_ cluster: MKClusterAnnotation) -> NSColor {
-        cluster.memberAnnotations.contains { ($0 as? PhotoAnnotation)?.isSelectedPhoto == true } ? .controlAccentColor : .systemIndigo
+        cluster.memberAnnotations.contains { ($0 as? PhotoAnnotation)?.isSelectedPhoto == true } ? .controlAccentColor : .systemRed
     }
 
     /// Double-click: a photo opens enlarged in the Library; a cluster zooms in to its photos.
-    private func doubleClicked(_ view: MKAnnotationView) {
+    private func doubleClicked(_ annotation: any MKAnnotation) {
         hoverPopover.close()
-        switch view.annotation {
+        switch annotation {
         case let photo as PhotoAnnotation:
             state.selectedPhotoIDs = [photo.objectID]
             state.mode = .library
@@ -377,7 +389,8 @@ final class MapViewController: NSViewController, MKMapViewDelegate {
         hoverPopover.contentViewController = content
         hoverPopover.behavior = .semitransient
         hoverPopover.animates = false
-        hoverPopover.show(relativeTo: view.bounds, of: view, preferredEdge: .maxY)
+        // Above the marker (whose point is at the bottom), clear of the filmstrip.
+        hoverPopover.show(relativeTo: view.bounds, of: view, preferredEdge: view.isFlipped ? .minY : .maxY)
         if imageView.image == nil {
             let id = annotation.photoID, thumbnails = store.thumbnails
             Task { [weak imageView] in
@@ -425,25 +438,6 @@ final class MapViewController: NSViewController, MKMapViewDelegate {
     }
 }
 
-/// The map view, handling double-clicks on pins itself so MapKit doesn't also zoom in under them.
-final class PhotoMapView: MKMapView {
-    var onDoubleClick: ((MKAnnotationView) -> Void)?
-
-    override func mouseDown(with event: NSEvent) {
-        if event.clickCount == 2, let view = annotationView(at: convert(event.locationInWindow, from: nil)) {
-            onDoubleClick?(view)
-            return
-        }
-        super.mouseDown(with: event)
-    }
-
-    private func annotationView(at point: NSPoint) -> MKAnnotationView? {
-        var view = hitTest(convert(point, to: superview))
-        while let current = view, !(current is MKAnnotationView) { view = current.superview }
-        return view as? MKAnnotationView
-    }
-}
-
 /// A photo's pin.
 final class PhotoAnnotation: NSObject, MKAnnotation {
     let objectID: NSManagedObjectID
@@ -457,6 +451,25 @@ final class PhotoAnnotation: NSObject, MKAnnotation {
         photoID = pin.photoID
         self.coordinate = coordinate
         title = pin.fileName
+    }
+}
+
+/// A cluster of photos' markers, showing their count.
+final class PhotoClusterView: MKMarkerAnnotationView {
+    override init(annotation: (any MKAnnotation)?, reuseIdentifier: String?) {
+        super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
+        // The count says it all; file names under the markers would clutter the map.
+        titleVisibility = .hidden
+        subtitleVisibility = .hidden
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    // MapKit reports markers' accessibility frames scaled away from the map's center, so VoiceOver
+    // (and UI tests) would point at the wrong place; the view's own frame is the right one.
+    override func accessibilityFrame() -> NSRect {
+        NSAccessibility.screenRect(fromView: self, rect: bounds)
     }
 }
 
@@ -477,6 +490,14 @@ final class PhotoMarkerView: MKMarkerAnnotationView {
         glyphImage = NSImage(systemSymbolName: "photo", accessibilityDescription: nil)
         markerTintColor = .systemRed
         canShowCallout = false
+        titleVisibility = .hidden
+        subtitleVisibility = .hidden
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
+    }
+
+    // See PhotoClusterView.
+    override func accessibilityFrame() -> NSRect {
+        NSAccessibility.screenRect(fromView: self, rect: bounds)
     }
 
     @available(*, unavailable)
@@ -492,12 +513,6 @@ final class PhotoMarkerView: MKMarkerAnnotationView {
         isPhotoSelected = false
     }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        trackingAreas.filter { $0.owner === self }.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow], owner: self))
-    }
-
     override func mouseEntered(with event: NSEvent) {
         onHover?(self, true)
     }
@@ -506,3 +521,4 @@ final class PhotoMarkerView: MKMarkerAnnotationView {
         onHover?(self, false)
     }
 }
+
