@@ -30,8 +30,15 @@ final class LocationPanelView: NSView, MKMapViewDelegate, MKLocalSearchCompleter
     private var search: MKLocalSearch?
     /// The place found or dragged to, not yet given to the photos.
     private(set) var pending: GPSCoordinate? {
-        didSet { updateButtons() }
+        didSet {
+            updateButtons()
+            (mapView.view(for: pin) as? PinView)?.tint = pinTint
+        }
     }
+
+    /// The Map module's pin: red for the photos' location, the accent colour for a place found but
+    /// not given to them yet.
+    var pinTint: NSColor { pending == nil ? .systemRed : .controlAccentColor }
     private var hasPhotos = false
     private var hasLocation = false
     /// Watches for clicks while the field is being typed in (see `endEditingIfClickedOutside`).
@@ -311,9 +318,10 @@ final class LocationPanelView: NSView, MKMapViewDelegate, MKLocalSearchCompleter
     // MARK: - Pin
 
     func mapView(_ mapView: MKMapView, viewFor annotation: any MKAnnotation) -> MKAnnotationView? {
-        let view = mapView.dequeueReusableAnnotationView(withIdentifier: "pin") as? MKMarkerAnnotationView
-            ?? MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: "pin")
+        let view = mapView.dequeueReusableAnnotationView(withIdentifier: "pin") as? PinView
+            ?? PinView(annotation: annotation, reuseIdentifier: "pin")
         view.annotation = annotation
+        view.tint = pinTint
         view.isDraggable = true
         view.setAccessibilityLabel("Location pin")
         return view

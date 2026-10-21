@@ -114,5 +114,8 @@ struct LocationPanelTests {
         #expect(panel.control(panel.searchField, textView: textView, doCommandBy: #selector(NSResponder.insertNewline(_:))))
         #expect(panel.pending?.latitude ?? 0 < -33.8, "typed coordinates are used without a search")
         #expect(!panel.applyButton.isEnabled, "no photos selected")
+        #expect(panel.pinTint == .controlAccentColor, "a place found but not applied shows in the accent colour")
+        panel.show(nil, isMixed: false, hasPhotos: true)
+        #expect(panel.pinTint == .systemRed)
     }
 }
