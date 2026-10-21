@@ -685,22 +685,35 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
     /// The Remove Photo dialog: remove from the catalog, or also move the files to the Trash.
     private func confirmRemoval(of ids: [NSManagedObjectID]) {
         guard !ids.isEmpty, let window, window.attachedSheet == nil else { return }
-        let alert = NSAlert()
-        if ids.count == 1 {
-            alert.messageText = "Remove Photo from PixelLoupe Catalog"
-            alert.informativeText = "This photo will be removed from your PixelLoupe Catalog. Select \"Delete from Disk\" to also move the selected photos on your computer to the Finder’s trash."
-        } else {
-            alert.messageText = "Remove \(ids.count) Photos from PixelLoupe Catalog"
-            alert.informativeText = "These \(ids.count) photos will be removed from your PixelLoupe Catalog. Select \"Delete from Disk\" to also move the selected photos on your computer to the Finder’s trash."
-        }
-        Self.addRemovalButtons(to: alert)
+        let alert = Self.removalAlert(for: editing.photos(ids))
         alert.beginSheetModal(for: window) { [weak self] response in
             switch response {
             case .alertFirstButtonReturn: self?.removeAskingAboutCopies(ids, trash: false)
-            case .alertSecondButtonReturn: self?.removeAskingAboutCopies(ids, trash: true)
+            case .alertSecondButtonReturn where alert.buttons.count == 3: self?.removeAskingAboutCopies(ids, trash: true)
             default: break
             }
         }
+    }
+
+    /// The Remove Photo dialog for `photos`. Virtual copies have no file of their own, so removing
+    /// only copies offers no Delete from Disk.
+    static func removalAlert(for photos: [Photo]) -> NSAlert {
+        let alert = NSAlert()
+        if !photos.isEmpty, photos.allSatisfy(\.isVirtualCopy) {
+            alert.messageText = photos.count == 1 ? "Remove the selected Virtual Copy?" : "Remove the \(photos.count) selected Virtual Copies?"
+            alert.addButton(withTitle: "Remove from PixelLoupe")
+            alert.addButton(withTitle: "Cancel")
+            return alert
+        }
+        if photos.count == 1 {
+            alert.messageText = "Remove Photo from PixelLoupe Catalog"
+            alert.informativeText = "This photo will be removed from your PixelLoupe Catalog. Select \"Delete from Disk\" to also move the selected photos on your computer to the Finder’s trash."
+        } else {
+            alert.messageText = "Remove \(photos.count) Photos from PixelLoupe Catalog"
+            alert.informativeText = "These \(photos.count) photos will be removed from your PixelLoupe Catalog. Select \"Delete from Disk\" to also move the selected photos on your computer to the Finder’s trash."
+        }
+        addRemovalButtons(to: alert)
+        return alert
     }
 
     /// Removing a master that has virtual copies not being removed asks whether to remove the copies

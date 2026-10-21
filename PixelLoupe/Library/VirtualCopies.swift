@@ -15,6 +15,9 @@ extension PhotoEditing {
         for source in sources {
             let master = source.master ?? source
             let copy = Photo(context: context)
+            // The grid's fetched results must see the copy under the id it keeps after saving, or its
+            // cell can't find the photo and rating or removing it does nothing (see addMergedPhoto).
+            try? context.obtainPermanentIDs(for: [copy])
             copy.duplicate(from: source)
             // Named before it joins the master's copies, so it isn't counted among them.
             copy.copyName = Self.nextCopyName(for: master)
