@@ -12,6 +12,7 @@ final class LocationPanelView: NSView, MKMapViewDelegate, MKLocalSearchCompleter
     var onRemove: (() -> Void)?
 
     let mapView = MKMapView()
+    private(set) lazy var zoomControl = MKZoomControl(mapView: mapView)
     /// Takes focus only when clicked (like the sidebar's other fields), so AppKit never hands it focus
     /// on its own when the view changes.
     let searchField = ClickToFocusSearchField()
@@ -117,6 +118,14 @@ final class LocationPanelView: NSView, MKMapViewDelegate, MKLocalSearchCompleter
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
         for view in arranged { view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
+        // + and − on the map's right-hand side.
+        zoomControl.translatesAutoresizingMaskIntoConstraints = false
+        zoomControl.setAccessibilityIdentifier("locationZoom")
+        mapView.addSubview(zoomControl)
+        NSLayoutConstraint.activate([
+            zoomControl.trailingAnchor.constraint(equalTo: mapView.trailingAnchor, constant: -8),
+            zoomControl.centerYAnchor.constraint(equalTo: mapView.centerYAnchor),
+        ])
         show(nil, isMixed: false, hasPhotos: false)
     }
 

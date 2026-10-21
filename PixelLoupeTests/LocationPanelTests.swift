@@ -1,6 +1,7 @@
 import AppKit
 import CoreData
 import Foundation
+import MapKit
 import Testing
 @testable import PixelLoupe
 
@@ -123,6 +124,11 @@ struct LocationPanelTests {
     @Test("↑ ↓ and Return work the places found from the keyboard")
     func keyboard() throws {
         let panel = LocationPanelView()
+        panel.frame = NSRect(x: 0, y: 0, width: 300, height: 320)
+        panel.layoutSubtreeIfNeeded()
+        let zoom = panel.zoomControl.frame
+        #expect(panel.zoomControl.superview === panel.mapView && zoom.maxX > panel.mapView.bounds.midX && zoom.width > 0,
+                "the mini map has + and − on its right")
         let textView = NSTextView()
         #expect(!panel.control(panel.searchField, textView: textView, doCommandBy: #selector(NSResponder.moveDown(_:))),
                 "with nothing found, the field keeps its own keys")
