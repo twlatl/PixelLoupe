@@ -626,7 +626,9 @@ White Balance Selector (the eyedropper, also **W**), a **WB:** pop-up, and **Tem
 the low end more room) and **Tint** (−150…+150) sliders drawn blue to yellow and green to magenta.
 
 - The pop-up lists As Shot, Auto, Daylight, Cloudy, Shade, Tungsten, Fluorescent, Flash and Custom for RAW files, and only
-  As Shot, Auto and Custom for other files. Moving a slider makes it Custom.
+  As Shot, Auto and Custom for other files. Moving a slider makes it Custom. As with the Profile menu, the pointer (or
+  arrow keys) moving through the open pop-up previews each white balance on the photo and in the Navigator; closing it
+  without choosing puts the photo back.
 - The selector shows a floating loupe beside the pointer: **Pick a Neutral Target** above a magnified 5 × 5 grid of the
   photo, and the grid's average (R, G, B in percent) below. Click something that should be neutral and the temperature
   and tint are set to make it so.
