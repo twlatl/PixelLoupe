@@ -312,4 +312,76 @@ struct RetouchOverlayTests {
         panel.setMode(.clone)
         #expect(panel.mode == .clone)
     }
+
+    @Test("Zoomed in, dragging off the spots pans; a click still places, and spots still drag (RAW-151)")
+    func zoomedPan() {
+        var pans: [CGVector] = []
+        overlay.isZoomed = { true }
+        overlay.onPan = { pans.append($0) }
+        overlay.mouseDown(with: event(.leftMouseDown, 210, 160))
+        overlay.mouseDragged(with: event(.leftMouseDragged, 220, 150))
+        overlay.mouseDragged(with: event(.leftMouseDragged, 230, 145))
+        overlay.mouseUp(with: event(.leftMouseUp, 230, 145))
+        #expect(pans == [CGVector(dx: 10, dy: -10), CGVector(dx: 10, dy: -5)])
+        #expect(log.placed.isEmpty && log.changes.isEmpty)
+
+        overlay.mouseDown(with: event(.leftMouseDown, 210, 160))
+        overlay.mouseDragged(with: event(.leftMouseDragged, 211, 160))
+        overlay.mouseUp(with: event(.leftMouseUp, 211, 160))
+        #expect(pans.count == 2 && log.placed.count == 1)
+
+        overlay.spots = [spot()]
+        overlay.mouseDown(with: event(.leftMouseDown, 110, 160))
+        overlay.mouseDragged(with: event(.leftMouseDragged, 150, 190))
+        overlay.mouseUp(with: event(.leftMouseUp, 150, 190))
+        #expect(pans.count == 2 && log.changes.last?.action == "Move Spot")
+    }
+
+    @Test("Without a zoom, dragging off the spots doesn't pan")
+    func fitDoesNotPan() {
+        var pans = 0
+        overlay.onPan = { _ in pans += 1 }
+        overlay.mouseDown(with: event(.leftMouseDown, 210, 160))
+        overlay.mouseDragged(with: event(.leftMouseDragged, 260, 160))
+        overlay.mouseUp(with: event(.leftMouseUp, 260, 160))
+        #expect(pans == 0 && log.placed.count == 1)
+    }
+
+    @Test("Each spot's row has a button that deletes it, at the right edge of the list (RAW-151)")
+    func rowDeleteButton() throws {
+        let panel = RetouchPanelViewController()
+        let window = TestWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 700), styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = panel.view
+        let a = spot(), b = spot(), eye = PhotoAdjustments.RedEyeSpot()
+        panel.display(spots: [a, b], redEyes: [eye], selecting: a.id)
+        window.layoutIfNeeded()
+        window.setContentSize(NSSize(width: 340, height: 700))
+        window.layoutIfNeeded()
+
+        var sent: (spots: [PhotoAdjustments.Spot], eyes: [PhotoAdjustments.RedEyeSpot], action: String)?
+        panel.onChange = { spots, eyes, isFinal, action in
+            sent = (spots, eyes, action)
+            #expect(isFinal)
+        }
+        let table = try #require(subview("spotList", of: NSTableView.self, in: panel.view))
+        let row = try #require(table.view(atColumn: 0, row: 1, makeIfNecessary: true))
+        let delete = try #require(subview("deleteSpot.1", of: NSButton.self, in: row))
+        #expect(delete.accessibilityLabel() == "Delete Clone 2")
+        let list = try #require(table.enclosingScrollView)
+        let frame = delete.convert(delete.bounds, to: list)
+        #expect(list.bounds.contains(frame) && frame.maxX > list.bounds.maxX - 30, "button \(frame) list \(list.bounds)")
+
+        delete.performClick(nil)
+        #expect(sent?.spots.map(\.id) == [a.id] && sent?.eyes.map(\.id) == [eye.id] && sent?.action == "Delete Spot")
+        #expect(panel.selectedID == a.id, "deleting another row leaves the selection alone")
+
+        let eyeRow = try #require(table.view(atColumn: 0, row: 1, makeIfNecessary: true))
+        try #require(subview("deleteSpot.1", of: NSButton.self, in: eyeRow)).performClick(nil)
+        #expect(sent?.spots.map(\.id) == [a.id] && sent?.eyes.isEmpty == true)
+    }
+
+    private func subview<View: NSView>(_ identifier: String, of type: View.Type, in view: NSView) -> View? {
+        if let view = view as? View, view.accessibilityIdentifier() == identifier { return view }
+        return view.subviews.lazy.compactMap { self.subview(identifier, of: type, in: $0) }.first
+    }
 }

@@ -30,6 +30,8 @@ final class RetouchPanelViewController: NSViewController, NSTableViewDataSource,
     private let detail = NSStackView()
     private var sizeRow: SliderRow?, featherRow: SliderRow?, opacityRow: SliderRow?
     private var actionTargets: [ActionTarget] = []
+    /// The targets for each row's delete button (replaced whenever the rows are rebuilt).
+    private var rowDeleteTargets: [UUID: ActionTarget] = [:]
 
     private struct Row { var id: UUID; var title: String }
     private var rows: [Row] {
@@ -60,9 +62,10 @@ final class RetouchPanelViewController: NSViewController, NSTableViewDataSource,
         updateHint()
 
         let column = NSTableColumn(identifier: .init("spot"))
+        column.resizingMask = .autoresizingMask
         table.addTableColumn(column)
         table.headerView = nil
-        table.rowHeight = 22
+        table.rowHeight = 24
         table.dataSource = self
         table.delegate = self
         table.setAccessibilityLabel("Spots")
@@ -190,10 +193,17 @@ final class RetouchPanelViewController: NSViewController, NSTableViewDataSource,
 
     private func deleteSelected() {
         guard let id = selectedID else { return }
+        delete(id)
+    }
+
+    /// Deletes a spot or red eye; deleting the selected one clears the selection.
+    private func delete(_ id: UUID) {
         spots.removeAll { $0.id == id }
         redEyes.removeAll { $0.id == id }
-        selectedID = nil
-        onSelectionChange?(nil)
+        if selectedID == id {
+            selectedID = nil
+            onSelectionChange?(nil)
+        }
         onChange?(spots, redEyes, true, "Delete Spot")
         refresh()
     }
@@ -228,9 +238,27 @@ final class RetouchPanelViewController: NSViewController, NSTableViewDataSource,
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let label = NSTextField(labelWithString: rows[row].title)
+        let item = rows[row]
+        let label = NSTextField(labelWithString: item.title)
         label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        return label
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let delete = NSButton(image: NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Delete \(item.title)")!,
+                              target: nil, action: nil)
+        delete.isBordered = false
+        delete.symbolConfiguration = NSImage.SymbolConfiguration(paletteColors: [.white, .systemRed])
+        delete.toolTip = "Delete \(item.title)"
+        delete.setAccessibilityIdentifier("deleteSpot.\(row)")
+        delete.isEnabled = isEditingEnabled
+        let id = item.id
+        let deleteTarget = ActionTarget { [weak self] _ in self?.delete(id) }
+        delete.target = deleteTarget
+        delete.action = #selector(ActionTarget.fire(_:))
+        rowDeleteTargets[id] = deleteTarget
+
+        let cell = NSStackView(views: [label, NSView(), delete])
+        cell.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 4)
+        return cell
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {

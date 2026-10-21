@@ -2,6 +2,7 @@ import AppKit
 
 /// Spots drawn over the Develop preview while Spot Removal is open: each spot's circle and, joined by
 /// an arrow, its source. Click to place one, drag a circle to move it, scroll to resize the selected one.
+/// While the photo is zoomed in the cursor is a hand, and dragging off the spots pans the photo.
 final class RetouchOverlayView: NSView {
     /// The photo's frame in view points.
     var frameRect = CGRect.zero { didSet { needsDisplay = true } }
@@ -13,14 +14,21 @@ final class RetouchOverlayView: NSView {
     var onPlace: ((PhotoAdjustments.UnitPoint) -> Void)?
     var onSelect: ((UUID?) -> Void)?
     var onChange: ((_ spots: [PhotoAdjustments.Spot], _ redEyes: [PhotoAdjustments.RedEyeSpot], _ isFinal: Bool, _ actionName: String) -> Void)?
+    var isZoomed: () -> Bool = { false }
+    /// A drag off the spots while zoomed, by this many points (drag direction).
+    var onPan: ((CGVector) -> Void)?
 
     private enum Drag {
         case spot(UUID, start: CGPoint, original: PhotoAdjustments.Spot)
         case source(UUID, start: CGPoint, original: PhotoAdjustments.Spot)
         case eye(UUID, start: CGPoint, original: PhotoAdjustments.RedEyeSpot)
+        /// Empty space while zoomed: a click places, a drag pans.
+        case pan(down: CGPoint, last: CGPoint, isPanning: Bool)
     }
     private var drag: Drag?
     private var moved = false
+    /// Movement under this many points is still a click.
+    private static let clickSlop: CGFloat = 3
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -35,7 +43,12 @@ final class RetouchOverlayView: NSView {
 
     override var isFlipped: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .crosshair) }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: isZoomed() ? .openHand : .crosshair) }
+
+    /// Call when the zoom changes, so the cursor follows.
+    func zoomDidChange() {
+        window?.invalidateCursorRects(for: self)
+    }
 
     private var longEdge: CGFloat { max(frameRect.width, frameRect.height) }
 
@@ -114,17 +127,39 @@ final class RetouchOverlayView: NSView {
                 return
             }
         }
+        if isZoomed() {
+            // Wait for the mouse up: a drag pans instead of placing.
+            drag = .pan(down: point, last: point, isPanning: false)
+            return
+        }
         guard frameRect.contains(point) else { onSelect?(nil); return }
         drag = nil
         onPlace?(unit(point))
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if case .pan(let down, let last, var isPanning) = drag {
+            let point = convert(event.locationInWindow, from: nil)
+            if !isPanning, hypot(point.x - down.x, point.y - down.y) >= Self.clickSlop {
+                isPanning = true
+                NSCursor.closedHand.set()
+            }
+            if isPanning { onPan?(CGVector(dx: point.x - last.x, dy: point.y - last.y)) }
+            drag = .pan(down: down, last: point, isPanning: isPanning)
+            return
+        }
         moved = true
         update(with: event, isFinal: false)
     }
 
     override func mouseUp(with event: NSEvent) {
+        if case .pan(let down, _, let isPanning) = drag {
+            drag = nil
+            window?.invalidateCursorRects(for: self)
+            guard !isPanning else { return }
+            if frameRect.contains(down) { onPlace?(unit(down)) } else { onSelect?(nil) }
+            return
+        }
         if moved { update(with: event, isFinal: true) }
         drag = nil
     }
@@ -147,6 +182,8 @@ final class RetouchOverlayView: NSView {
         case .eye(let id, let start, let original):
             guard let index = newEyes.firstIndex(where: { $0.id == id }) else { return }
             newEyes[index].center = shifted(original.center, from: start).clamped01
+        case .pan:
+            return
         }
         onChange?(newSpots, newEyes, isFinal, "Move Spot")
     }

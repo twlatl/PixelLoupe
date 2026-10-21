@@ -261,6 +261,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
                 if [.crop, .mask, .retouch].contains(state.developTool) { state.beforeAfter = nil }
                 updateTool()
                 zoomClickView.zoomDidChange()
+                retouchOverlay.zoomDidChange()
             case .beforeAfter:
                 metalView.needsDisplay = true
             case .zoom:
@@ -270,6 +271,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
                 }
                 lastZoom = zoom
                 zoomClickView.zoomDidChange()
+                retouchOverlay.zoomDidChange()
                 metalView.needsDisplay = true
             default: break
             }
@@ -1512,15 +1514,21 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             })
             state.zoom = zoom
         }
-        zoomClickView.onPan = { [weak self] delta in
-            guard let self, let drawn = zoomedDraw else { return }
-            var viewport = drawn.viewport
-            viewport.pan(
-                by: CGVector(dx: delta.dx * drawn.backingScale, dy: delta.dy * drawn.backingScale),
-                imageSize: drawn.imageSize, paneBounds: drawn.pane, backingScale: 1
-            )
-            state.zoom.center = viewport.center
-        }
+        zoomClickView.onPan = { [weak self] delta in self?.pan(by: delta) }
+        // Spot Removal takes clicks on the photo itself, but a zoomed photo still pans.
+        retouchOverlay.isZoomed = { [weak self] in self?.state.zoom.isZoomed ?? false }
+        retouchOverlay.onPan = { [weak self] delta in self?.pan(by: delta) }
+    }
+
+    /// Pans the zoomed photo by a drag of this many points.
+    private func pan(by delta: CGVector) {
+        guard let drawn = zoomedDraw else { return }
+        var viewport = drawn.viewport
+        viewport.pan(
+            by: CGVector(dx: delta.dx * drawn.backingScale, dy: delta.dy * drawn.backingScale),
+            imageSize: drawn.imageSize, paneBounds: drawn.pane, backingScale: 1
+        )
+        state.zoom.center = viewport.center
     }
 
     /// The viewport (in drawable pixels) for Fill or a zoom ratio; `nil` when the photo just fits.
