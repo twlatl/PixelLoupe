@@ -337,6 +337,72 @@ struct RetouchOverlayTests {
         #expect(pans.count == 2 && log.changes.last?.action == "Move Spot")
     }
 
+    @Test("The selected spot's handles resize it, down to the smallest size (RAW-151)")
+    func handlesResize() {
+        let spot = spot()
+        overlay.spots = [spot]
+        overlay.selectedID = spot.id
+        // The spot is at view (110, 160) with a 12-point radius: its right handle is at (122, 160).
+        overlay.mouseDown(with: event(.leftMouseDown, 122, 160))
+        overlay.mouseDragged(with: event(.leftMouseDragged, 130, 160))
+        overlay.mouseUp(with: event(.leftMouseUp, 130, 160))
+        let resized = log.changes.last!
+        #expect(resized.action == "Resize Spot" && resized.isFinal)
+        #expect(abs(resized.spots[0].radius - 0.05) < 1e-9, "20 points of a 400-point long edge")
+        #expect(resized.spots[0].center == spot.center && resized.spots[0].source == spot.source)
+
+        // Dragged in past the smallest size, it stops there.
+        overlay.mouseDown(with: event(.leftMouseDown, 110, 172))
+        overlay.mouseDragged(with: event(.leftMouseDragged, 110, 160))
+        #expect(log.changes.last!.spots[0].radius == RetouchOverlayView.radiusRange.lowerBound)
+    }
+
+    @Test("Hovering a spot shows its handles, so it resizes without selecting it first; red eyes too")
+    func hoverHandles() {
+        let spot = spot(), eye = PhotoAdjustments.RedEyeSpot(center: .init(x: 0.75, y: 0.25), radius: 0.01)
+        overlay.spots = [spot]
+        overlay.redEyes = [eye]
+        #expect(overlay.hoveredID == nil)
+        overlay.mouseMoved(with: event(.mouseMoved, 112, 161))
+        #expect(overlay.hoveredID == spot.id)
+        overlay.mouseMoved(with: event(.mouseMoved, 121, 160))
+        #expect(overlay.hoveredID == spot.id, "on the edge, by the handle")
+        overlay.mouseMoved(with: event(.mouseMoved, 210, 250))
+        #expect(overlay.hoveredID == nil)
+
+        // The eye at view (310, 85) is drawn 1.4 × its 4-point radius: its top handle is 5.6 points up.
+        overlay.mouseMoved(with: event(.mouseMoved, 310, 86))
+        #expect(overlay.hoveredID == eye.id)
+        overlay.mouseDown(with: event(.leftMouseDown, 310, 90.6))
+        overlay.mouseDragged(with: event(.leftMouseDragged, 310, 99))
+        overlay.mouseUp(with: event(.leftMouseUp, 310, 99))
+        #expect(log.selected.last == .some(eye.id))
+        #expect(log.changes.last?.action == "Resize Spot" && abs(log.changes.last!.eyes[0].radius - 14 / 1.4 / 400) < 1e-9)
+    }
+
+    @Test("The cursor: resize over a handle, a pointing hand over a spot, a hand or crosshair elsewhere")
+    func cursors() {
+        let spot = spot()
+        overlay.spots = [spot]
+        overlay.selectedID = spot.id
+        #expect(overlay.cursor(at: CGPoint(x: 122, y: 160)) == .columnResize)
+        #expect(overlay.cursor(at: CGPoint(x: 110, y: 172)) == .rowResize)
+        #expect(overlay.cursor(at: CGPoint(x: 110, y: 160)) == .pointingHand)
+        #expect(overlay.cursor(at: CGPoint(x: 310, y: 160)) == .pointingHand, "the source")
+        #expect(overlay.cursor(at: CGPoint(x: 210, y: 250)) == .crosshair)
+        overlay.isZoomed = { true }
+        #expect(overlay.cursor(at: CGPoint(x: 210, y: 250)) == .openHand)
+    }
+
+    @Test("Zoomed in, the zoom factor is how much bigger than the view the photo is drawn (RAW-151)")
+    func zoomFactor() {
+        #expect(overlay.zoomFactor == 1)
+        overlay.frameRect = CGRect(x: -500, y: -400, width: 1600, height: 1200)
+        #expect(overlay.zoomFactor == 1, "not zoomed: Fill")
+        overlay.isZoomed = { true }
+        #expect(abs(overlay.zoomFactor - 1600.0 / 420) < 1e-9)
+    }
+
     @Test("Without a zoom, dragging off the spots doesn't pan")
     func fitDoesNotPan() {
         var pans = 0

@@ -522,7 +522,9 @@ compressed Lightroom settings that are converted the first time the photo's Hist
 ## Spot removal and red eye (Develop)
 
 The **Spot Removal** tool (**Q**) removes blemishes: pick Heal or Clone, then click the photo. A circle marks the spot and a
-dashed one its source (chosen beside it); drag either, scroll to resize, and use the sliders for Size, Feather and Opacity. Heal
+dashed one its source (chosen beside it); drag either, and use the sliders for Size, Feather and Opacity. To resize a spot,
+drag one of the four handles on the circle under the pointer or the selected one, or scroll. A new spot takes the size of
+the last one you resized, as it looked on screen, so zoomed in it covers less of the photo. Heal
 keeps the source's texture and takes the colors and brightness around the spot; Clone copies it as it is. Choose Red Eye and click
 an eye: PixelLoupe finds the red pupil near the click, takes the red out and darkens it. Delete, or the ⓧ button on its row in
 the list, removes a spot. Spots

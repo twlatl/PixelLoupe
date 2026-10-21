@@ -1006,7 +1006,15 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         retouchOverlay.spots = spots
         retouchOverlay.redEyes = eyes
         retouchPanel.display(spots: spots, redEyes: eyes)
+        // Resizing a spot sets the size of the next one, as it looks on screen now.
+        if ["Resize Spot", "Spot Size"].contains(actionName), let spot = spots.first(where: { $0.id == retouchPanel.selectedID }) {
+            spotBrushRadius = spot.radius * retouchOverlay.zoomFactor
+        }
     }
+
+    /// The size of the next heal or clone spot, as a fraction of the photo's long edge while it fits:
+    /// zoomed in, a new spot is as big on screen as it would be unzoomed, not as big on the photo.
+    private var spotBrushRadius = 0.02
 
     /// A click in the Spot Removal tool: a heal or clone spot with a source beside it, or a red eye.
     private func placeRetouch(at point: PhotoAdjustments.UnitPoint) {
@@ -1020,7 +1028,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             var spot = PhotoAdjustments.Spot()
             spot.kind = retouchPanel.mode == .clone ? .clone : .heal
             spot.center = point
-            spot.radius = spots.last?.radius ?? 0.02
+            spot.radius = (spotBrushRadius / retouchOverlay.zoomFactor).clamped(to: RetouchOverlayView.radiusRange)
             spot.source = LightroomDevelopMapper.automaticSource(for: point, radius: spot.radius, imageSize: size)
             spots.append(spot)
             id = spot.id

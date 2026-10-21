@@ -76,7 +76,7 @@ final class RetouchPanelViewController: NSViewController, NSTableViewDataSource,
         scroll.borderType = .bezelBorder
         scroll.heightAnchor.constraint(equalToConstant: 86).isActive = true
 
-        let size = SliderRow(title: "Size", range: 0.002...0.1, defaultValue: 0.02, format: { String(format: "%.1f", $0 * 1000) })
+        let size = SliderRow(title: "Size", range: RetouchOverlayView.radiusRange, defaultValue: 0.02, format: { String(format: "%.1f", $0 * 1000) })
         let feather = SliderRow(title: "Feather", range: 0...1, defaultValue: 0.5, format: { String(format: "%.0f", $0 * 100) })
         let opacity = SliderRow(title: "Opacity", range: 0...1, defaultValue: 1, format: { String(format: "%.0f", $0 * 100) })
         for (row, name) in [(size, "Size"), (feather, "Feather"), (opacity, "Opacity")] {
