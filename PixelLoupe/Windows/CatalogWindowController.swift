@@ -1113,7 +1113,8 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
             return exportTask == nil && window?.attachedSheet == nil && !state.selectedPhotoIDs.isEmpty
         case #selector(cancelExport(_:)):
             return exportTask != nil
-        case #selector(photoMergeHDR(_:)), #selector(photoMergePanorama(_:)), #selector(photoMergePanoramaWithPreviousSettings(_:)):
+        case #selector(photoMergeHDR(_:)), #selector(photoMergePanorama(_:)),
+             #selector(photoMergeHDRWithPreviousSettings(_:)), #selector(photoMergePanoramaWithPreviousSettings(_:)):
             return mergeTask == nil && window?.attachedSheet == nil
                 && state.selectedPhotoIDs.count >= 2
                 && editing.photos(state.selectedPhotoIDs).filter { SupportedImageTypes.isRaw($0.fileURL) }.count >= 2

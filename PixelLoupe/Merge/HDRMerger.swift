@@ -133,11 +133,10 @@ nonisolated final class HDRMerger {
     private static let bandRows = 512
 
     init(sources: [PhotoMergeSource]) throws {
-        guard sources.count >= 2 else { throw PhotoMergeError.tooFewPhotos }
+        if let problem = PhotoMergeSource.problem(merging: sources) { throw problem }
         var frames: [Frame] = []
         var size: CGSize?
         for source in sources {
-            guard SupportedImageTypes.isRaw(source.url) else { throw PhotoMergeError.notRaw(source.name) }
             guard let filter = CIRAWFilter(imageURL: source.url), let output = filter.outputImage else {
                 throw PhotoMergeError.unreadable(source.name)
             }
@@ -145,10 +144,6 @@ nonisolated final class HDRMerger {
             size = output.extent.size
             frames.append(Frame(source: source, filter: filter, gain: 1))
         }
-        func camera(_ source: PhotoMergeSource) -> String {
-            "\(source.make ?? "")|\(source.model ?? "")".lowercased()
-        }
-        guard Set(sources.map(camera)).count == 1 else { throw PhotoMergeError.differentCameras }
         nativeSize = size ?? .zero
 
         let metered = sources.allSatisfy { $0.exposureTime > 0 && $0.aperture > 0 && $0.iso > 0 }

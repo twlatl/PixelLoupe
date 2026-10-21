@@ -3,8 +3,8 @@ import CoreData
 
 /// Photo ▸ Photo Merge, as in Lightroom: HDR… (⌃H) and Panorama… (⌃M) show a sheet previewing the
 /// merge of the selected photos with its options, then Merge runs it in the background with progress
-/// (and Cancel) in the Library's bottom bar. Panorama with Previous Settings (⌃⇧M) merges straight
-/// away. The merged DNG joins the catalog beside its sources.
+/// (and Cancel) in the Library's bottom bar. HDR and Panorama with Previous Settings (⌃⇧H, ⌃⇧M) merge
+/// straight away. The merged DNG joins the catalog beside its sources.
 extension CatalogWindowController {
     @objc func photoMergeHDR(_ sender: Any?) {
         guard let window, window.attachedSheet == nil, mergeTask == nil else { return }
@@ -48,15 +48,30 @@ extension CatalogWindowController {
         window.beginSheet(sheet.window!)
     }
 
-    /// Lightroom's headless merge: the last settings, no preview.
+    @objc func photoMergeHDRWithPreviousSettings(_ sender: Any?) {
+        mergeWithPreviousSettings(.hdr)
+    }
+
     @objc func photoMergePanoramaWithPreviousSettings(_ sender: Any?) {
+        mergeWithPreviousSettings(.panorama)
+    }
+
+    /// Lightroom's headless merge: the last settings, no preview. Photos that can't be merged get an
+    /// alert saying why, rather than a merge that fails in the background.
+    func mergeWithPreviousSettings(_ kind: PhotoMergeKind) {
         guard let window, window.attachedSheet == nil, mergeTask == nil else { return }
         let ids = selectedMergeIDs()
-        guard editing.photoMergeSources(ids).count >= 2 else {
-            NSSound.beep()
+        if let problem = PhotoMergeSource.problem(merging: editing.photoMergeSources(ids)) {
+            let alert = NSAlert()
+            alert.messageText = "The photos can’t be merged."
+            alert.informativeText = problem.localizedDescription
+            alert.beginSheetModal(for: window, completionHandler: nil)
             return
         }
-        startPanoramaMerge(ids, options: PanoramaMergeOptions.load())
+        switch kind {
+        case .hdr: startHDRMerge(ids, options: HDRMergeOptions.load())
+        case .panorama: startPanoramaMerge(ids, options: PanoramaMergeOptions.load())
+        }
     }
 
     @objc func cancelPhotoMerge(_ sender: Any?) {
@@ -128,10 +143,12 @@ extension CatalogWindowController {
             state.mergeStatus = nil
             switch result {
             case .success(let (output, note)):
+                // Lightroom selects the result, unless the selection has moved on meanwhile. Checked first:
+                // stacking the sources (Create Stack) hides them, which empties the selection.
+                let selectionKept = state.selectedPhotoIDs == selectionAtStart
                 // Written before Cancel arrived, so it joins the catalog rather than being left on disk.
                 let id = editing.addMergedPhoto(output, sources: ids, createsStack: createsStack)
-                // Lightroom selects the result, unless the selection has moved on meanwhile.
-                if let id, state.selectedPhotoIDs == selectionAtStart { state.selectedPhotoIDs = [id] }
+                if let id, selectionKept { state.selectedPhotoIDs = [id] }
                 if let note { showMergeNote(note) }
             case .failure(let error) where error is CancellationError:
                 break

@@ -124,23 +124,92 @@ struct PhotoMergeTests {
     @Test func menusOfferHDRAndPanoramaWithLightroomsShortcuts() async throws {
         let photoMenu = try #require(MainMenu.make().items.first { $0.title == "Photo" }?.submenu)
         let merge = try #require(photoMenu.items.first { $0.title == "Photo Merge" }?.submenu)
-        #expect(merge.items.map(\.title) == ["HDR…", "Panorama…", "Panorama with Previous Settings"])
-        let hdr = merge.items[0], panorama = merge.items[1], headless = merge.items[2]
+        let titles = ["HDR…", "HDR with Previous Settings", "Panorama…", "Panorama with Previous Settings"]
+        #expect(merge.items.map(\.title) == titles)
+        let hdr = merge.items[0], headlessHDR = merge.items[1], panorama = merge.items[2], headless = merge.items[3]
         #expect(hdr.keyEquivalent == "h" && hdr.keyEquivalentModifierMask == .control)
         #expect(panorama.keyEquivalent == "m" && panorama.keyEquivalentModifierMask == .control)
-        // Holding Shift turns Panorama… into the headless merge (⌃⇧M).
+        // Holding Shift turns HDR… and Panorama… into the headless merges (⌃⇧H, ⌃⇧M).
+        #expect(headlessHDR.isAlternate && headlessHDR.keyEquivalent == "h" && headlessHDR.keyEquivalentModifierMask == [.control, .shift])
         #expect(headless.isAlternate && headless.keyEquivalent == "m" && headless.keyEquivalentModifierMask == [.control, .shift])
 
         let setup = try await Setup()
         let controller = CatalogWindowController(store: setup.store)
-        for item in [hdr, panorama, headless] {
+        for item in [hdr, headlessHDR, panorama, headless] {
             controller.state.selectedPhotoIDs = [setup.ids[0]]
             #expect(!controller.validateUserInterfaceItem(item), "\(item.title) needs two photos")
             controller.state.selectedPhotoIDs = setup.ids
             #expect(controller.validateUserInterfaceItem(item), "\(item.title)")
         }
         let context = controller.rootViewController.main.library.grid.contextMenu()
-        #expect(context.items.first { $0.title == "Photo Merge" }?.submenu?.items.map(\.title) == ["HDR…", "Panorama…", "Panorama with Previous Settings"])
+        #expect(context.items.first { $0.title == "Photo Merge" }?.submenu?.items.map(\.title) == titles)
+    }
+
+    @Test("Says why photos can't be merged, from what the catalog knows (RAW-107)")
+    func problemsFoundBeforeMerging() throws {
+        let bracket = try Bracket()
+        #expect(PhotoMergeSource.problem(merging: bracket.sources) == nil)
+        #expect(PhotoMergeSource.problem(merging: [bracket.sources[0]]) == .tooFewPhotos)
+        var jpeg = bracket.sources[1]
+        jpeg.url = bracket.directory.url.appending(path: "a.jpg")
+        #expect(PhotoMergeSource.problem(merging: [bracket.sources[0], jpeg]) == .notRaw("a.jpg"))
+        var other = bracket.sources[1]
+        other.model = "EOS R6"
+        #expect(PhotoMergeSource.problem(merging: [bracket.sources[0], other]) == .differentCameras)
+    }
+
+    @Test("HDR with Previous Settings (⌃⇧H) merges with the saved options, then selects the result (RAW-107)")
+    func headlessHDRMergeUsesTheLastSettings() async throws {
+        let setup = try await Setup()
+        var options = HDRMergeOptions()
+        options.createsStack = true
+        options.save()
+        defer { Defaults.store.removeObject(forKey: "HDRMergeOptions") }
+
+        let controller = CatalogWindowController(store: setup.store)
+        defer { controller.close() }
+        controller.showWindow(nil)
+        controller.state.selectedPhotoIDs = setup.ids
+        controller.photoMergeHDRWithPreviousSettings(nil)
+        #expect(controller.window?.attachedSheet == nil, "no preview sheet")
+        #expect(controller.state.mergeKind == .hdr)
+        let task = try #require(controller.mergeTask)
+        await task.value
+
+        let selected = try #require(controller.state.selectedPhotoIDs.first)
+        let merged = setup.photo(selected)
+        #expect(controller.state.selectedPhotoIDs.count == 1)
+        #expect(merged.fileName == "IMG_0-HDR.dng")
+        #expect(merged.stack != nil, "Create Stack, as last saved")
+    }
+
+    @Test("A headless merge of photos that can't be merged says why instead of starting (RAW-107)")
+    func headlessMergeExplainsWhyItCannotMerge() async throws {
+        let setup = try await Setup()
+        let jpeg = try Fixtures.writeJPEG(to: setup.bracket.directory.url.appending(path: "IMG_3.jpg"), width: 480, height: 320)
+        _ = try await ImportService(store: setup.store).importPhotos(from: [jpeg])
+        let request = Photo.fetchRequest()
+        request.predicate = NSPredicate(format: "fileName == %@", "IMG_3.jpg")
+        let jpegID = try #require(try setup.store.viewContext.fetch(request).first?.objectID)
+
+        let controller = CatalogWindowController(store: setup.store)
+        defer { controller.close() }
+        controller.showWindow(nil)
+        let window = try #require(controller.window)
+        for merge in [controller.photoMergeHDRWithPreviousSettings, controller.photoMergePanoramaWithPreviousSettings] {
+            // Two RAW photos make the menu item available; the JPEG among them can't be merged.
+            controller.state.selectedPhotoIDs = setup.ids + [jpegID]
+            merge(nil)
+            #expect(controller.mergeTask == nil)
+            let sheet = try #require(window.attachedSheet)
+            #expect(sheet.contentView.flatMap { Self.text(in: $0) }?.contains("“IMG_3.jpg” isn’t a RAW photo") == true)
+            window.endSheet(sheet)
+        }
+    }
+
+    /// Every label's text in `view`, for reading an alert.
+    private static func text(in view: NSView) -> String {
+        ((view as? NSTextField)?.stringValue ?? "") + view.subviews.map { text(in: $0) }.joined(separator: "\n")
     }
 
     @Test func gridShowsTheMergedPhoto() async throws {
