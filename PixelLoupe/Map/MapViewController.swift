@@ -7,7 +7,7 @@ import MapKit
 /// Pins come from the catalog's location fields (see `PhotoLocation.swift`), fetched with the grid's
 /// filter, so the map always agrees with the grid and filmstrip and never reads files. Nearby pins
 /// cluster. Clicking a pin or cluster selects its photos; the selection's pins are highlighted.
-final class MapViewController: NSViewController, MKMapViewDelegate {
+final class MapViewController: NSViewController, MKMapViewDelegate, NSPopoverDelegate {
     private let store: CatalogStore
     private let state: LibraryState
     let mapView = MKMapView()
@@ -19,7 +19,9 @@ final class MapViewController: NSViewController, MKMapViewDelegate {
     let styleControl = NSSegmentedControl(labels: ["Standard", "Satellite", "Hybrid"], trackingMode: .selectOne, target: nil, action: nil)
     let countLabel = NSTextField(labelWithString: "")
     let emptyLabel = NSTextField(labelWithString: "No photos in this source have a location")
-    private let hoverPopover = NSPopover()
+    /// A pin's photos (see `showPeek`), and whether a click opened it rather than the pointer.
+    private let peekPopover = NSPopover()
+    private var isPeekPinned = false
 
     /// The pins shown, by photo.
     private(set) var annotations: [NSManagedObjectID: PhotoAnnotation] = [:]
@@ -59,6 +61,7 @@ final class MapViewController: NSViewController, MKMapViewDelegate {
         view = root
 
         mapView.delegate = self
+        peekPopover.delegate = self
         mapView.showsZoomControls = true
         mapView.showsCompass = true
         mapView.showsScale = true
@@ -316,6 +319,7 @@ final class MapViewController: NSViewController, MKMapViewDelegate {
         guard !ids.isEmpty else { return }
         // In the grid's order, so the first is the active photo.
         state.selectedPhotoIDs = pinOrder.filter { ids.contains($0) }
+        showPeek(for: annotation, from: view, pinned: true)
     }
 
     private static func photos(in annotation: any MKAnnotation) -> [NSManagedObjectID] {
@@ -349,7 +353,7 @@ final class MapViewController: NSViewController, MKMapViewDelegate {
 
     /// Double-click: a photo opens enlarged in the Library; a cluster zooms in to its photos.
     private func doubleClicked(_ annotation: any MKAnnotation) {
-        hoverPopover.close()
+        peekPopover.close()
         switch annotation {
         case let photo as PhotoAnnotation:
             state.selectedPhotoIDs = [photo.objectID]
@@ -362,40 +366,45 @@ final class MapViewController: NSViewController, MKMapViewDelegate {
         }
     }
 
-    // MARK: - Hover
+    // MARK: - Peek
 
-    /// Hovering over a pin shows its photo's thumbnail.
+    /// Hovering over a pin shows its photo's thumbnail while the pointer is on it.
     private func hover(_ view: PhotoMarkerView, isInside: Bool) {
-        guard isInside, let annotation = view.annotation as? PhotoAnnotation else {
-            hoverPopover.close()
+        // A popover opened by a click stays until the next click elsewhere.
+        guard !isPeekPinned || !peekPopover.isShown else { return }
+        guard isInside, let annotation = view.annotation else {
+            peekPopover.close()
             return
         }
-        let imageView = NSImageView()
-        imageView.imageScaling = .scaleProportionallyUpOrDown
-        imageView.image = store.thumbnails.cachedImage(for: annotation.photoID).map { NSImage(cgImage: $0, size: .zero) }
-        let name = NSTextField(labelWithString: annotation.title ?? "")
-        name.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        name.lineBreakMode = .byTruncatingMiddle
-        let stack = NSStackView(views: [imageView, name])
-        stack.orientation = .vertical
-        stack.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
-        NSLayoutConstraint.activate([
-            imageView.widthAnchor.constraint(equalToConstant: 180), imageView.heightAnchor.constraint(equalToConstant: 135),
-            name.widthAnchor.constraint(lessThanOrEqualToConstant: 180),
-        ])
-        let content = NSViewController()
-        content.view = stack
-        hoverPopover.contentViewController = content
-        hoverPopover.behavior = .semitransient
-        hoverPopover.animates = false
-        // Above the marker (whose point is at the bottom), clear of the filmstrip.
-        hoverPopover.show(relativeTo: view.bounds, of: view, preferredEdge: view.isFlipped ? .minY : .maxY)
-        if imageView.image == nil {
-            let id = annotation.photoID, thumbnails = store.thumbnails
-            Task { [weak imageView] in
-                if let image = await thumbnails.image(for: id) { imageView?.image = NSImage(cgImage: image, size: .zero) }
-            }
+        showPeek(for: annotation, from: view, pinned: false)
+    }
+
+    /// Shows the photos of a pin or cluster (in the grid's order) in a popover above it. A clicked one
+    /// (`pinned`) stays until the next click elsewhere, with arrows to step through a cluster's photos.
+    private func showPeek(for annotation: any MKAnnotation, from view: NSView, pinned: Bool) {
+        let ids = Self.photos(in: annotation)
+        let order = Dictionary(pinOrder.enumerated().map { ($1, $0) }) { first, _ in first }
+        let items = ids.sorted { (order[$0] ?? .max) < (order[$1] ?? .max) }.compactMap { id in
+            annotations[id].map { PhotoPeekViewController.Item(photoID: $0.photoID, name: $0.title ?? "") }
         }
+        guard !items.isEmpty, view.window != nil else { return }
+        peekPopover.close()
+        let peek = PhotoPeekViewController(thumbnails: store.thumbnails, items: items)
+        peekPopover.contentViewController = peek
+        peekPopover.behavior = pinned ? .transient : .semitransient
+        peekPopover.animates = false
+        isPeekPinned = pinned
+        // Above the pin (whose point is at the bottom), clear of the filmstrip.
+        peekPopover.show(relativeTo: view.bounds, of: view, preferredEdge: view.isFlipped ? .minY : .maxY)
+    }
+
+    /// The popover showing, if any; for tests.
+    var shownPeek: PhotoPeekViewController? {
+        peekPopover.isShown ? peekPopover.contentViewController as? PhotoPeekViewController : nil
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        isPeekPinned = false
     }
 
     // MARK: - Toolbar

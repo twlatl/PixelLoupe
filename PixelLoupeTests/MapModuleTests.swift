@@ -142,6 +142,28 @@ struct MapModuleTests {
         #expect(ratings == [2, 2])
     }
 
+    @Test("A cluster's peek steps through its photos with the arrows, wrapping around; one photo has no arrows")
+    func peek() throws {
+        let directory = try TemporaryDirectory()
+        let thumbnails = ThumbnailStore(directory: directory.url)
+        let items = ["a.jpg", "b.jpg", "c.jpg"].map { PhotoPeekViewController.Item(photoID: UUID(), name: $0) }
+        let peek = PhotoPeekViewController(thumbnails: thumbnails, items: items)
+        peek.loadView()
+        #expect(!peek.previousButton.isHidden && !peek.nextButton.isHidden)
+        #expect(peek.nameLabel.stringValue == "a.jpg  ·  1 of 3")
+        #expect(peek.previousButton.image != nil && peek.nextButton.image != nil, "SF Symbols")
+        peek.showNext(nil)
+        #expect(peek.index == 1 && peek.nameLabel.stringValue == "b.jpg  ·  2 of 3")
+        peek.showNext(nil); peek.showNext(nil)
+        #expect(peek.index == 0, "past the last goes back to the first")
+        peek.showPrevious(nil)
+        #expect(peek.index == 2 && peek.nameLabel.stringValue.hasPrefix("c.jpg"))
+
+        let single = PhotoPeekViewController(thumbnails: thumbnails, items: [items[0]])
+        single.loadView()
+        #expect(single.previousButton.isHidden && single.nextButton.isHidden && single.nameLabel.stringValue == "a.jpg")
+    }
+
     @Test func theZoomSliderIsALogScaleOfTheCameraDistance() {
         #expect(MapViewController.sliderValue(forDistance: MapViewController.farthest) == 0)
         #expect(abs(MapViewController.sliderValue(forDistance: MapViewController.nearest) - 1) < 1e-9)
