@@ -55,6 +55,7 @@ import AppKit
     @objc optional func collapseAllStacks(_ sender: Any?)
     @objc optional func expandAllStacks(_ sender: Any?)
     @objc optional func photoMergeHDR(_ sender: Any?)
+    @objc optional func photoMergeHDRWithPreviousSettings(_ sender: Any?)
     @objc optional func photoMergePanorama(_ sender: Any?)
     @objc optional func photoMergePanoramaWithPreviousSettings(_ sender: Any?)
     @objc optional func cancelPhotoMerge(_ sender: Any?)
@@ -140,17 +141,21 @@ enum MainMenu {
         return mainMenu
     }
 
-    /// Photo ▸ Photo Merge, also in the grid's context menu, with Lightroom's shortcuts: ⌃H for HDR,
-    /// ⌃M for Panorama, and ⌃⇧M (Panorama's alternate, shown while Shift is held) to merge a panorama
-    /// straight away with the last settings, without the preview.
+    /// Photo ▸ Photo Merge, also in the grid's context menu, with Lightroom's shortcuts: ⌃H for HDR and
+    /// ⌃M for Panorama, and ⌃⇧H and ⌃⇧M (their alternates, shown while Shift is held) to merge straight
+    /// away with the last settings, without the preview.
     static func photoMergeItem() -> NSMenuItem {
         let menu = NSMenu(title: "Photo Merge")
         menu.addItem(item("HDR…", #selector(PixelLoupeActions.photoMergeHDR(_:)), "h", modifiers: .control))
+        let headlessHDR = item("HDR with Previous Settings", #selector(PixelLoupeActions.photoMergeHDRWithPreviousSettings(_:)),
+                               "h", modifiers: [.control, .shift])
+        headlessHDR.isAlternate = true
+        menu.addItem(headlessHDR)
         menu.addItem(item("Panorama…", #selector(PixelLoupeActions.photoMergePanorama(_:)), "m", modifiers: .control))
-        let headless = item("Panorama with Previous Settings", #selector(PixelLoupeActions.photoMergePanoramaWithPreviousSettings(_:)),
-                            "m", modifiers: [.control, .shift])
-        headless.isAlternate = true
-        menu.addItem(headless)
+        let headlessPanorama = item("Panorama with Previous Settings", #selector(PixelLoupeActions.photoMergePanoramaWithPreviousSettings(_:)),
+                                    "m", modifiers: [.control, .shift])
+        headlessPanorama.isAlternate = true
+        menu.addItem(headlessPanorama)
         return submenuItem(menu)
     }
 

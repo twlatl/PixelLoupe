@@ -146,11 +146,10 @@ nonisolated final class PanoramaMerger {
     private var warpMaps: [WarpKey: WarpMap] = [:]
 
     init(sources: [PhotoMergeSource]) throws {
-        guard sources.count >= 2 else { throw PhotoMergeError.tooFewPhotos }
+        if let problem = PhotoMergeSource.problem(merging: sources) { throw problem }
         var filters: [CIRAWFilter] = []
         var size: CGSize?
         for source in sources {
-            guard SupportedImageTypes.isRaw(source.url) else { throw PhotoMergeError.notRaw(source.name) }
             guard let filter = CIRAWFilter(imageURL: source.url), let output = filter.outputImage else {
                 throw PhotoMergeError.unreadable(source.name)
             }
@@ -158,10 +157,6 @@ nonisolated final class PanoramaMerger {
             size = output.extent.size
             filters.append(filter)
         }
-        func camera(_ source: PhotoMergeSource) -> String {
-            "\(source.make ?? "")|\(source.model ?? "")".lowercased()
-        }
-        guard Set(sources.map(camera)).count == 1 else { throw PhotoMergeError.differentCameras }
         nativeSize = size ?? .zero
 
         let reference = sources.indices.min { a, b in

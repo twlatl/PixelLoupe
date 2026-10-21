@@ -133,6 +133,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `S` / `⇧S` | Collapse or expand the stack of the selected photo / move the selected photo to the top of its stack |
 | `⌘'` | Create Virtual Copy (Photo menu; a copy keeps the master's file but has its own edits, rating, flag, label and keywords) |
 | `⌃H` | Photo Merge ▸ HDR… (the selected bracketed RAW photos) |
+| `⌃⇧H` | Photo Merge ▸ HDR with Previous Settings: merges the HDR straight away with the last options, without the preview (hold Shift in the menu) |
 | `⌃M` | Photo Merge ▸ Panorama… (the selected overlapping RAW photos) |
 | `⌃⇧M` | Photo Merge ▸ Panorama with Previous Settings: merges a panorama straight away with the last options, without the preview (hold Shift in the menu) |
 | `⌘E` / `⌥⌘E` | Photo ▸ Edit In: edit the selected photos in the primary / additional external editor (Settings ▸ External Editing) |
@@ -774,6 +775,10 @@ the Library's bottom bar, and selects the result when it's done. The merged phot
 several stops above white to recover (stored in 256×256 tiles, as cameras do). It takes the middle exposure's white balance, capture date, camera and shooting
 details, and every source's keywords; its rating, flag and label start empty. Only RAW photos from one camera, all
 the same size, can be merged.
+
+Photo ▸ Photo Merge ▸ HDR with Previous Settings (`⌃⇧H`, or hold Shift in the menu) merges straight away with the last
+options used, without the sheet, in the background as Merge does. Panorama with Previous Settings (`⌃⇧M`) works the same
+way. When the photos can't be merged (a JPEG among them, or photos from different cameras), an alert says why.
 
 ## Photo Merge: Panorama
 

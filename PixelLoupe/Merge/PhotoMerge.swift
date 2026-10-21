@@ -49,6 +49,18 @@ nonisolated struct PhotoMergeSource: Sendable, Equatable {
     var lensCorrections = PhotoAdjustments.LensCorrections()
 
     var name: String { url.lastPathComponent }
+
+    /// The camera, as the merges compare it.
+    var camera: String { "\(make ?? "")|\(model ?? "")".lowercased() }
+
+    /// Why `sources` can't be merged, from what the catalog knows about them, or `nil` when they can
+    /// be as far as that goes (unreadable files and photos of different sizes are found as they're read).
+    static func problem(merging sources: [PhotoMergeSource]) -> PhotoMergeError? {
+        guard sources.count >= 2 else { return .tooFewPhotos }
+        if let photo = sources.first(where: { !SupportedImageTypes.isRaw($0.url) }) { return .notRaw(photo.name) }
+        guard Set(sources.map(\.camera)).count == 1 else { return .differentCameras }
+        return nil
+    }
 }
 
 nonisolated enum PhotoMergeError: LocalizedError, Equatable {
