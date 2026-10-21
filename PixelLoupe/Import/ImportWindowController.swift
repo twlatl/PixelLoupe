@@ -26,12 +26,13 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     private var cancelButton: NSButton?
 
     static let thumbnailSizeRange: ClosedRange<Double> = 100...400
-    /// The grid pane's narrowest: the filter and the sort pop-up, once "Sort" and the count have given way.
+    /// The grid pane's narrowest: the filter and the sort button and pop-up, once the count has given way.
     static let centerMinimumWidth: CGFloat = 560
     private static let thumbnailSizeKey = "ImportThumbnailSize"
     private static let includeSubfoldersKey = "ImportIncludesSubfolders"
     private static let ejectAfterImportKey = "ImportEjectsAfterImport"
     private static let sortKey = "ImportSort"
+    private static let sortAscendingKey = "ImportSortAscending"
     private static let fromItem = NSToolbarItem.Identifier("importFrom")
     private static let transferItem = NSToolbarItem.Identifier("importTransfer")
     private static let toItem = NSToolbarItem.Identifier("importTo")
@@ -66,6 +67,7 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     private let selectedLabel = NSTextField(labelWithString: "")
     private let filterControl = NSSegmentedControl(labels: ImportSelection.Filter.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
     private let sortPopUp = NSPopUpButton()
+    private let sortDirectionButton = NSButton()
     private let layout = NSCollectionViewFlowLayout()
     private let collectionView = PhotoCollectionView()
     private let gridScrollView = NSScrollView()
@@ -357,8 +359,6 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         filterControl.action = #selector(filterChanged(_:))
         filterControl.setAccessibilityLabel("Show")
         filterControl.setAccessibilityIdentifier("importFilter")
-        let sortLabel = NSTextField(labelWithString: "Sort")
-        sortLabel.textColor = .secondaryLabelColor
         for sort in ImportSelection.Sort.allCases {
             sortPopUp.addItem(withTitle: sort.title)
             sortPopUp.lastItem?.representedObject = sort.rawValue
@@ -369,10 +369,17 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         sortPopUp.target = self
         sortPopUp.action = #selector(sortChanged(_:))
         sortPopUp.setAccessibilityLabel("Sort")
-        let header = bar([selectedLabel, flexible(), filterControl, flexible(), sortLabel, sortPopUp])
-        // When the pane is narrow, "Sort" goes first and then the count, rather than the bar forcing the
-        // pane wider than the split view allows.
-        header.setVisibilityPriority(.init(rawValue: 800), for: sortLabel)
+        selection.setAscending(Defaults.store.object(forKey: Self.sortAscendingKey) as? Bool ?? true)
+        sortDirectionButton.bezelStyle = .toolbar
+        sortDirectionButton.isBordered = false
+        sortDirectionButton.imagePosition = .imageOnly
+        sortDirectionButton.target = self
+        sortDirectionButton.action = #selector(toggleSortDirection(_:))
+        sortDirectionButton.setAccessibilityIdentifier("importSortDirection")
+        updateSortDirectionButton()
+        let header = bar([selectedLabel, flexible(), filterControl, flexible(), sortDirectionButton, sortPopUp])
+        // When the pane is narrow, the count goes rather than the bar forcing the pane wider than the
+        // split view allows.
         header.setVisibilityPriority(.init(rawValue: 850), for: selectedLabel)
 
         // The grid, or one photo enlarged, on the matte.
@@ -892,7 +899,7 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     private func replaceSelection(with files: [ImportService.ScannedFile]) {
         checkAnchor = nil
         selection = ImportSelection(
-            files: files, transfer: options.effectiveTransfer, sort: selection.sort, filter: selection.filter,
+            files: files, transfer: options.effectiveTransfer, sort: selection.sort, ascending: selection.ascending, filter: selection.filter,
             destination: options.destination, allowsDuplicates: !options.skipsDuplicates, skipsRejected: options.skipsRejected)
         collectionView.reloadData()
         updateCounts()
@@ -958,6 +965,25 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         Defaults.store.set(raw, forKey: Self.sortKey)
         selection.setSort(sort)
         collectionView.reloadData()
+    }
+
+    @objc private func toggleSortDirection(_ sender: Any?) {
+        selection.setAscending(!selection.ascending)
+        Defaults.store.set(selection.ascending, forKey: Self.sortAscendingKey)
+        updateSortDirectionButton()
+        collectionView.reloadData()
+    }
+
+    /// The button keeps one symbol either way; descending tints it with the accent color. With no "Sort"
+    /// label beside it, the symbol is drawn 6pt larger than text-sized so it reads on its own.
+    private func updateSortDirectionButton() {
+        let title = selection.ascending ? "Ascending" : "Descending"
+        sortDirectionButton.image = NSImage(systemSymbolName: "arrow.up.arrow.down.circle.fill", accessibilityDescription: title)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: NSFont.systemFontSize + 6, weight: .regular))
+        sortDirectionButton.contentTintColor = selection.ascending ? .secondaryLabelColor : .controlAccentColor
+        sortDirectionButton.toolTip = selection.ascending ? "Ascending — click for descending" : "Descending — click for ascending"
+        sortDirectionButton.setAccessibilityLabel("Sort Direction")
+        sortDirectionButton.setAccessibilityValue(title)
     }
 
     @objc private func thumbnailSizeChanged(_ sender: NSSlider) {

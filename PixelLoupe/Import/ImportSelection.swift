@@ -49,6 +49,8 @@ nonisolated struct ImportSelection: Sendable {
     private(set) var files: [ImportService.ScannedFile]
     private(set) var transfer: ImportTransfer
     private(set) var sort: Sort
+    /// Off: the sort runs backwards (latest, Z or the last type first), folders included.
+    private(set) var ascending: Bool
     private(set) var filter: Filter
     /// Where copies go, for Destination Folders' headings.
     private(set) var destination: ImportDestination?
@@ -64,11 +66,12 @@ nonisolated struct ImportSelection: Sendable {
 
     init(
         files: [ImportService.ScannedFile], transfer: ImportTransfer = .copy, sort: Sort = .captureTime,
-        filter: Filter = .all, destination: ImportDestination? = nil, allowsDuplicates: Bool = false, skipsRejected: Bool = false
+        ascending: Bool = true, filter: Filter = .all, destination: ImportDestination? = nil, allowsDuplicates: Bool = false, skipsRejected: Bool = false
     ) {
         self.files = files
         self.transfer = transfer
         self.sort = sort
+        self.ascending = ascending
         self.filter = filter
         self.destination = destination
         self.allowsDuplicates = allowsDuplicates
@@ -199,6 +202,11 @@ nonisolated struct ImportSelection: Sendable {
         arrange()
     }
 
+    mutating func setAscending(_ ascending: Bool) {
+        self.ascending = ascending
+        arrange()
+    }
+
     mutating func setFilter(_ filter: Filter) {
         self.filter = filter
         arrange()
@@ -224,6 +232,7 @@ nonisolated struct ImportSelection: Sendable {
             let nameOrder = a.candidate.source.url.lastPathComponent.localizedStandardCompare(b.candidate.source.url.lastPathComponent)
             return nameOrder == .orderedSame ? lhs < rhs : nameOrder == .orderedAscending
         }
+        if !ascending { order.reverse() }
         numbers = [Int](repeating: 0, count: files.count)
         for (position, index) in order.enumerated() { numbers[index] = position + 1 }
 
@@ -236,7 +245,8 @@ nonisolated struct ImportSelection: Sendable {
         case .destinationFolders:
             var grouped: [String: [Int]] = [:]
             for index in order { grouped[folderTitle(of: index), default: []].append(index) }
-            sections = grouped.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+            let folders = grouped.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+            sections = (ascending ? folders : folders.reversed())
                 .map { Section(title: $0, items: grouped[$0] ?? []) }
         }
     }
