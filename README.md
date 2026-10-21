@@ -745,7 +745,8 @@ right:
 - **Image Sizing:** width & height, dimensions, long or short edge, megapixels or percentage, in pixels, inches or
   cm; resolution; Don't Enlarge.
 - **Output Sharpening** for screen, matte or glossy paper; **Metadata** (from copyright only to all, removing person
-  or location info), with Title, Caption, keywords and other metadata typed into PixelLoupe; **Watermarking** with your
+  or location info), with Title, Caption, keywords, the GPS location and other metadata typed into PixelLoupe (a
+  location removed in PixelLoupe leaves the exported file with none); **Watermarking** with your
   watermark presets; and **Post-Processing** (show in Finder or open in another app).
 
 Video is shown as in Lightroom but disabled: PixelLoupe doesn't import video yet. Export with Previous (`⌥⇧⌘E`) repeats
