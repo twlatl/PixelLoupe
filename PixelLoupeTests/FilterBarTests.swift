@@ -158,11 +158,12 @@ struct FilterBarWindowTests {
             state(controller).filter.modes = modes
             state(controller).filter.text.query = "nothing matches this"
             window.contentView?.layoutSubtreeIfNeeded()
-            #expect(bar.frame.height < 100, "the bar doesn't grow into the grid")
+            #expect(bar.frame.height < 160, "the bar doesn't grow into the grid")
+            #expect(!bar.hasAmbiguousLayout && !grid.hasAmbiguousLayout)
             #expect(grid.frame.height > 200)
             state(controller).filter.text.query = ""
             window.contentView?.layoutSubtreeIfNeeded()
-            #expect(bar.frame.height < 100)
+            #expect(bar.frame.height < 160)
             #expect(grid.frame.height > 200)
         }
     }

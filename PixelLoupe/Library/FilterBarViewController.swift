@@ -49,6 +49,11 @@ final class FilterBarViewController: NSViewController, NSMenuDelegate, NSSearchF
             stack.trailingAnchor.constraint(equalTo: background.trailingAnchor),
             stack.bottomAnchor.constraint(equalTo: background.bottomAnchor),
         ])
+        // The stack only sets a minimum height, and the grid below has no height of its own, so
+        // without this layout may hand the grid's space to the bar. Weaker than the rows' padding.
+        let compact = background.heightAnchor.constraint(equalToConstant: 0)
+        compact.priority = .defaultLow - 10
+        compact.isActive = true
         background.setAccessibilityIdentifier("libraryFilter")
         view = background
     }
