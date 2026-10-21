@@ -1,7 +1,7 @@
 import AppKit
 
-/// Sidebar of catalog folders alongside the active module (Library grid or Develop), and in
-/// Library the right sidebar (Histogram, Keywords, Metadata).
+/// Sidebar of catalog folders alongside the active module (Library grid, Develop or Map), and in
+/// Library and Map the right sidebar (Histogram, Keywords, Metadata).
 final class MainSplitViewController: NSSplitViewController {
     private let store: CatalogStore
     private let state: LibraryState
@@ -32,6 +32,7 @@ final class MainSplitViewController: NSSplitViewController {
     /// The Develop module, for commands that act on it from the menu bar.
     var develop: DevelopViewController { modeContainer.develop }
     var library: LibraryViewController { modeContainer.library }
+    var map: MapViewController { modeContainer.map }
     /// The pill confirming a rating, flag or label.
     var markOverlay: MarkOverlayView { modeContainer.markOverlay }
 
@@ -157,7 +158,7 @@ final class MainSplitViewController: NSSplitViewController {
         get { Defaults.store.object(forKey: Self.inspectorVisibleKey) as? Bool ?? true }
         set {
             Defaults.store.set(newValue, forKey: Self.inspectorVisibleKey)
-            if state.mode == .library { inspectorItem?.animator().isCollapsed = !newValue }
+            if state.mode.showsLibraryInspector { inspectorItem?.animator().isCollapsed = !newValue }
         }
     }
 
@@ -187,12 +188,12 @@ final class MainSplitViewController: NSSplitViewController {
 
     /// Whether the right sidebar of the current module (the Library's inspector, or Develop's panel) is showing.
     var isRightSidebarVisible: Bool {
-        state.mode == .library ? isLibraryInspectorVisible : isDevelopPanelVisible
+        state.mode.showsLibraryInspector ? isLibraryInspectorVisible : isDevelopPanelVisible
     }
 
     /// The toolbar's right-sidebar button, in either module.
     func toggleRightSidebar() {
-        if state.mode == .library {
+        if state.mode.showsLibraryInspector {
             toggleLibraryInspector()
         } else {
             isDevelopPanelVisible.toggle()
@@ -205,7 +206,7 @@ final class MainSplitViewController: NSSplitViewController {
         let rightVisible = isRightSidebarVisible
         let show = !(isSidebarVisible && rightVisible)
         sidebarItem?.animator().isCollapsed = !show
-        if state.mode == .library {
+        if state.mode.showsLibraryInspector {
             isLibraryInspectorVisible = show
         } else {
             isDevelopPanelVisible = show
@@ -213,7 +214,7 @@ final class MainSplitViewController: NSSplitViewController {
     }
 }
 
-/// The right column's content: the Library's inspector in Library, Develop's panel in Develop.
+/// The right column's content: the Library's inspector in Library and Map, Develop's panel in Develop.
 final class InspectorHostViewController: NSViewController {
     private let library: LibraryInspectorViewController
     private let develop: () -> NSView?
@@ -235,7 +236,7 @@ final class InspectorHostViewController: NSViewController {
     func show(_ mode: AppMode) {
         loadViewIfNeeded()
         if !children.contains(library) { addChild(library) }
-        guard let content = mode == .library ? library.view : develop(), content !== shown else { return }
+        guard let content = mode.showsLibraryInspector ? library.view : develop(), content !== shown else { return }
         shown?.removeFromSuperview()
         content.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(content)
@@ -251,12 +252,13 @@ final class InspectorHostViewController: NSViewController {
     }
 }
 
-/// Swaps between the Library and Develop modules.
+/// Swaps between the Library, Develop and Map modules.
 final class ModeContainerViewController: NSViewController {
     private let store: CatalogStore
     private let state: LibraryState
     private(set) lazy var library = LibraryViewController(store: store, state: state)
     private(set) lazy var develop = DevelopViewController(store: store, state: state)
+    private(set) lazy var map = MapViewController(store: store, state: state)
 
     init(store: CatalogStore, state: LibraryState) {
         self.store = store
@@ -293,6 +295,7 @@ final class ModeContainerViewController: NSViewController {
             switch state.mode {
             case .library: show(library)
             case .develop: show(develop)
+            case .map: show(map)
             }
         }
     }

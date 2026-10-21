@@ -38,6 +38,7 @@ import AppKit
     @objc optional func discardSmartPreviews(_ sender: Any?)
     @objc optional func showLibrary(_ sender: Any?)
     @objc optional func showDevelop(_ sender: Any?)
+    @objc optional func showMap(_ sender: Any?)
     @objc optional func increaseThumbnailSize(_ sender: Any?)
     @objc optional func decreaseThumbnailSize(_ sender: Any?)
     @objc optional func focusSearch(_ sender: Any?)
@@ -341,6 +342,9 @@ enum MainMenu {
         menu.addItem(alternate(item("Library", #selector(PixelLoupeActions.showLibrary(_:)), "1", modifiers: [.command, .option])))
         menu.addItem(item("Develop", #selector(PixelLoupeActions.showDevelop(_:)), "2"))
         menu.addItem(alternate(item("Develop", #selector(PixelLoupeActions.showDevelop(_:)), "2", modifiers: [.command, .option])))
+        // Lightroom has no single key for Map.
+        menu.addItem(item("Map", #selector(PixelLoupeActions.showMap(_:)), "3"))
+        menu.addItem(alternate(item("Map", #selector(PixelLoupeActions.showMap(_:)), "3", modifiers: [.command, .option])))
         menu.addItem(.separator())
         // C, as in Lightroom. The window handles the key; the menu item is disabled while typing so
         // the key equivalent never steals a "c" from a text field.

@@ -233,6 +233,10 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         switchTo(.develop)
     }
 
+    @objc func showMap(_ sender: Any?) {
+        switchTo(.map)
+    }
+
     // MARK: - Keyboard
 
     /// Single-key shortcuts (G, D, 0–5, P/X/U, Return, F, Escape, ← →) for the catalog window and its
@@ -398,8 +402,9 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         case .maskOverlay:
             guard state.mode == .develop, state.developTool == .mask else { return false }
             develop.toggleMaskOverlay()
-        case .beforeAfter(.beforeOnly) where state.mode == .library:
-            // \ is Lightroom's Library Filter bar key in Library, Before Only in Develop.
+        case .beforeAfter(.beforeOnly) where state.mode.showsLibraryInspector:
+            // \ is Lightroom's Library Filter bar key in Library (and Map, which shows the bar too),
+            // Before Only in Develop.
             toggleFilterBar(nil)
         case .beforeAfter(let view):
             // The same key again goes back to the edited photo. Crop, Masking and Spot Removal show the
@@ -600,7 +605,8 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
     /// the sidebar if needed).
     @objc func addKeywords(_ sender: Any?) {
         guard !state.selectedPhotoIDs.isEmpty else { return }
-        if state.mode != .library { switchTo(.library) }
+        // Map shows the Library's right sidebar too.
+        if !state.mode.showsLibraryInspector { switchTo(.library) }
         if [.fullScreen, .compare, .survey].contains(state.presentation) { state.presentation = .grid }
         rootViewController.main.addKeywords()
         updateInspectorButton()
@@ -644,10 +650,10 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
 
     // MARK: - Removing photos
 
-    /// The photos Remove Photo acts on: the selection in the grid; the photo being shown when
-    /// enlarged, full screen, in Compare (the active one) or in Develop.
+    /// The photos Remove Photo acts on: the selection in the grid or on the map; the photo being shown
+    /// when enlarged, full screen, in Compare (the active one) or in Develop.
     private var removeTargets: [NSManagedObjectID] {
-        state.mode == .library && state.presentation == .grid ? state.selectedPhotoIDs : Array(ratingTargets.prefix(1))
+        state.mode.showsLibraryInspector && state.presentation == .grid ? state.selectedPhotoIDs : Array(ratingTargets.prefix(1))
     }
 
     /// Delete: Remove Photo.
@@ -1138,8 +1144,8 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
             // the key reaches the text field.
             let typing = (window?.firstResponder as? NSText)?.isEditable ?? false
             (item as? NSMenuItem)?.title = state.isFilterBarVisible ? "Hide Filter Bar" : "Show Filter Bar"
-            (item as? NSMenuItem)?.keyEquivalent = state.mode == .library ? "\\" : ""
-            return !typing && state.mode == .library
+            (item as? NSMenuItem)?.keyEquivalent = state.mode.showsLibraryInspector ? "\\" : ""
+            return !typing && state.mode.showsLibraryInspector
         case #selector(toggleLoupe(_:)):
             (item as? NSMenuItem)?.title = state.isLoupeVisible && state.mode == .develop ? "Hide Loupe" : "Show Loupe"
             return true

@@ -118,6 +118,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | Key | Action |
 | --- | --- |
 | `G` / `D` | Library / Develop (also `⌘1` / `⌘2` and Lightroom's `⌥⌘1` / `⌥⌘2`) |
+| `⌘3` | Map (also Lightroom's `⌥⌘3`; Lightroom has no single key for it) |
 | `0`–`5` | Set rating; Photo ▸ Set Rating and the grid's right-click menu show the keys (a pill over the photos confirms each rating, flag and label applied: "Rating ★★★", "Flag Rejected", "Label ●") |
 | `[` / `]` | Decrease / increase rating (each photo one star down or up) |
 | `P` / `U` / `X` | Flagged / Unflagged / Rejected |
@@ -380,6 +381,23 @@ back. The filter stays as you move between folders and collections, and the bar,
 saved with the catalog. `\` hides the bar without clearing it; while it leaves photos out the filmstrip says so
 ("42 of 310 photos") with a filter icon that shows the bar again. `⌘F` shows the bar's Text mode and puts the cursor
 in its field.
+
+## Map
+
+The Map module (View ▸ Map, `⌘3`, or Map in the toolbar) shows the photos the grid shows that have a location, as
+pins on Apple Maps. It follows the source in the sidebar and the Library Filter bar, which it shows too.
+
+- Nearby photos cluster into one pin with their count; zoom in to split them.
+- Click a pin or cluster to select its photos in the filmstrip; selecting photos in the filmstrip highlights their
+  pins, and moves the map to them when none is in view. Hover over a pin to see its photo.
+- Double-click a pin to open the photo enlarged in the Library; double-click a cluster or the map to zoom in.
+- The bar along the bottom chooses Standard, Satellite or Hybrid and zooms with a slider (pinch, scroll and the
+  map's own buttons work too).
+- The map opens fitted to the source's photos, and goes back to where you left it when you return to a source.
+- The right sidebar is the Library's, so keywords, metadata and the GPS field work here too. Ratings, flags and
+  labels apply to every selected photo.
+- Locations come from the catalog (see the Metadata panel's GPS field), so the map works with originals offline;
+  only the map itself needs an internet connection.
 
 ## Filmstrip
 

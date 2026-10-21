@@ -67,9 +67,15 @@ final class MetadataBrowserView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    /// Whether the counts are worth keeping current: the bar and this mode are showing.
+    /// Whether the counts are worth keeping current: the bar and this mode are showing, in a window
+    /// (Library and Map each have a bar; only the module showing counts).
     private var isShowing: Bool {
-        state.isFilterBarVisible && state.filter.modes.contains(.metadata)
+        window != nil && state.isFilterBarVisible && state.filter.modes.contains(.metadata)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        scheduleRefresh()
     }
 
     private func rebuildColumns() {
