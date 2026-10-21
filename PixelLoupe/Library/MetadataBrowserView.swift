@@ -174,9 +174,6 @@ final class MetadataColumnView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         header.setAccessibilityIdentifier("metadataColumnHeader.\(index)")
 
         let name = NSTableColumn(identifier: .init("name"))
-        // Starts wide; the outline shrinks it to the column, leaving the counts their width.
-        name.width = 400
-        name.resizingMask = .autoresizingMask
         let number = NSTableColumn(identifier: .init("count"))
         number.width = 44
         number.minWidth = 30
@@ -188,7 +185,8 @@ final class MetadataColumnView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         outline.allowsEmptySelection = true
         outline.rowSizeStyle = .small
         outline.style = .plain
-        outline.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
+        // layout() gives the names whatever width the counts leave.
+        outline.columnAutoresizingStyle = .noColumnAutoresizing
         outline.dataSource = self
         outline.delegate = self
         outline.setAccessibilityIdentifier("metadataColumn.\(index)")
@@ -217,6 +215,14 @@ final class MetadataColumnView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func layout() {
+        super.layout()
+        guard let name = outline.tableColumns.first, let number = outline.tableColumns.last,
+              let width = outline.enclosingScrollView?.contentSize.width else { return }
+        let nameWidth = max(40, width - number.width - outline.intercellSpacing.width * 2)
+        if abs(name.width - nameWidth) > 0.5 { name.width = nameWidth }
+    }
 
     /// The values counted in the background, with "All" on top.
     func show(_ values: [MetadataColumn.Value]) {
