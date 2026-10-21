@@ -99,6 +99,49 @@ struct VirtualCopyTests {
         #expect(master.virtualCopies.map { $0.copyName }.sorted { ($0 ?? "") < ($1 ?? "") } == ["Copy 1", "Copy 2", "Copy 3"])
     }
 
+    @Test("The grid's fetched results see a new copy under the id it keeps after saving")
+    func gridIdentifiers() throws {
+        let setup = try makeSetup()
+        let request = Photo.fetchRequest()
+        request.sortDescriptors = [NSSortDescriptor(key: "captureDate", ascending: true)]
+        let results = NSFetchedResultsController(fetchRequest: request, managedObjectContext: setup.store.viewContext, sectionNameKeyPath: nil, cacheName: nil)
+        let recorder = SnapshotRecorder()
+        results.delegate = recorder
+        try results.performFetch()
+        var created: [NSManagedObjectID] = []
+        grouped(setup) { created = setup.editing.createVirtualCopies(of: [setup.photos[0].objectID]) }
+        let shown = try #require(recorder.identifiers)
+        #expect(shown.count == 3 && shown.contains(created[0]), "the grid shows the copy under the id the selection gets")
+        #expect(shown.allSatisfy { !$0.isTemporaryID && setup.editing.photos([$0]).count == 1 }, "every cell finds its photo")
+
+        // Rating and removing the copy work.
+        setup.editing.setRating(2, for: created)
+        #expect(setup.editing.photos(created).first?.rating == 2)
+        _ = PhotoRemoval(store: setup.store).remove(created, trash: false, actionName: "Remove Photo")
+        #expect(try setup.store.viewContext.count(for: Photo.fetchRequest()) == 2)
+    }
+
+    @Test("Removing only virtual copies asks to remove them, with no Delete from Disk")
+    func removalDialog() throws {
+        let setup = try makeSetup()
+        var created: [NSManagedObjectID] = []
+        grouped(setup) { created = setup.editing.createVirtualCopies(of: [setup.photos[0].objectID, setup.photos[1].objectID]) }
+        let copies = setup.editing.photos(created)
+
+        let one = CatalogWindowController.removalAlert(for: [copies[0]])
+        #expect(one.messageText == "Remove the selected Virtual Copy?")
+        #expect(one.buttons.map(\.title) == ["Remove from PixelLoupe", "Cancel"])
+        let two = CatalogWindowController.removalAlert(for: copies)
+        #expect(two.messageText == "Remove the 2 selected Virtual Copies?")
+        #expect(two.buttons.map(\.title) == ["Remove from PixelLoupe", "Cancel"])
+
+        // A master, alone or with a copy, can still be deleted from disk.
+        for photos in [[setup.photos[0]], [setup.photos[0], copies[0]]] {
+            let alert = CatalogWindowController.removalAlert(for: photos)
+            #expect(alert.buttons.map(\.title) == ["Remove from PixelLoupe", "Delete from Disk", "Cancel"])
+        }
+    }
+
     @Test("Editing a copy leaves its master alone, and undo removes the copy")
     func independence() throws {
         let setup = try makeSetup()
@@ -292,5 +335,14 @@ struct VirtualCopyTests {
         let store = try CatalogStore.open(at: packageURL)
         let photo = try #require(try store.viewContext.fetch(Photo.fetchRequest()).first)
         #expect(photo.fileName == "v8.jpg" && photo.master == nil && photo.virtualCopies.isEmpty && photo.copyName == nil)
+    }
+}
+
+/// Keeps the identifiers of the last snapshot a fetched results controller delivers, as the grid does.
+private final class SnapshotRecorder: NSObject, NSFetchedResultsControllerDelegate {
+    var identifiers: [NSManagedObjectID]?
+
+    func controller(_ controller: NSFetchedResultsController<any NSFetchRequestResult>, didChangeContentWith snapshot: NSDiffableDataSourceSnapshotReference) {
+        identifiers = (snapshot as NSDiffableDataSourceSnapshot<String, NSManagedObjectID>).itemIdentifiers
     }
 }
