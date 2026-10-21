@@ -12,7 +12,9 @@ final class LocationPanelView: NSView, MKMapViewDelegate, MKLocalSearchCompleter
     var onRemove: (() -> Void)?
 
     let mapView = MKMapView()
-    let searchField = NSSearchField()
+    /// Takes focus only when clicked (like the sidebar's other fields), so AppKit never hands it focus
+    /// on its own when the view changes.
+    let searchField = ClickToFocusSearchField()
     /// The photos' location, or the place found.
     let locationLabel = NSTextField(labelWithString: "")
     /// Why a search found nothing, or that it needs the internet.
@@ -32,6 +34,8 @@ final class LocationPanelView: NSView, MKMapViewDelegate, MKLocalSearchCompleter
     }
     private var hasPhotos = false
     private var hasLocation = false
+    /// Watches for clicks while the field is being typed in (see `endEditingIfClickedOutside`).
+    private var clickMonitor: Any?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -139,6 +143,43 @@ final class LocationPanelView: NSView, MKMapViewDelegate, MKLocalSearchCompleter
         applyButton.isEnabled = hasPhotos && pending != nil
         replaceButton.isEnabled = hasPhotos && pending != nil
         removeButton.isEnabled = hasPhotos && hasLocation
+    }
+
+    // MARK: - Focus
+
+    func controlTextDidBeginEditing(_ notification: Notification) {
+        guard clickMonitor == nil else { return }
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
+            self?.endEditingIfClickedOutside(event) ?? event
+        }
+    }
+
+    func controlTextDidEndEditing(_ notification: Notification) {
+        stopWatchingClicks()
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        if newWindow == nil { stopWatchingClicks() }
+    }
+
+    private func stopWatchingClicks() {
+        if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
+        clickMonitor = nil
+    }
+
+    /// A click anywhere outside the field and its list of places (the grid, the map, another part of
+    /// the sidebar) takes the cursor out of it; the click then goes on to what was clicked.
+    func endEditingIfClickedOutside(_ event: NSEvent) -> NSEvent {
+        guard let window, event.window === window, searchField.currentEditor() != nil else { return event }
+        let inside = [searchField, resultsScroll].contains { view in
+            !view.isHidden && view.bounds.contains(view.convert(event.locationInWindow, from: nil))
+        }
+        if !inside {
+            window.makeFirstResponder(nil)
+            showCompletions([])
+        }
+        return event
     }
 
     // MARK: - Finding a place

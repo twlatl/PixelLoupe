@@ -334,6 +334,57 @@ struct KeywordFocusTests {
         #expect(window.firstResponder === search.currentEditor(), "⌘F still goes to the search field")
     }
 
+    /// Regression: the Location panel's search field was a plain search field, so after the cursor left
+    /// it (a click in the grid), AppKit kept handing focus back to it when the view changed.
+    @Test func theLocationFieldGivesUpFocusAndDoesNotTakeItBack() throws {
+        let key = "LibraryInspectorVisible"
+        let saved = Defaults.store.object(forKey: key)
+        defer { Defaults.store.set(saved, forKey: key) }
+        Defaults.store.set(true, forKey: key)
+        let (controller, directory) = try window(selectingFirstOf: 3)
+        defer { controller.close(); _ = directory }
+        let window = try #require(controller.window)
+        let field = controller.rootViewController.main.inspector.locationPanel.searchField
+        #expect(!field.canBecomeKeyView, "Tab skips it")
+        window.makeFirstResponder(field)
+        #expect(window.firstResponder !== field.currentEditor(), "it doesn't take focus it didn't ask for")
+
+        // Typing in it, then clicking a photo in the grid.
+        field.allowsFocusOnce = true
+        window.makeFirstResponder(field)
+        field.allowsFocusOnce = false
+        #expect(window.firstResponder === field.currentEditor())
+        // A click in the grid ends editing (the window's mouse-down then goes on to the grid).
+        let panel = controller.rootViewController.main.inspector.locationPanel
+        let gridView = controller.rootViewController.main.library.view
+        let inGrid = gridView.convert(NSPoint(x: gridView.bounds.midX, y: gridView.bounds.midY), to: nil)
+        func click(at point: NSPoint) throws -> NSEvent {
+            try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: 0,
+                                             windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        }
+        let inFieldPoint = field.convert(NSPoint(x: field.bounds.midX, y: field.bounds.midY), to: nil)
+        _ = panel.endEditingIfClickedOutside(try click(at: inFieldPoint))
+        #expect(window.firstResponder === field.currentEditor(), "a click in the field keeps the cursor there")
+        _ = panel.endEditingIfClickedOutside(try click(at: inGrid))
+        #expect(window.firstResponder !== field.currentEditor(), "a click in the grid takes it out")
+        controller.state.selectedPhotoIDs = [controller.state.photoOrder[1]]
+        window.layoutIfNeeded()
+        func inField() -> Bool { window.firstResponder === field.currentEditor() || window.firstResponder === field }
+        #expect(!inField(), "after selecting another photo")
+        #expect(controller.perform(.toggleEnlarge))
+        window.layoutIfNeeded()
+        #expect(!inField(), "enlarged")
+        #expect(controller.perform(.toggleEnlarge))
+        window.layoutIfNeeded()
+        #expect(!inField(), "back to the grid")
+        controller.state.mode = .develop
+        controller.state.mode = .library
+        #expect(!inField(), "switching modules")
+        window.recalculateKeyViewLoop()
+        window.selectNextKeyView(nil)
+        #expect(!inField(), "Tab")
+    }
+
     /// Regression: the right-sidebar button was hidden in Develop, narrowing the toolbar and moving the
     /// Library/Develop control. It stays, and works on Develop's panel there.
     @Test func theRightSidebarButtonStaysInDevelop() throws {
