@@ -102,21 +102,38 @@ final class FilmstripViewController: NSViewController, NSCollectionViewDelegate 
         let topLine = NSBox()
         topLine.boxType = .separator
 
+        // The header is chrome, like the bars around the grid; only the thumbnails sit on the matte.
+        let chrome = ChromeBackgroundView()
         let matte = MatteView()
-        matte.setAccessibilityIdentifier("filmstripView")
-        for view in [topLine, header, scrollView] as [NSView] {
+        for view in [topLine, header] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
-            matte.addSubview(view)
+            chrome.addSubview(view)
+        }
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        matte.addSubview(scrollView)
+        let container = NSView()
+        container.setAccessibilityIdentifier("filmstripView")
+        for view in [chrome, matte] as [NSView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(view)
         }
         NSLayoutConstraint.activate([
-            topLine.topAnchor.constraint(equalTo: matte.topAnchor),
-            topLine.leadingAnchor.constraint(equalTo: matte.leadingAnchor),
-            topLine.trailingAnchor.constraint(equalTo: matte.trailingAnchor),
+            chrome.topAnchor.constraint(equalTo: container.topAnchor),
+            chrome.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            chrome.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            topLine.topAnchor.constraint(equalTo: chrome.topAnchor),
+            topLine.leadingAnchor.constraint(equalTo: chrome.leadingAnchor),
+            topLine.trailingAnchor.constraint(equalTo: chrome.trailingAnchor),
             header.topAnchor.constraint(equalTo: topLine.bottomAnchor),
-            header.leadingAnchor.constraint(equalTo: matte.leadingAnchor),
-            header.trailingAnchor.constraint(equalTo: matte.trailingAnchor),
+            header.leadingAnchor.constraint(equalTo: chrome.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: chrome.trailingAnchor),
             header.heightAnchor.constraint(equalToConstant: 28),
-            scrollView.topAnchor.constraint(equalTo: header.bottomAnchor),
+            header.bottomAnchor.constraint(equalTo: chrome.bottomAnchor),
+            matte.topAnchor.constraint(equalTo: chrome.bottomAnchor),
+            matte.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            matte.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            matte.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            scrollView.topAnchor.constraint(equalTo: matte.topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: matte.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: matte.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: matte.bottomAnchor),
@@ -124,7 +141,7 @@ final class FilmstripViewController: NSViewController, NSCollectionViewDelegate 
         matte.onMatteChange = { [weak self] in
             self?.collectionView.visibleItems().forEach { $0.view.needsDisplay = true }
         }
-        view = matte
+        view = container
     }
 
     override func viewDidLoad() {

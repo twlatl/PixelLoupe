@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppSettings.shared.applyAppearance()
         AppSettings.shared.startFollowingAppearance()
         Accent.startFollowingWindows()
+        GrayChrome.startFollowingWindows()
         guard !Self.isRunningUnitTests, catalogWindowController == nil else { return }
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(volumeDidMount(_:)), name: NSWorkspace.didMountNotification, object: nil)

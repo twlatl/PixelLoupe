@@ -173,10 +173,17 @@ struct AppearanceSettingsView: View {
     @Bindable private var settings = AppSettings.shared
     @Environment(\.colorScheme) private var colorScheme
 
+    /// The theme's matte: reads the Appearance setting (not only the color scheme, which is light in
+    /// Gray) so the slider moves when it changes.
+    private var themeMatte: Double {
+        if colorScheme == .dark { return AppSettings.darkMatte }
+        return settings.appearance == .gray ? AppSettings.grayMatte : AppSettings.lightMatte
+    }
+
     /// Slider position for the matte; follows the theme's default until the user moves it.
     private var matte: Binding<Double> {
         Binding(
-            get: { settings.matte ?? (colorScheme == .dark ? AppSettings.darkMatte : AppSettings.lightMatte) },
+            get: { settings.matte ?? themeMatte },
             set: { settings.matte = $0 }
         )
     }
@@ -208,7 +215,7 @@ struct AppearanceSettingsView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Toggle("Use gray instead of the accent color", isOn: $settings.isMonochrome)
                         .accessibilityIdentifier("monochromeToggle")
-                    Text("Sliders, buttons and icons turn dark gray in Dark Mode and black in Light Mode. Checkboxes and focus rings change the next time PixelLoupe opens.")
+                    Text("Sliders, buttons and icons turn dark gray in Dark Mode and black in Light Mode and Gray. Checkboxes and focus rings change the next time PixelLoupe opens.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
