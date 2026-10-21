@@ -1,8 +1,8 @@
 import AppKit
 import CoreData
 
-/// The Library's right sidebar: Histogram (not editable), Keywords and Metadata, for the selected
-/// photos.
+/// The Library's right sidebar: Histogram (not editable), Keywords, Metadata and Location, for the
+/// selected photos.
 final class LibraryInspectorViewController: NSViewController {
     enum Target: Int {
         /// Metadata edits go to the target (first selected) photo.
@@ -21,6 +21,9 @@ final class LibraryInspectorViewController: NSViewController {
     private(set) lazy var keywordList = KeywordListView(store: store)
     private lazy var keywordListSection = InspectorSectionView(title: "Keyword List", content: keywordList)
     let metadataPanel = MetadataPanelView()
+    let locationPanel = LocationPanelView()
+    /// Asks before Replace overwrites locations cameras recorded (`count` photos); tests answer it.
+    var confirmReplacingCameraLocations: @MainActor (_ count: Int) -> Bool = LibraryInspectorViewController.confirmReplacing
     let setPopUp = NSPopUpButton()
     let presetPopUp = NSPopUpButton()
     let targetControl = NSSegmentedControl(labels: ["Target Photo", "Selected Photos"], trackingMode: .selectOne, target: nil, action: nil)
@@ -93,6 +96,8 @@ final class LibraryInspectorViewController: NSViewController {
         metadataPanel.onEdit = { [weak self] id, value in self?.edit(id, value) }
         metadataPanel.onAction = { [weak self] action in self?.perform(action) }
         metadataPanel.show(MetadataSet.named(setPopUp.titleOfSelectedItem ?? "Default"))
+        locationPanel.onApply = { [weak self] location, replace in self?.setLocation(location, replacing: replace) }
+        locationPanel.onRemove = { [weak self] in self?.removeLocation() }
 
         let metadataContent = NSStackView(views: [presetRow, targetControl, metadataPanel])
         metadataContent.orientation = .vertical
@@ -107,6 +112,7 @@ final class LibraryInspectorViewController: NSViewController {
             keywordsSection,
             keywordListSection,
             InspectorSectionView(title: "Metadata", accessory: setPopUp, content: metadataContent),
+            InspectorSectionView(title: "Location", content: locationPanel),
         ]
         let stack = NSStackView(views: sections)
         stack.orientation = .vertical
@@ -455,6 +461,64 @@ final class LibraryInspectorViewController: NSViewController {
     private func updateMetadata() {
         let values = shownValues
         metadataPanel.display({ MetadataValues.common($0, of: values) }, isEditingEnabled: !values.isEmpty)
+        updateLocation()
+    }
+
+    // MARK: - Location
+
+    /// Where a photo was taken as shown: the catalog's location, or the file's while it hasn't been
+    /// read into the catalog yet (see `LocationBackfill`).
+    private func shownLocation(of photo: Photo) -> GPSCoordinate? {
+        if photo.locationRead || photo.locationKind != .file { return photo.location }
+        return fileMetadata[photo.objectID]?.coordinate.flatMap { GPSCoordinate(latitude: $0.latitude, longitude: $0.longitude) }
+    }
+
+    /// Whether a photo has a location, for Apply (which leaves those alone).
+    private func hasLocation(_ photo: Photo) -> Bool {
+        shownLocation(of: photo) != nil || (photo.locationKind == .file && photo.hasGPS)
+    }
+
+    /// The Location panel shows the edit targets' location: one, several, or none.
+    private func updateLocation() {
+        let photos = editing.photos(target == .targetPhoto ? Array(state.selectedPhotoIDs.prefix(1))
+                                    : Array(state.selectedPhotoIDs.prefix(Self.maximumComparedPhotos)))
+        let locations = photos.map(shownLocation(of:))
+        let first = locations.first ?? nil
+        let isMixed = locations.dropFirst().contains { $0 != first }
+        locationPanel.show(isMixed ? nil : first, isMixed: isMixed, hasPhotos: !photos.isEmpty)
+    }
+
+    /// Gives the edit targets `location`: those without one, or all of them (`replacing`, after asking
+    /// when that overwrites a location the camera recorded). One undoable step; the files aren't changed.
+    func setLocation(_ location: GPSCoordinate, replacing: Bool) {
+        let photos = editing.photos(editTargets)
+        let changing = photos.filter { replacing ? $0.location != location : !hasLocation($0) }
+        guard !changing.isEmpty else { NSSound.beep(); return }
+        if replacing {
+            let fromCamera = changing.filter { $0.locationKind == .file && hasLocation($0) }.count
+            guard fromCamera == 0 || confirmReplacingCameraLocations(fromCamera) else { return }
+        }
+        editing.edit(changing.map(\.objectID), actionName: "Set Location") { $0.setLocationOverride(.set, location) }
+        updateMetadata()
+    }
+
+    /// Removes the edit targets' location, even one the camera recorded.
+    func removeLocation() {
+        let changing = editing.photos(editTargets).filter { $0.locationKind != .cleared }
+        guard !changing.isEmpty else { return }
+        editing.edit(changing.map(\.objectID), actionName: "Remove Location") { $0.setLocationOverride(.cleared) }
+        updateMetadata()
+    }
+
+    private static func confirmReplacing(_ count: Int) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = count == 1
+            ? "Replace the location the camera recorded?"
+            : "Replace the locations the camera recorded for \(count.formatted()) photos?"
+        alert.informativeText = "Only the catalog changes; the original files keep theirs. Undo puts the camera's location back."
+        alert.addButton(withTitle: "Replace")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     func edit(_ id: MetadataField.ID, _ value: String) {
@@ -506,11 +570,7 @@ final class LibraryInspectorViewController: NSViewController {
         case .revealInFinder:
             NSWorkspace.shared.activateFileViewerSelecting([photo.fileURL])
         case .openMap:
-            // The catalog's location; the file's while it hasn't been read into the catalog yet.
-            let location = photo.locationRead || photo.locationKind != .file
-                ? photo.location.map { (latitude: $0.latitude, longitude: $0.longitude) }
-                : fileMetadata[photo.objectID]?.coordinate
-            guard let coordinate = location,
+            guard let coordinate = shownLocation(of: photo),
                   let url = URL(string: "maps://?ll=\(coordinate.latitude),\(coordinate.longitude)&q=\(photo.fileName.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")")
             else { NSSound.beep(); return }
             NSWorkspace.shared.open(url)
