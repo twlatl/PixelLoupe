@@ -1,7 +1,7 @@
 import AppKit
 
 /// The Library's Assisted Culling panel (RAW-71): the Select and Reject criteria, Review (Selects, Rejects or
-/// All), and Apply. The inspector does the work; this shows the criteria and reports what's changed.
+/// All), Apply and Auto Stack. The inspector does the work; this shows the criteria and reports what's changed.
 final class CullingPanelView: NSView {
     /// What the panel says about the source's photos.
     struct Counts: Equatable {
@@ -17,6 +17,7 @@ final class CullingPanelView: NSView {
     var onAnalyze: (() -> Void)?
     var onReanalyze: (() -> Void)?
     var onApply: (() -> Void)?
+    var onAutoStack: (() -> Void)?
 
     let statusLabel = NSTextField(wrappingLabelWithString: "")
     let progressIndicator = NSProgressIndicator()
@@ -38,6 +39,7 @@ final class CullingPanelView: NSView {
 
     let reviewControl = NSSegmentedControl(labels: ["Selects", "Rejects", "All"], trackingMode: .selectOne, target: nil, action: nil)
     let applyButton = NSButton(title: "Apply Flags", target: nil, action: nil)
+    let autoStackButton = NSButton(title: "Auto Stack…", target: nil, action: nil)
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -105,6 +107,12 @@ final class CullingPanelView: NSView {
         applyButton.action = #selector(apply(_:))
         applyButton.toolTip = "Flag the Selects as Picks and the Rejects as Rejected, leaving photos already flagged alone"
         applyButton.setAccessibilityIdentifier("cullingApply")
+        autoStackButton.controlSize = .small
+        autoStackButton.target = self
+        autoStackButton.action = #selector(autoStack(_:))
+        autoStackButton.toolTip = "Stack photos taken one after another, by capture time or by how alike they look"
+        autoStackButton.setAccessibilityIdentifier("cullingAutoStack")
+        let buttons = NSStackView(views: [applyButton, autoStackButton])
 
         let statusRow = NSStackView(views: [statusLabel, analyzeButton])
         statusRow.alignment = .firstBaseline
@@ -120,7 +128,7 @@ final class CullingPanelView: NSView {
             Self.heading("Reject"),
             exposureBox, misfiresBox, documentsBox,
             Self.heading("Review"),
-            reviewControl, applyButton,
+            reviewControl, buttons,
         ]
         let stack = NSStackView(views: arranged)
         stack.orientation = .vertical
@@ -265,4 +273,5 @@ final class CullingPanelView: NSView {
     @objc private func analyze(_ sender: Any?) { onAnalyze?() }
     @objc private func reanalyze(_ sender: Any?) { onReanalyze?() }
     @objc private func apply(_ sender: Any?) { onApply?() }
+    @objc private func autoStack(_ sender: Any?) { onAutoStack?() }
 }

@@ -118,6 +118,23 @@ Measured on 211 RAW files (Sony ARW, Fujifilm RAF, DNG) from the sample library;
   Focus still to be measured reads "Not measured yet", with a note that says whether the original is offline.
 - Built as `CullingInfo` (values, testable without UI) and `CullingInfoPanelView` (an `NSGridView` of labels).
 
+## Auto Stack notes (RAW-172)
+
+- **Neighbours only.** Photos are put in capture-time order and each joins the stack of the photo before it when
+  it's close enough; runs of two or more become stacks. That's linear in the number of photos and matches how
+  bursts and brackets are shot. It won't gather similar photos taken apart with others in between.
+- **Capture Time:** a log-scale slider from 1 second to 1 hour, default 1 minute (Lightroom's default).
+- **Visual Similarity:** Vision feature-print distance between neighbours' thumbnails. Measured on the sample
+  library: an exposure bracket is about 0.13, the same subject posed again 0.2, the same party from another spot
+  0.28, a different scene or the same product from another side 0.3 and over. Strict allows 0.08, Loose 0.45; the
+  default midpoint allows about 0.26. Comparing takes about 0.1 s a photo and starts when Visual Similarity is
+  chosen (not every time the sheet opens), with progress in the sheet; the distances are kept only while it's open.
+- **Top photo:** the Select (by the panel's criteria) with the best Vision aesthetics score; with no Selects, the
+  best-scoring analyzed photo; with nothing analyzed, the earliest.
+- **Stacks are left open**, so the grid, the Assisted Culling counts and Apply still see every photo (a collapsed
+  stack hides all but its top photo from the source). Photo ▸ Stacking ▸ Collapse All Stacks closes them.
+- The method and both sliders are remembered app-wide.
+
 ## Delivery
 
 RAW-71 is a Story with four sub-tasks, each a stacked PR against `main`:
