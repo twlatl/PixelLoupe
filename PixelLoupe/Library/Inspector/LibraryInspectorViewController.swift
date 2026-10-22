@@ -1,5 +1,6 @@
 import AppKit
 import CoreData
+import SwiftUI
 
 /// The Library's right sidebar: Histogram (not editable) and Keywords, Metadata and Location for the selected
 /// photos, Assisted Culling for the source, and Assisted Culling Info for the target photo.
@@ -107,6 +108,7 @@ final class LibraryInspectorViewController: NSViewController {
         cullingPanel.onAnalyze = { [weak self] in self?.analyzeSource(again: false) }
         cullingPanel.onReanalyze = { [weak self] in self?.analyzeSource(again: true) }
         cullingPanel.onApply = { [weak self] in self?.applyCullingFlags() }
+        cullingPanel.onAutoStack = { [weak self] in self?.showAutoStack() }
 
         let metadataContent = NSStackView(views: [presetRow, targetControl, metadataPanel])
         metadataContent.orientation = .vertical
@@ -702,6 +704,59 @@ final class LibraryInspectorViewController: NSViewController {
         editing.edit(Array(selects) + rejects, actionName: "Apply Assisted Culling") { photo in
             photo.photoFlag = selects.contains(photo.objectID) ? .picked : .rejected
         }
+    }
+
+    // MARK: - Auto Stack
+
+    private var autoStackMeasuring: Task<Void, Never>?
+
+    /// What Auto Stack works on: the selected photos when there are two or more, otherwise the source's; those not
+    /// in a stack, in capture-time order. The bool is whether they're the selection.
+    func autoStackPhotos() -> (photos: [Photo], isSelection: Bool) {
+        let isSelection = state.selectedPhotoIDs.count >= 2
+        let photos = isSelection ? editing.photos(state.selectedPhotoIDs) : (try? store.viewContext.fetch(sourceRequest())) ?? []
+        return (photos.filter { $0.stack == nil }.sorted(by: Self.isTakenBefore), isSelection)
+    }
+
+    /// Capture-time order, then by file name.
+    private static func isTakenBefore(_ a: Photo, _ b: Photo) -> Bool {
+        if a.captureDate != b.captureDate { return a.captureDate < b.captureDate }
+        return a.fileName.localizedStandardCompare(b.fileName) == .orderedAscending
+    }
+
+    /// Auto Stack…: the sheet, then the stacks it makes as one undoable step.
+    func showAutoStack() {
+        let (photos, isSelection) = autoStackPhotos()
+        guard photos.count >= 2 else {
+            let alert = NSAlert()
+            alert.messageText = "There are no photos to stack."
+            alert.informativeText = "Auto Stack needs two or more photos that aren't in a stack already."
+            if let window = view.window { alert.beginSheetModal(for: window) } else { alert.runModal() }
+            return
+        }
+        let model = AutoStackModel(photoIDs: photos.map(\.objectID), dates: photos.map(\.captureDate), isSelection: isSelection)
+        let urls = photos.map { store.thumbnails.url(for: $0.id) }
+        let sheet = NSHostingController(rootView: AutoStackView(model: model))
+        model.onNeedsDistances = { [weak self, weak model] in
+            guard let self, self.autoStackMeasuring == nil else { return }
+            self.autoStackMeasuring = Task { [weak model] in
+                let distances = await AutoStacking.distances(urls) { done in model?.measured = done }
+                if !Task.isCancelled { model?.distances = distances }
+            }
+        }
+        model.onCancel = { [weak self, weak sheet] in
+            self?.autoStackMeasuring?.cancel()
+            self?.autoStackMeasuring = nil
+            sheet?.dismiss(nil)
+        }
+        model.onStack = { [weak self, weak sheet] model in
+            guard let self, let groups = model.groups else { return }
+            autoStackMeasuring = nil
+            sheet?.dismiss(nil)
+            editing.autoStack(groups.map { $0.map { model.photoIDs[$0] } }, criteria: cullingCriteria)
+        }
+        if model.method == .similarity { model.onNeedsDistances?() }
+        presentAsSheet(sheet)
     }
 
     // MARK: - Presets
