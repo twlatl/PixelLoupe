@@ -1,8 +1,8 @@
 import AppKit
 import CoreData
 
-/// The Library's right sidebar: Histogram (not editable), Keywords, Metadata and Location, for the
-/// selected photos.
+/// The Library's right sidebar: Histogram (not editable) and Keywords, Metadata and Location for the selected
+/// photos, and Assisted Culling for the source.
 final class LibraryInspectorViewController: NSViewController {
     enum Target: Int {
         /// Metadata edits go to the target (first selected) photo.
@@ -22,6 +22,8 @@ final class LibraryInspectorViewController: NSViewController {
     private lazy var keywordListSection = InspectorSectionView(title: "Keyword List", content: keywordList)
     let metadataPanel = MetadataPanelView()
     let locationPanel = LocationPanelView()
+    let cullingPanel = CullingPanelView()
+    private(set) var cullingCriteria = CullingCriteria.saved
     /// Asks before Replace overwrites locations cameras recorded (`count` photos); tests answer it.
     var confirmReplacingCameraLocations: @MainActor (_ count: Int) -> Bool = LibraryInspectorViewController.confirmReplacing
     let setPopUp = NSPopUpButton()
@@ -98,6 +100,12 @@ final class LibraryInspectorViewController: NSViewController {
         metadataPanel.show(MetadataSet.named(setPopUp.titleOfSelectedItem ?? "Default"))
         locationPanel.onApply = { [weak self] location, replace in self?.setLocation(location, replacing: replace) }
         locationPanel.onRemove = { [weak self] in self?.removeLocation() }
+        cullingPanel.criteria = cullingCriteria
+        cullingPanel.onCriteriaChange = { [weak self] criteria in self?.setCullingCriteria(criteria) }
+        cullingPanel.onReview = { [weak self] kind in self?.reviewCulling(kind) }
+        cullingPanel.onAnalyze = { [weak self] in self?.analyzeSource(again: false) }
+        cullingPanel.onReanalyze = { [weak self] in self?.analyzeSource(again: true) }
+        cullingPanel.onApply = { [weak self] in self?.applyCullingFlags() }
 
         let metadataContent = NSStackView(views: [presetRow, targetControl, metadataPanel])
         metadataContent.orientation = .vertical
@@ -109,6 +117,7 @@ final class LibraryInspectorViewController: NSViewController {
 
         let sections = [
             InspectorSectionView(title: "Histogram", content: histogram),
+            InspectorSectionView(title: "Assisted Culling", accessory: cullingPanel.actionButton, content: cullingPanel),
             keywordsSection,
             keywordListSection,
             InspectorSectionView(title: "Metadata", accessory: setPopUp, content: metadataContent),
@@ -147,8 +156,18 @@ final class LibraryInspectorViewController: NSViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         state.addObserver(self) { [weak self] change in
-            if change == .selection { self?.selectionChanged() }
+            switch change {
+            case .selection: self?.selectionChanged()
+            case .filter: self?.filterChanged()
+            default: break
+            }
         }
+        store.cullingAnalysis.onProgress = { [weak self] progress in
+            self?.cullingProgress = progress
+            self?.updateCulling()
+        }
+        cullingProgress = store.cullingAnalysis.progress
+        cullingScope = state.filter.scope
         NotificationCenter.default.addObserver(
             self, selector: #selector(contextObjectsDidChange(_:)),
             name: .NSManagedObjectContextObjectsDidChange, object: store.viewContext
@@ -167,6 +186,7 @@ final class LibraryInspectorViewController: NSViewController {
         )
         keywordList.reload()
         selectionChanged()
+        updateCulling()
     }
 
     // MARK: - Photos
@@ -201,6 +221,10 @@ final class LibraryInspectorViewController: NSViewController {
             (notification.userInfo?[key] as? Set<NSManagedObject>)?.contains { $0 is Tag } ?? false
         }
         if keywordsChanged { scheduleKeywordListReload() }
+        // Scores, flags, photos added or removed: the culling counts.
+        if [NSUpdatedObjectsKey, NSInsertedObjectsKey, NSDeletedObjectsKey].contains(where: {
+            (notification.userInfo?[$0] as? Set<NSManagedObject>)?.contains { $0 is Photo } ?? false
+        }) { scheduleCullingUpdate() }
         guard changed else { return }
         updateKeywords()
         updateMetadata()
@@ -579,6 +603,92 @@ final class LibraryInspectorViewController: NSViewController {
                   let url = URL(string: "maps://?ll=\(coordinate.latitude),\(coordinate.longitude)&q=\(photo.fileName.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")")
             else { NSSound.beep(); return }
             NSWorkspace.shared.open(url)
+        }
+    }
+
+    // MARK: - Assisted Culling
+
+    private var cullingProgress: LibraryState.ImportStatus?
+    private var cullingUpdateScheduled = false
+    private var cullingScope = LibraryFilter.Scope.allPhotos
+
+    /// The source's photos, as the grid shows them before the Library Filter bar.
+    private func sourceRequest(_ predicates: NSPredicate...) -> NSFetchRequest<Photo> {
+        let request = Photo.fetchRequest()
+        request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [state.filter.scopePredicate] + predicates)
+        return request
+    }
+
+    private func filterChanged() {
+        if state.filter.scope != cullingScope {
+            cullingScope = state.filter.scope
+            updateCulling()
+        } else {
+            cullingPanel.show(cullingCounts, progress: cullingProgress, review: state.filter.cullReview?.kind)
+        }
+    }
+
+    private var cullingCounts: CullingPanelView.Counts?
+
+    /// Counts the source's Selects, Rejects and photos to analyze, and shows them.
+    private func updateCulling() {
+        let context = store.viewContext
+        func count(_ predicate: NSPredicate) -> Int { (try? context.count(for: sourceRequest(predicate))) ?? 0 }
+        cullingCounts = CullingPanelView.Counts(
+            selects: count(cullingCriteria.selectPredicate),
+            rejects: count(cullingCriteria.rejectPredicate),
+            unanalyzed: count(NSPredicate(format: "isVideo == NO AND cullVersion != %d", CullingAnalyzer.version))
+        )
+        cullingPanel.show(cullingCounts, progress: cullingProgress, review: state.filter.cullReview?.kind)
+    }
+
+    /// Counts again shortly after the last change (analysis scores photos one after another).
+    private func scheduleCullingUpdate() {
+        guard !cullingUpdateScheduled else { return }
+        cullingUpdateScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self else { return }
+            cullingUpdateScheduled = false
+            updateCulling()
+        }
+    }
+
+    func setCullingCriteria(_ criteria: CullingCriteria) {
+        guard criteria != cullingCriteria else { return }
+        cullingCriteria = criteria
+        CullingCriteria.saved = criteria
+        cullingPanel.criteria = criteria
+        if state.filter.cullReview != nil { state.filter.cullReview?.criteria = criteria }
+        updateCulling()
+    }
+
+    /// Shows only the source's Selects or Rejects in the grid, or (nil) all its photos.
+    func reviewCulling(_ kind: CullingReview.Kind?) {
+        state.filter.cullReview = kind.map { CullingReview(kind: $0, criteria: cullingCriteria) }
+        cullingPanel.show(cullingCounts, progress: cullingProgress, review: kind)
+    }
+
+    /// Analyze: scores the source's photos that haven't been; Re-analyze (`again`) scores them all again.
+    func analyzeSource(again: Bool) {
+        let request = sourceRequest(NSPredicate(format: "isVideo == NO"))
+        if !again { request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            request.predicate!, NSPredicate(format: "cullVersion != %d", CullingAnalyzer.version),
+        ]) }
+        let photos = (try? store.viewContext.fetch(request)) ?? []
+        guard !photos.isEmpty else { NSSound.beep(); return }
+        store.cullingAnalysis.analyze(photos, again: again)
+    }
+
+    /// Apply: flags the source's Selects as Picks and its Rejects as Rejected, as one undoable step. Photos already
+    /// flagged either way keep their flag.
+    func applyCullingFlags() {
+        let unflagged = NSPredicate(format: "flag == %d", PhotoFlag.unflagged.rawValue)
+        let context = store.viewContext
+        let selects = Set(((try? context.fetch(sourceRequest(unflagged, cullingCriteria.selectPredicate))) ?? []).map(\.objectID))
+        let rejects = ((try? context.fetch(sourceRequest(unflagged, cullingCriteria.rejectPredicate))) ?? []).map(\.objectID)
+        guard !selects.isEmpty || !rejects.isEmpty else { NSSound.beep(); return }
+        editing.edit(Array(selects) + rejects, actionName: "Apply Assisted Culling") { photo in
+            photo.photoFlag = selects.contains(photo.objectID) ? .picked : .rejected
         }
     }
 

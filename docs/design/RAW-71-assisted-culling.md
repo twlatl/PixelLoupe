@@ -91,6 +91,21 @@ Measured on 211 RAW files (Sony ARW, Fujifilm RAF, DNG) from the sample library;
 - **Documents.** Vision calls product shots utility images too, so a document also needs three or more lines of text
   covering 5% of the frame.
 
+## Panel notes (RAW-170)
+
+- **Eyes Open bands.** Openness (0–1, from the engine) of 0.65 and over is open and under 0.35 is closed; between
+  is ambiguous. Without "Select ambiguous photos" the least open face must be open; with it, a photo is rejected
+  only when every face's eyes are clearly closed, so a group where some people blinked counts as ambiguous.
+- **One rule set, two forms.** `CullingCriteria.failures(_:)` judges one photo (Apply, and the Info panel next);
+  `rejectPredicate`/`selectPredicate` give the grid and the counts the same split in Core Data. A test checks they
+  agree over every mix of scores.
+- **Review** is `LibraryFilter.cullReview`, ANDed with the filter bar's criteria and not saved with the catalog;
+  setting a new scope clears it. The sliders refilter when they're let go, not while dragging.
+- **Counts** ("142 Selects · 37 Rejects · 12 not analyzed") are three count fetches over the source, redone shortly
+  after photos change, so analysis progress and Apply show up as they happen.
+- **Apply** flags unflagged Selects as Picks and unflagged Rejects as Rejected in one step named "Apply Assisted
+  Culling". Photos hidden in a collapsed stack aren't part of the source here, as in the grid.
+
 ## Delivery
 
 RAW-71 is a Story with four sub-tasks, each a stacked PR against `main`:
