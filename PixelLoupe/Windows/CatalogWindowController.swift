@@ -934,9 +934,10 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         editing.setAllStacksCollapsed(false)
     }
 
-    /// Clicking the count badge of a stack in the grid collapses or expands it.
+    /// Clicking the count badge of a stack in the grid collapses or expands it. The sender is the badge, a button
+    /// inside the photo's cell.
     @objc func toggleStackFromBadge(_ sender: Any?) {
-        guard let id = (sender as? PhotoGridCellView)?.photoObjectID else { return }
+        guard let id = PhotoGridCellView.enclosing(sender as? NSView)?.photoObjectID else { return }
         editing.toggleCollapsed([id])
         state.selectedPhotoIDs = [id]
     }

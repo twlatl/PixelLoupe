@@ -101,8 +101,8 @@ extension AutoStacking {
 
 extension PhotoEditing {
     /// Makes each group of photos (in capture-time order) a stack, its best photo on top (see
-    /// `AutoStacking.top(of:criteria:)`), as one undoable step. Stacks are left open so every photo stays in sight.
-    /// Returns the number of stacks made.
+    /// `AutoStacking.top(of:criteria:)`), as one undoable step. Stacks are collapsed, as Group into Stack's are, so
+    /// only their top photos show. Returns the number of stacks made.
     @discardableResult
     func autoStack(_ groups: [[NSManagedObjectID]], criteria: CullingCriteria) -> Int {
         let context = store.viewContext
@@ -111,7 +111,7 @@ extension PhotoEditing {
             let members = photos(group).filter { $0.stack == nil }
             guard members.count >= 2, let top = AutoStacking.top(of: members, criteria: criteria) else { continue }
             let stack = PhotoStack(context: context)
-            stack.isCollapsed = false
+            stack.isCollapsed = true
             for photo in members { photo.stack = stack }
             stack.renumber([top] + members.filter { $0 !== top })
             made += 1
