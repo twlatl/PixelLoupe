@@ -131,8 +131,9 @@ Measured on 211 RAW files (Sony ARW, Fujifilm RAF, DNG) from the sample library;
   chosen (not every time the sheet opens), with progress in the sheet; the distances are kept only while it's open.
 - **Top photo:** the Select (by the panel's criteria) with the best Vision aesthetics score; with no Selects, the
   best-scoring analyzed photo; with nothing analyzed, the earliest.
-- **Stacks are left open**, so the grid, the Assisted Culling counts and Apply still see every photo (a collapsed
-  stack hides all but its top photo from the source). Photo ▸ Stacking ▸ Collapse All Stacks closes them.
+- **Stacks are collapsed**, as Group into Stack's are, so only each stack's top photo shows (RAW-174; they were left
+  open at first, which looked as if nothing had been stacked). Collapsed photos are out of the source, so the Assisted
+  Culling counts and Apply then see only the top photos. Clicking a stack's badge, or S, opens it.
 - The method and both sliders are remembered app-wide.
 
 ## Delivery

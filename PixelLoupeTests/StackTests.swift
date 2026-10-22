@@ -45,6 +45,29 @@ struct StackTests {
         return try setup.store.viewContext.fetch(request).map(\.fileName)
     }
 
+    @Test("Clicking a stack's badge finds its photo, so the click expands and collapses it (RAW-174)")
+    func badgeTogglesTheStack() throws {
+        let setup = try makeSetup(count: 4)
+        let p = setup.photos
+        grouped(setup) { _ = setup.editing.groupIntoStack([p[0].objectID, p[1].objectID, p[2].objectID]) }
+        let cell = PhotoGridCellView()
+        cell.photoObjectID = p[0].objectID
+        cell.setStack(PhotoGridItem.stackInfo(for: p[0]))
+        #expect(!cell.stackBadge.isHidden)
+
+        // The click's sender is the badge, a button inside the cell; `toggleStackFromBadge(_:)` looks the cell up.
+        let found = try #require(PhotoGridCellView.enclosing(cell.stackBadge))
+        #expect(found === cell)
+        #expect(PhotoGridCellView.enclosing(cell) === cell)
+        #expect(PhotoGridCellView.enclosing(NSButton()) == nil, "a button outside a photo's cell")
+
+        let id = try #require(found.photoObjectID)
+        grouped(setup) { setup.editing.toggleCollapsed([id]) }
+        #expect(try visible(setup) == ["IMG_0.jpg", "IMG_1.jpg", "IMG_2.jpg", "IMG_3.jpg"])
+        grouped(setup) { setup.editing.toggleCollapsed([id]) }
+        #expect(try visible(setup) == ["IMG_0.jpg", "IMG_3.jpg"])
+    }
+
     @Test("Grouping makes a collapsed stack under the first photo; the others leave the grid; undo restores")
     func grouping() throws {
         let setup = try makeSetup()

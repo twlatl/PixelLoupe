@@ -116,7 +116,7 @@ struct AutoStackingTests {
         #expect(AutoStacking.top(of: burst, criteria: CullingCriteria()) == burst[2], "with no Selects, the best-looking")
     }
 
-    @Test func autoStackMakesOpenStacksInOneUndoStep() throws {
+    @Test func autoStackMakesCollapsedStacksInOneUndoStep() throws {
         let setup = try makeCatalog()
         let photos = setup.photos
         score(photos[2], quality: 0.8)
@@ -127,13 +127,14 @@ struct AutoStackingTests {
         #expect(made == 2)
         let burst = try #require(photos[0].stack)
         #expect(burst.orderedPhotos == [photos[2], photos[0], photos[1]], "the best on top, the rest in order")
-        #expect(!burst.isCollapsed && photos.allSatisfy { !$0.isHiddenInStack })
+        #expect(burst.isCollapsed, "like Group into Stack, only the top photo shows")
+        #expect(photos.filter(\.isHiddenInStack) == [photos[0], photos[1], photos[4]])
         #expect(photos[3].stack?.orderedPhotos == [photos[3], photos[4]])
         #expect(photos[5].stack == nil)
         let undo = try #require(setup.store.viewContext.undoManager)
         #expect(undo.undoActionName == "Auto Stack")
         undo.undo()
-        #expect(photos.allSatisfy { $0.stack == nil })
+        #expect(photos.allSatisfy { $0.stack == nil && !$0.isHiddenInStack })
     }
 
     @Test func photosAlreadyStackedAreLeftAlone() throws {

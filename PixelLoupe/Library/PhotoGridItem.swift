@@ -78,6 +78,13 @@ final class PhotoGridItem: NSCollectionViewItem {
 final class PhotoGridCellView: NSView {
     /// The photo shown, for the stack badge's click.
     var photoObjectID: NSManagedObjectID?
+
+    /// The cell `view` is in (or is).
+    static func enclosing(_ view: NSView?) -> PhotoGridCellView? {
+        guard let view else { return nil }
+        return sequence(first: view, next: \.superview).lazy.compactMap { $0 as? PhotoGridCellView }.first
+    }
+
     var isSelected = false { didSet { updateAppearance() } }
     var isHighlighted = false { didSet { updateAppearance() } }
 
@@ -87,7 +94,8 @@ final class PhotoGridCellView: NSView {
     private let flagView = NSImageView()
     private let missingBadge = NSImageView()
     private let copyBadge = NSImageView()
-    private let stackBadge = NSButton()
+    /// A stack's size on its top photo; clicking it sends `toggleStackFromBadge(_:)` up the responder chain.
+    let stackBadge = NSButton()
     private let infoBadge = NSButton()
     private var infoValue: InfoBadge?
     private var stackInfo: StackInfo?
