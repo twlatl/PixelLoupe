@@ -2,7 +2,7 @@ import AppKit
 import CoreData
 
 /// The Library's right sidebar: Histogram (not editable) and Keywords, Metadata and Location for the selected
-/// photos, and Assisted Culling for the source.
+/// photos, Assisted Culling for the source, and Assisted Culling Info for the target photo.
 final class LibraryInspectorViewController: NSViewController {
     enum Target: Int {
         /// Metadata edits go to the target (first selected) photo.
@@ -23,6 +23,7 @@ final class LibraryInspectorViewController: NSViewController {
     let metadataPanel = MetadataPanelView()
     let locationPanel = LocationPanelView()
     let cullingPanel = CullingPanelView()
+    let cullingInfoPanel = CullingInfoPanelView()
     private(set) var cullingCriteria = CullingCriteria.saved
     /// Asks before Replace overwrites locations cameras recorded (`count` photos); tests answer it.
     var confirmReplacingCameraLocations: @MainActor (_ count: Int) -> Bool = LibraryInspectorViewController.confirmReplacing
@@ -118,6 +119,7 @@ final class LibraryInspectorViewController: NSViewController {
         let sections = [
             InspectorSectionView(title: "Histogram", content: histogram),
             InspectorSectionView(title: "Assisted Culling", accessory: cullingPanel.actionButton, content: cullingPanel),
+            InspectorSectionView(title: "Assisted Culling Info", content: cullingInfoPanel),
             keywordsSection,
             keywordListSection,
             InspectorSectionView(title: "Metadata", accessory: setPopUp, content: metadataContent),
@@ -206,6 +208,7 @@ final class LibraryInspectorViewController: NSViewController {
 
     private func selectionChanged() {
         updateHistogram()
+        updateCullingInfo()
         updateKeywords()
         keywordList.updateMembership(for: selectedPhotos)
         loadFileMetadata()
@@ -226,6 +229,7 @@ final class LibraryInspectorViewController: NSViewController {
             (notification.userInfo?[$0] as? Set<NSManagedObject>)?.contains { $0 is Photo } ?? false
         }) { scheduleCullingUpdate() }
         guard changed else { return }
+        updateCullingInfo()
         updateKeywords()
         updateMetadata()
     }
@@ -246,6 +250,7 @@ final class LibraryInspectorViewController: NSViewController {
 
     @objc private func sourceStatusDidChange(_ notification: Notification) {
         histogram.sourceStatus = selectedPhotos.first.flatMap(store.sourceStatus)
+        updateCullingInfo()
     }
 
     @objc private func thumbnailDidUpdate(_ notification: Notification) {
@@ -660,6 +665,13 @@ final class LibraryInspectorViewController: NSViewController {
         cullingPanel.criteria = criteria
         if state.filter.cullReview != nil { state.filter.cullReview?.criteria = criteria }
         updateCulling()
+        updateCullingInfo()
+    }
+
+    /// The Info panel: the target photo's verdict and scores.
+    private func updateCullingInfo() {
+        let photo = state.selectedPhotoIDs.first.flatMap { try? store.viewContext.existingObject(with: $0) as? Photo }
+        cullingInfoPanel.show(CullingInfo(photo: photo, criteria: cullingCriteria, status: photo.flatMap(store.sourceStatus)))
     }
 
     /// Shows only the source's Selects or Rejects in the grid, or (nil) all its photos.

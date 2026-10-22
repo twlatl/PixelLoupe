@@ -106,6 +106,18 @@ Measured on 211 RAW files (Sony ARW, Fujifilm RAF, DNG) from the sample library;
 - **Apply** flags unflagged Selects as Picks and unflagged Rejects as Rejected in one step named "Apply Assisted
   Culling". Photos hidden in a collapsed stack aren't part of the source here, as in the grid.
 
+## Info panel notes (RAW-171)
+
+- Shows the **target photo** (the first selected, as Histogram does) whatever the Target Photo / Selected Photos
+  switch says; that switch belongs to Metadata.
+- Rows: Verdict (green Select / red Reject), Rejected By (the failed criteria, in the panel's order), Subject Focus
+  and Eye Focus as "72 / 100", Eyes Open as Open / Closed / Ambiguous / Some closed (the RAW-170 bands), Faces,
+  Exposure, Misfire, Document.
+- The verdict uses the Assisted Culling panel's current criteria, so moving a slider updates it.
+- Every value is "—" with a note for photos not analyzed (or analyzed by another analyzer version) and for videos.
+  Focus still to be measured reads "Not measured yet", with a note that says whether the original is offline.
+- Built as `CullingInfo` (values, testable without UI) and `CullingInfoPanelView` (an `NSGridView` of labels).
+
 ## Delivery
 
 RAW-71 is a Story with four sub-tasks, each a stacked PR against `main`:
