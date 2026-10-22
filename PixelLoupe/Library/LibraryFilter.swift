@@ -418,7 +418,12 @@ nonisolated struct LibraryFilter: Equatable, Sendable {
         var metadata = MetadataBrowser()
     }
 
-    var scope: Scope = .allPhotos
+    var scope: Scope = .allPhotos {
+        didSet { if scope != oldValue { cullReview = nil } }
+    }
+    /// The Assisted Culling panel's Review (Selects or Rejects; nil is All), on top of the bar's criteria. Not
+    /// saved, and back to All when the source changes.
+    var cullReview: CullingReview?
     /// The modes that filter. Setting a mode's criteria turns it on, so the filmstrip's filters and
     /// the keyword list's arrow work whatever the bar shows (as in Lightroom).
     var modes: Set<Mode> = []
@@ -467,18 +472,20 @@ nonisolated struct LibraryFilter: Equatable, Sendable {
         return scoped.map { NSCompoundPredicate(andPredicateWithSubpredicates: [hidden, $0]) } ?? hidden
     }
 
-    /// What the Metadata columns count from: the source and the other active modes' criteria.
+    /// What the Metadata columns count from: the source, the other active modes' criteria and the Review.
     var metadataBasePredicate: NSPredicate {
         let predicates = (modes.contains(.text) ? text.predicates : []) + (modes.contains(.attribute) ? attributes.predicates : [])
+            + (cullReview.map { [$0.predicate] } ?? [])
         guard !predicates.isEmpty else { return scopePredicate }
         return NSCompoundPredicate(andPredicateWithSubpredicates: [scopePredicate] + predicates)
     }
 
-    /// The active modes' criteria, Text then Attribute then Metadata.
+    /// The active modes' criteria, Text then Attribute then Metadata, and the Review.
     private var criteriaPredicates: [NSPredicate] {
         (modes.contains(.text) ? text.predicates : [])
             + (modes.contains(.attribute) ? attributes.predicates : [])
             + (modes.contains(.metadata) ? metadata.predicates : [])
+            + (cullReview.map { [$0.predicate] } ?? [])
     }
 
     var predicate: NSPredicate? {
