@@ -65,6 +65,23 @@ nonisolated final class Photo: NSManagedObject {
     @NSManaged var isCropped: Bool
     /// Whether the photo is developed in black and white.
     @NSManaged var isBlackAndWhite: Bool
+    /// Assisted Culling's scores (model v17; see ``CullingScores``). `cullVersion` is the
+    /// ``CullingAnalyzer/version`` that wrote them, 0 when the photo hasn't been analyzed. Scores run
+    /// 0–1, and -1 means unknown: no faces for the eye scores, no full-size pixels for focus.
+    @NSManaged var cullVersion: Int16
+    @NSManaged var cullSubjectFocus: Double
+    @NSManaged var cullEyeFocus: Double
+    /// The least and most open eyes among the faces counted.
+    @NSManaged var cullEyesOpenMin: Double
+    @NSManaged var cullEyesOpenMax: Double
+    @NSManaged var cullFaceCount: Int16
+    @NSManaged var cullExposureIssue: Bool
+    @NSManaged var cullMisfire: Bool
+    @NSManaged var cullDocument: Bool
+    /// Vision's overall aesthetics score mapped to 0–1, for choosing the best of a stack.
+    @NSManaged var cullQuality: Double
+    /// Whether focus is still to be measured because neither the original nor a Smart Preview could be read.
+    @NSManaged var cullFocusPending: Bool
     /// Title, caption, creator and copyright as shown for the photo, for searching (model v8). Kept up
     /// to date by `metadata`, and filled in when a photo is imported.
     @NSManaged var titleText: String?

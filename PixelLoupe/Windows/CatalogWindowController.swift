@@ -77,6 +77,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         store.locationBackfill.start()
         store.smartPreviewBuilder.onProgress = { [weak self] progress in self?.state.smartPreviewStatus = progress }
         store.smartPreviewBuilder.start()
+        store.cullingAnalysis.start()
         Task { [store] in await store.smartPreviews.load() }
         store.externalEdits.start()
         NotificationCenter.default.addObserver(
@@ -148,6 +149,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         store.thumbnailMaintenance.stop()
         store.locationBackfill.stop()
         store.smartPreviewBuilder.stop()
+        store.cullingAnalysis.stop()
         store.externalEdits.stop()
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
