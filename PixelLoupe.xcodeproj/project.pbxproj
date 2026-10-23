@@ -10,6 +10,7 @@
 		0A000000000000000000000E /* PixelLoupeIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 0A000000000000000000000D /* PixelLoupeIcon.icon */; };
 		0A0000000000000000000061 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 0A0000000000000000000062 /* Sparkle */; };
 		0A0000000000000000000064 /* JXLEncoder in Frameworks */ = {isa = PBXBuildFile; productRef = 0A0000000000000000000065 /* JXLEncoder */; };
+		608EAC9E308B8D9B001BA061 /* .env in Resources */ = {isa = PBXBuildFile; fileRef = 608EAC9D308B8D96001BA061 /* .env */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -35,6 +36,7 @@
 		0A0000000000000000000011 /* PixelLoupe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PixelLoupe.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0A0000000000000000000012 /* PixelLoupeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PixelLoupeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		0A0000000000000000000013 /* PixelLoupeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PixelLoupeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		608EAC9D308B8D96001BA061 /* .env */ = {isa = PBXFileReference; lastKnownFileType = text; path = .env; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -90,6 +92,7 @@
 				0A000000000000000000000C /* Design */,
 				0A0000000000000000000005 /* PixelLoupeTests */,
 				0A0000000000000000000006 /* PixelLoupeUITests */,
+				608EAC9D308B8D96001BA061 /* .env */,
 				0A0000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -246,6 +249,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				608EAC9E308B8D9B001BA061 /* .env in Resources */,
 				0A000000000000000000000E /* PixelLoupeIcon.icon in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
