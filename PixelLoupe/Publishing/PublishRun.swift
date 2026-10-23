@@ -37,6 +37,9 @@ enum PublishRun {
         let started = Date()
         await perform(jobs, with: publisher, concurrency: service.kind.concurrency) { job, outcome, completed in
             withoutUndo(context) { apply(outcome, of: job, at: started, in: context, to: &result) }
+            // Saved as each photo finishes: a photo already on the service must be known to be there
+            // even if the app quits (or crashes) before the rest are done, or the next Publish sends it again.
+            store.save()
             progress(completed, jobs.count)
         }
         store.save()
@@ -47,6 +50,10 @@ enum PublishRun {
     private static func jobs(for service: PublishService, store: CatalogStore, settings: PublishSettings,
                              failures: inout [String]) -> [Job] {
         service.pruneUnpublishedOrphans()
+        // Results are saved as they come in, which would leave temporary IDs (of entries not saved yet)
+        // pointing at nothing.
+        let unsaved = service.publishedPhotos.filter { $0.objectID.isTemporaryID }
+        if !unsaved.isEmpty { try? service.managedObjectContext?.obtainPermanentIDs(for: Array(unsaved)) }
         var jobs: [Job] = []
         let toPublish = service.entries(in: .new) + service.entries(in: .modified)
         for (index, entry) in toPublish.enumerated() {
