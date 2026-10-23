@@ -151,6 +151,11 @@ if codesign --display --entitlements - --xml "$app" 2>/dev/null | grep -q get-ta
   print -u2 "The app has the get-task-allow entitlement (a Debug build?)."
   exit 1
 fi
+# .env holds API and release secrets in plain text; Scripts/generate-secrets.sh compiles in the ones the app needs.
+if [[ -n "$(find "$app" -name '.env*' -print -quit)" ]]; then
+  print -u2 "The app bundle contains a .env file. Remove it from the Xcode project's resources."
+  exit 1
+fi
 shipped=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$app/Contents/Info.plist")
 [[ "$shipped" == "$version" ]] || { print -u2 "The app says it's version $shipped, not $version."; exit 1 }
 shipped_build=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$app/Contents/Info.plist")

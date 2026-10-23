@@ -66,6 +66,17 @@ jobs:
             exit 1
           fi
 
+      - name: Check the service secrets are set
+        # Flickr's API key and secret, compiled into the app by Scripts/generate-secrets.sh. Only a warning until
+        # Flickr publishing ships (RAW-173): without them the release builds, with Flickr unavailable.
+        env:
+          FLICKR_KEY: ${{ secrets.FLICKR_KEY }}
+          FLICKR_SECRET: ${{ secrets.FLICKR_SECRET }}
+        run: |
+          for name in FLICKR_KEY FLICKR_SECRET; do
+            [[ -n "${!name}" ]] || echo "::warning::$name is empty or missing on $GITHUB_REPOSITORY, so this release can't publish to Flickr. Set it with: gh secret set $name"
+          done
+
       - name: Select Xcode
         run: |
           sudo xcode-select -s "$XCODE"
@@ -114,6 +125,10 @@ jobs:
         env:
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER_ID }}
+          # Read by the Generate Secrets build phase through xcodebuild's environment, not passed as build settings,
+          # which xcodebuild would print.
+          FLICKR_KEY: ${{ secrets.FLICKR_KEY }}
+          FLICKR_SECRET: ${{ secrets.FLICKR_SECRET }}
           VERSION: ${{ steps.version.outputs.version }}
           NAME: ${{ steps.version.outputs.name }}
         run: Scripts/release.sh "$VERSION" "$NAME" build/release
