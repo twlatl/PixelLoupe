@@ -15,6 +15,13 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
     private var dataSource: NSCollectionViewDiffableDataSource<String, NSManagedObjectID>!
     private var fetchedResultsController: NSFetchedResultsController<Photo>!
     private var isRefetching = false
+    /// A publish service's photos grouped by state, while the grid shows one (RAW-179).
+    private(set) var publishGroups: PublishGroups?
+    /// The publish groups collapsed to their heading (for this window, until it closes).
+    private(set) var collapsedPublishGroups: Set<PublishedPhoto.State> = []
+    private var publishRegroupScheduled = false
+    /// Called with the publish groups each time they change (nil when the grid leaves a publish service).
+    var onPublishGroupsChange: ((PublishGroups?) -> Void)?
     private var editing: PhotoEditing { PhotoEditing(store: store) }
 
     init(store: CatalogStore, state: LibraryState) {
@@ -86,12 +93,21 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
         let thumbnails = store.thumbnails
         let context = store.viewContext
         let availability = store.availability
-        dataSource = NSCollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, objectID in
+        dataSource = NSCollectionViewDiffableDataSource(collectionView: collectionView) { [weak self] collectionView, indexPath, objectID in
             let item = collectionView.makeItem(withIdentifier: PhotoGridItem.identifier, for: indexPath)
             if let item = item as? PhotoGridItem, let photo = try? context.existingObject(with: objectID) as? Photo {
-                item.configure(with: photo, thumbnails: thumbnails, isMissing: availability.isMissing(photo.id))
+                item.configure(with: photo, thumbnails: thumbnails, isMissing: availability.isMissing(photo.id),
+                               publishError: self?.publishGroups?.errors[objectID])
             }
             return item
+        }
+        collectionView.register(PublishSectionHeaderView.self, forSupplementaryViewOfKind: NSCollectionView.elementKindSectionHeader,
+                                withIdentifier: PublishSectionHeaderView.identifier)
+        dataSource.supplementaryViewProvider = { [weak self] collectionView, kind, indexPath in
+            let view = collectionView.makeSupplementaryView(ofKind: kind, withIdentifier: PublishSectionHeaderView.identifier, for: indexPath)
+            let header = view as? PublishSectionHeaderView ?? PublishSectionHeaderView()
+            self?.configure(header, section: indexPath.section)
+            return header
         }
 
         let request = Photo.fetchRequest()
@@ -153,7 +169,8 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
                   let photo = try? store.viewContext.existingObject(with: objectID) as? Photo,
                   photo.id == id,
                   let item = collectionView.item(at: indexPath) as? PhotoGridItem else { continue }
-            item.configure(with: photo, thumbnails: store.thumbnails, isMissing: store.availability.isMissing(photo.id), reloadThumbnail: true)
+            item.configure(with: photo, thumbnails: store.thumbnails, isMissing: store.availability.isMissing(photo.id), reloadThumbnail: true,
+                           publishError: publishGroups?.errors[objectID])
         }
     }
 
@@ -169,10 +186,78 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
         } catch {
             NSApp.presentError(error)
         }
+        apply(snapshot(of: customOrdered(fetchedResultsController.fetchedObjects?.map(\.objectID) ?? [])), animated: false)
+    }
+
+    /// The grid's photos in one section, or for a publish service, in a section for each of its groups.
+    private func snapshot(of ids: [NSManagedObjectID]) -> NSDiffableDataSourceSnapshot<String, NSManagedObjectID> {
         var snapshot = NSDiffableDataSourceSnapshot<String, NSManagedObjectID>()
-        snapshot.appendSections([""])
-        snapshot.appendItems(customOrdered(fetchedResultsController.fetchedObjects?.map(\.objectID) ?? []))
-        apply(snapshot, animated: false)
+        guard let serviceID = state.filter.scope.publishServiceID,
+              let service = PublishService.with(id: serviceID, in: store.viewContext) else {
+            publishGroups = nil
+            onPublishGroupsChange?(nil)
+            layout.headerReferenceSize = .zero
+            snapshot.appendSections([""])
+            snapshot.appendItems(ids)
+            return snapshot
+        }
+        let groups = PublishGroups(service: service, photoIDs: ids, context: store.viewContext)
+        publishGroups = groups
+        onPublishGroupsChange?(groups)
+        layout.headerReferenceSize = NSSize(width: 0, height: PublishSectionHeaderView.height)
+        for state in PublishedPhoto.State.allCases where groups.count(of: state) > 0 {
+            let section = Self.section(for: state)
+            snapshot.appendSections([section])
+            if !collapsedPublishGroups.contains(state) {
+                snapshot.appendItems(groups.groups.first { $0.state == state }?.photoIDs ?? [], toSection: section)
+            }
+        }
+        return snapshot
+    }
+
+    /// Shows a publish group's heading: its title, count and whether it's collapsed.
+    private func configure(_ header: PublishSectionHeaderView, section index: Int) {
+        guard let section = dataSource.snapshot().sectionIdentifiers.dropFirst(index).first,
+              let state = Self.publishState(forSection: section), let groups = publishGroups else { return }
+        let orphans = state == .deleted && groups.deletedFromCatalog > 0
+            ? "\(groups.deletedFromCatalog.formatted()) no longer in the catalog" : nil
+        header.show(state, count: groups.count(of: state), isCollapsed: collapsedPublishGroups.contains(state), note: orphans)
+        header.onToggle = { [weak self] in self?.togglePublishGroup(state) }
+    }
+
+    /// Brings the visible headings' counts and the photos' error badges up to date after a regroup.
+    /// (Not with the snapshot's `reloadSections`: reloading a group that's only now appearing, as Published
+    /// does after the first Publish, makes the collection view throw.)
+    private func refreshPublishDecorations() {
+        guard publishGroups != nil else { return }
+        let kind = NSCollectionView.elementKindSectionHeader
+        for indexPath in collectionView.indexPathsForVisibleSupplementaryElements(ofKind: kind) {
+            guard let header = collectionView.supplementaryView(forElementKind: kind, at: indexPath) as? PublishSectionHeaderView else { continue }
+            configure(header, section: indexPath.section)
+        }
+        for indexPath in collectionView.indexPathsForVisibleItems() {
+            guard let id = dataSource.itemIdentifier(for: indexPath),
+                  let item = collectionView.item(at: indexPath) as? PhotoGridItem else { continue }
+            item.cellView.setPublishError(publishGroups?.errors[id])
+        }
+    }
+
+    private static func section(for state: PublishedPhoto.State) -> String { "publish.\(state)" }
+
+    private static func publishState(forSection section: String) -> PublishedPhoto.State? {
+        PublishedPhoto.State.allCases.first { Self.section(for: $0) == section }
+    }
+
+    /// Collapses or expands a publish group.
+    func togglePublishGroup(_ state: PublishedPhoto.State) {
+        if collapsedPublishGroups.contains(state) { collapsedPublishGroups.remove(state) } else { collapsedPublishGroups.insert(state) }
+        regroupPublishService()
+    }
+
+    /// Regroups a publish service's photos after their states changed (an edit, a Publish).
+    func regroupPublishService() {
+        guard state.filter.scope.publishServiceID != nil else { return }
+        apply(snapshot(of: customOrdered(fetchedResultsController.fetchedObjects?.map(\.objectID) ?? [])), animated: true)
     }
 
     func controller(
@@ -181,6 +266,10 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
     ) {
         guard !isRefetching else { return }
         var snapshot = snapshot as NSDiffableDataSourceSnapshot<String, NSManagedObjectID>
+        if state.filter.scope.publishServiceID != nil {
+            apply(self.snapshot(of: snapshot.itemIdentifiers), animated: true)
+            return
+        }
         if state.filter.sortKey == .customOrder {
             let items = customOrdered(snapshot.itemIdentifiers)
             snapshot.deleteItems(snapshot.itemIdentifiers)
@@ -260,6 +349,7 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
     private func apply(_ snapshot: NSDiffableDataSourceSnapshot<String, NSManagedObjectID>, animated: Bool) {
         let selected = Set(state.selectedPhotoIDs)
         dataSource.apply(snapshot, animatingDifferences: animated && view.window != nil)
+        refreshPublishDecorations()
         updateScopePhotoCount(shown: snapshot.numberOfItems)
         state.photoOrder = snapshot.itemIdentifiers
 
@@ -272,6 +362,17 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
     /// Refreshes visible cells for photos whose rating, flag or tags changed (including via undo
     /// and merges from background contexts).
     @objc private func contextObjectsDidChange(_ notification: Notification) {
+        if state.filter.scope.publishServiceID != nil, !publishRegroupScheduled,
+           [NSInsertedObjectsKey, NSUpdatedObjectsKey, NSDeletedObjectsKey, NSRefreshedObjectsKey].contains(where: { key in
+               (notification.userInfo?[key] as? Set<NSManagedObject>)?.contains { $0 is PublishedPhoto || $0 is PublishService || $0 is Photo } ?? false
+           }) {
+            // A Publish changes many photos' states at once: regroup once, after them.
+            publishRegroupScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                self?.publishRegroupScheduled = false
+                self?.regroupPublishService()
+            }
+        }
         var changed = Set<NSManagedObjectID>()
         for key in [NSUpdatedObjectsKey, NSRefreshedObjectsKey] {
             for object in notification.userInfo?[key] as? Set<NSManagedObject> ?? [] {
@@ -288,7 +389,8 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
             guard let id = dataSource.itemIdentifier(for: indexPath), changed.contains(id),
                   let item = collectionView.item(at: indexPath) as? PhotoGridItem,
                   let photo = try? store.viewContext.existingObject(with: id) as? Photo else { continue }
-            item.configure(with: photo, thumbnails: store.thumbnails, isMissing: store.availability.isMissing(photo.id))
+            item.configure(with: photo, thumbnails: store.thumbnails, isMissing: store.availability.isMissing(photo.id),
+                           publishError: publishGroups?.errors[id])
         }
     }
 
@@ -298,7 +400,8 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
             guard let id = dataSource.itemIdentifier(for: indexPath),
                   let photo = try? store.viewContext.existingObject(with: id) as? Photo,
                   let item = collectionView.item(at: indexPath) as? PhotoGridItem else { continue }
-            item.configure(with: photo, thumbnails: store.thumbnails, isMissing: store.availability.isMissing(photo.id))
+            item.configure(with: photo, thumbnails: store.thumbnails, isMissing: store.availability.isMissing(photo.id),
+                           publishError: publishGroups?.errors[id])
         }
     }
 
@@ -442,6 +545,16 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
             menu.addItem(add)
             if windowController.isShowingCollection {
                 menu.addItem(NSMenuItem(title: "Remove from Collection", action: #selector(PixelLoupeActions.removeFromCollection(_:)), keyEquivalent: ""))
+            }
+            let services = windowController.addToPublishServiceMenu()
+            if !services.items.isEmpty {
+                let publish = NSMenuItem(title: "Add to Publish Service", action: nil, keyEquivalent: "")
+                publish.submenu = services
+                menu.addItem(publish)
+            }
+            if state.filter.scope.publishServiceID != nil {
+                menu.addItem(NSMenuItem(title: "Remove from Publish Service", action: #selector(PixelLoupeActions.removeFromPublishService(_:)),
+                                        keyEquivalent: ""))
             }
             let develop = NSMenuItem(title: "Develop Settings", action: nil, keyEquivalent: "")
             develop.submenu = windowController.developSettingsMenu(clickedPhoto: clickedPhoto)

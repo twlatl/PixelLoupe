@@ -164,6 +164,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         secondaryWindowController?.closeQuietly()
         secondaryWindowController = nil
         exportTask?.cancel()
+        publishTask?.cancel()
         mergeTask?.cancel()
         editInTask?.cancel()
         store.save()
@@ -599,6 +600,8 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
     var lastExportDialog: ExportDialogController?
     /// Window ▸ Publishing Manager…, while it's open.
     var publishingManager: PublishingManagerWindowController?
+    /// The running Publish (RAW-179), cancelled from the bottom bar.
+    var publishTask: Task<Void, Never>?
     /// Photo ▸ Photo Merge's merge (HDR or Panorama), running in the background.
     var mergeTask: Task<Void, Never>?
     var mergeSheet: NSWindowController?
@@ -1109,6 +1112,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         if let valid = validateDevelopSettingsItem(item) { return valid }
         if let valid = validateFolderItem(item) { return valid }
         if let valid = validateSmartPreviewItem(item) { return valid }
+        if let valid = validatePublishItem(item) { return valid }
         switch item.action {
         case #selector(addKeywords(_:)):
             return !state.selectedPhotoIDs.isEmpty

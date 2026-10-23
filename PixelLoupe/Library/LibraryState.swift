@@ -246,6 +246,14 @@ final class LibraryState {
         didSet { if exportStatus != oldValue { notify(.importStatus) } }
     }
 
+    /// Publish's progress (RAW-179), shown like import's.
+    var publishStatus: ImportStatus? {
+        didSet { if publishStatus != oldValue { notify(.importStatus) } }
+    }
+
+    /// The service `publishStatus` is for.
+    var publishingServiceName = ""
+
     /// Photo ▸ Photo Merge's progress, in percent, shown like import's.
     var mergeStatus: ImportStatus? {
         didSet { if mergeStatus != oldValue { notify(.importStatus) } }

@@ -640,7 +640,11 @@ final class LibraryInspectorViewController: NSViewController {
     /// Counts the source's Selects, Rejects and photos to analyze, and shows them.
     private func updateCulling() {
         let context = store.viewContext
-        func count(_ predicate: NSPredicate) -> Int { (try? context.count(for: sourceRequest(predicate))) ?? 0 }
+        func count(_ predicate: NSPredicate) -> Int {
+            // A count that fails reports NSNotFound rather than throwing (a catalog closed or gone underneath).
+            let count = (try? context.count(for: sourceRequest(predicate))) ?? 0
+            return count == NSNotFound ? 0 : count
+        }
         cullingCounts = CullingPanelView.Counts(
             selects: count(cullingCriteria.selectPredicate),
             rejects: count(cullingCriteria.rejectPredicate),

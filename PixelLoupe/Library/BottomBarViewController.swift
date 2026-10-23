@@ -104,16 +104,19 @@ final class BottomBarViewController: NSViewController {
         let filter = state.filter
 
         let exporting = state.exportStatus
+        let publishing = state.publishStatus
         let merging = state.mergeStatus
         let editingIn = state.editInStatus
         let importing = state.importStatus
-        if let status = exporting ?? merging ?? editingIn ?? importing ?? state.smartPreviewStatus {
+        if let status = exporting ?? publishing ?? merging ?? editingIn ?? importing ?? state.smartPreviewStatus {
             progressIndicator.isHidden = false
             progressLabel.isHidden = false
             progressIndicator.maxValue = Double(max(status.total, 1))
             progressIndicator.doubleValue = Double(status.completed)
             progressLabel.stringValue = if exporting != nil {
                 "Exporting \(status.completed.formatted()) of \(status.total.formatted())"
+            } else if publishing != nil {
+                "Publishing to \(state.publishingServiceName): \(status.completed.formatted()) of \(status.total.formatted())"
             } else if merging != nil {
                 state.mergeKind.progressTitle
             } else if editingIn != nil {
@@ -131,10 +134,15 @@ final class BottomBarViewController: NSViewController {
             progressIndicator.isHidden = true
             progressLabel.isHidden = true
         }
-        cancelExportButton.isHidden = exporting == nil && merging == nil
-        let cancelTitle = exporting == nil ? state.mergeKind.cancelTitle : "Cancel Export"
-        cancelExportButton.action = exporting == nil
-            ? #selector(PixelLoupeActions.cancelPhotoMerge(_:)) : #selector(PixelLoupeActions.cancelExport(_:))
+        cancelExportButton.isHidden = exporting == nil && publishing == nil && merging == nil
+        let cancelTitle = if exporting != nil { "Cancel Export" } else if publishing != nil { "Cancel Publish" } else { state.mergeKind.cancelTitle }
+        cancelExportButton.action = if exporting != nil {
+            #selector(PixelLoupeActions.cancelExport(_:))
+        } else if publishing != nil {
+            #selector(PixelLoupeActions.cancelPublish(_:))
+        } else {
+            #selector(PixelLoupeActions.cancelPhotoMerge(_:))
+        }
         cancelExportButton.toolTip = cancelTitle
         cancelExportButton.image?.accessibilityDescription = cancelTitle
 
