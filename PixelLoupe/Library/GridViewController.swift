@@ -106,13 +106,7 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
         dataSource.supplementaryViewProvider = { [weak self] collectionView, kind, indexPath in
             let view = collectionView.makeSupplementaryView(ofKind: kind, withIdentifier: PublishSectionHeaderView.identifier, for: indexPath)
             let header = view as? PublishSectionHeaderView ?? PublishSectionHeaderView()
-            guard let self,
-                  let section = dataSource.snapshot().sectionIdentifiers.dropFirst(indexPath.section).first,
-                  let state = Self.publishState(forSection: section), let groups = publishGroups else { return header }
-            let orphans = state == .deleted && groups.deletedFromCatalog > 0
-                ? "\(groups.deletedFromCatalog.formatted()) no longer in the catalog" : nil
-            header.show(state, count: groups.count(of: state), isCollapsed: collapsedPublishGroups.contains(state), note: orphans)
-            header.onToggle = { [weak self] in self?.togglePublishGroup(state) }
+            self?.configure(header, section: indexPath.section)
             return header
         }
 
@@ -218,9 +212,34 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
                 snapshot.appendItems(groups.groups.first { $0.state == state }?.photoIDs ?? [], toSection: section)
             }
         }
-        // Headers show counts and errors, which change without the photos changing.
-        snapshot.reloadSections(snapshot.sectionIdentifiers)
         return snapshot
+    }
+
+    /// Shows a publish group's heading: its title, count and whether it's collapsed.
+    private func configure(_ header: PublishSectionHeaderView, section index: Int) {
+        guard let section = dataSource.snapshot().sectionIdentifiers.dropFirst(index).first,
+              let state = Self.publishState(forSection: section), let groups = publishGroups else { return }
+        let orphans = state == .deleted && groups.deletedFromCatalog > 0
+            ? "\(groups.deletedFromCatalog.formatted()) no longer in the catalog" : nil
+        header.show(state, count: groups.count(of: state), isCollapsed: collapsedPublishGroups.contains(state), note: orphans)
+        header.onToggle = { [weak self] in self?.togglePublishGroup(state) }
+    }
+
+    /// Brings the visible headings' counts and the photos' error badges up to date after a regroup.
+    /// (Not with the snapshot's `reloadSections`: reloading a group that's only now appearing, as Published
+    /// does after the first Publish, makes the collection view throw.)
+    private func refreshPublishDecorations() {
+        guard publishGroups != nil else { return }
+        let kind = NSCollectionView.elementKindSectionHeader
+        for indexPath in collectionView.indexPathsForVisibleSupplementaryElements(ofKind: kind) {
+            guard let header = collectionView.supplementaryView(forElementKind: kind, at: indexPath) as? PublishSectionHeaderView else { continue }
+            configure(header, section: indexPath.section)
+        }
+        for indexPath in collectionView.indexPathsForVisibleItems() {
+            guard let id = dataSource.itemIdentifier(for: indexPath),
+                  let item = collectionView.item(at: indexPath) as? PhotoGridItem else { continue }
+            item.cellView.setPublishError(publishGroups?.errors[id])
+        }
     }
 
     private static func section(for state: PublishedPhoto.State) -> String { "publish.\(state)" }
@@ -330,6 +349,7 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
     private func apply(_ snapshot: NSDiffableDataSourceSnapshot<String, NSManagedObjectID>, animated: Bool) {
         let selected = Set(state.selectedPhotoIDs)
         dataSource.apply(snapshot, animatingDifferences: animated && view.window != nil)
+        refreshPublishDecorations()
         updateScopePhotoCount(shown: snapshot.numberOfItems)
         state.photoOrder = snapshot.itemIdentifiers
 

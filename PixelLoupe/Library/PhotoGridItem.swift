@@ -24,7 +24,7 @@ final class PhotoGridItem: NSCollectionViewItem {
     static let identifier = NSUserInterfaceItemIdentifier("PhotoGridItem")
     static let footerHeight: CGFloat = 20
 
-    private var cellView: PhotoGridCellView { view as! PhotoGridCellView }
+    var cellView: PhotoGridCellView { view as! PhotoGridCellView }
     private var representedPhotoID: UUID?
     private var loadTask: Task<Void, Never>?
 
