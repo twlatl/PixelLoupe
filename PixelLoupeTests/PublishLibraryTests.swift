@@ -147,6 +147,37 @@ struct PublishLibraryTests {
         #expect(controller.state.photoOrder.count == 5)
     }
 
+    /// Publishing moves photos from New to Published while the grid shows the service, so its sections
+    /// change under it (the first Publish crashed the app here).
+    @Test func theGridFollowsAPublishThatChangesItsGroups() async throws {
+        let library = try PublishLibrary()
+        let only = PublishService.make(.hardDrive, in: library.context)
+        only.add([library.photos["Elsewhere.jpg"]!])
+        library.store.save()
+        let controller = window(library)
+        defer { controller.close() }
+        controller.state.filter.scope = .publishService(id: only.id)
+        let grid = controller.rootViewController.main.library.grid
+        controller.window!.contentView!.layoutSubtreeIfNeeded()
+        #expect(grid.publishGroups?.groups.map(\.state) == [.new])
+
+        let entry = try #require(only.entry(for: library.photos["Elsewhere.jpg"]!))
+        entry.publishedDate = .now
+        entry.remoteID = "/Published/Elsewhere.jpg"
+        entry.metadataFingerprint = PublishedPhoto.fingerprint(library.photos["Elsewhere.jpg"]!)
+        library.store.save()
+        grid.regroupPublishService()
+        #expect(grid.publishGroups?.groups.map(\.state) == [.published])
+        #expect(names(controller.state.photoOrder, library) == ["Elsewhere.jpg"])
+
+        // And back, through the change notification, as an edit does.
+        library.photos["Elsewhere.jpg"]!.editDate = .now
+        library.store.save()
+        for _ in 0..<5 { await Task.yield() }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(grid.publishGroups?.groups.map(\.state) == [.modified])
+    }
+
     @Test func gridItemsShowWhyPublishingFailed() throws {
         let library = try PublishLibrary()
         let controller = window(library)
