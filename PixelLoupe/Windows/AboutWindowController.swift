@@ -4,12 +4,15 @@ import QuartzCore
 /// PixelLoupe ▸ About PixelLoupe: laid out like the welcome window, with the app icon, version and
 /// credits (`Credits.html`) on the left and the featured photo on the right.
 ///
-/// Opened with ⌥⌘ held, it shows a secret photo instead and the credits roll up from the bottom like a
-/// film's, at twice the speed for as long as ⌥⌘ stay held (see ``CreditsRoll``).
+/// Opened with ⌥⌘ held, it shows the build number in place of the version and a secret photo instead, and
+/// the credits roll up from the bottom like a film's, at twice the speed for as long as ⌥⌘ stay held (see
+/// ``CreditsRoll``).
 final class AboutWindowController: NSWindowController, NSWindowDelegate {
     static let secretPhotoDescription = "A camera and a loupe beside strips of color negative film"
 
     let photoView = WelcomePhotoView()
+    /// The version under the icon ("Version 1.1"), or the build number ("Build 67") opened with ⌥⌘.
+    private(set) var versionLabel: NSTextField!
     private(set) var creditsView: NSTextView!
     private(set) var creditsScrollView: NSScrollView!
     /// Whether the credits are rolling: About was opened with ⌥⌘ held.
@@ -52,13 +55,14 @@ final class AboutWindowController: NSWindowController, NSWindowDelegate {
         if rollsCredits { startRolling() }
     }
 
-    /// Sets the window up for an ordinary opening (the featured photo, the credits from the top) or, with
-    /// ⌥⌘ among `modifiers`, a secret one (the secret photo, the credits just below the bottom edge,
-    /// ready to roll up).
+    /// Sets the window up for an ordinary opening (the version, the featured photo, the credits from the
+    /// top) or, with ⌥⌘ among `modifiers`, a secret one (the build number, the secret photo, the credits
+    /// just below the bottom edge, ready to roll up).
     func prepare(openedWith modifiers: NSEvent.ModifierFlags) {
         stopRolling()
         let rollingCredits = CreditsRoll.isHoldingKeys(modifiers)
         rollsCredits = rollingCredits
+        versionLabel.stringValue = rollingCredits ? WelcomeWindowController.buildString() : WelcomeWindowController.shortVersionString()
         photoView.content = rollingCredits ? .secret : .featured
         window?.contentView?.layoutSubtreeIfNeeded()
         // A blank screenful above and below the credits, so they roll in from the bottom and out the top.
@@ -148,7 +152,8 @@ final class AboutWindowController: NSWindowController, NSWindowDelegate {
     /// catalogs are.
     private func makeSidebar() -> NSView {
         let icon = WelcomeWindowController.makeAppIcon()
-        let version = WelcomeWindowController.makeVersionLabel(identifier: "aboutVersion")
+        let version = WelcomeWindowController.makeVersionLabel(WelcomeWindowController.shortVersionString(), identifier: "aboutVersion")
+        versionLabel = version
 
         let title = NSTextField(labelWithString: "PixelLoupe")
         title.font = .systemFont(ofSize: 26, weight: .bold)

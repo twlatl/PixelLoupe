@@ -17,7 +17,12 @@ struct AboutWindowTests {
         let views = Self.allSubviews(of: content)
         let labels = views.compactMap { ($0 as? NSTextField)?.stringValue }
         #expect(labels.contains("PixelLoupe"))
-        #expect(labels.contains(WelcomeWindowController.versionString()))
+        // The version alone, without the build number.
+        let version = try #require(views.first { $0.accessibilityIdentifier() == "aboutVersion" } as? NSTextField)
+        #expect(version === controller.versionLabel)
+        #expect(version.stringValue == WelcomeWindowController.shortVersionString())
+        #expect(!labels.contains(WelcomeWindowController.versionString()))
+        #expect(!labels.contains(WelcomeWindowController.buildString()))
         #expect(views.contains { $0 is NSImageView && $0.accessibilityLabel() == "PixelLoupe" })
 
         // The credits take the place of the welcome window's buttons and recent catalogs.
@@ -82,6 +87,7 @@ struct AboutWindowTests {
         for modifiers: NSEvent.ModifierFlags in [[], [.option], [.command], [.control, .command], [.shift, .option]] {
             controller.prepare(openedWith: modifiers)
             #expect(!controller.rollsCredits)
+            #expect(controller.versionLabel.stringValue == WelcomeWindowController.shortVersionString())
             #expect(controller.photoView.content == .featured)
             #expect(controller.creditsView.textContainerInset.height == 0)
             #expect(controller.creditsScrollView.hasVerticalScroller)
@@ -90,10 +96,12 @@ struct AboutWindowTests {
         }
     }
 
-    @Test func openedWithOptionCommandItShowsTheSecretPhotoAndTheCreditsStartBelowTheBottom() throws {
+    @Test func openedWithOptionCommandItShowsTheBuildNumberTheSecretPhotoAndTheCreditsStartBelowTheBottom() throws {
         let controller = AboutWindowController()
         controller.prepare(openedWith: [.option, .command])
         #expect(controller.rollsCredits)
+        // The build number takes the version's place.
+        #expect(controller.versionLabel.stringValue == WelcomeWindowController.buildString())
         #expect(controller.photoView.content == .secret)
         #expect(controller.photoView.accessibilityLabel() == AboutWindowController.secretPhotoDescription)
         // The secret photo has no caption.
@@ -113,6 +121,7 @@ struct AboutWindowTests {
 
         // Choosing About again without ⌥⌘ puts it back.
         controller.prepare(openedWith: [])
+        #expect(controller.versionLabel.stringValue == WelcomeWindowController.shortVersionString())
         #expect(controller.photoView.content == .featured)
         #expect(controller.photoView.accessibilityLabel() == WelcomeWindowController.FeaturedPhoto.accessibilityDescription)
         #expect(caption.allSatisfy { !$0.isHiddenOrHasHiddenAncestor })
