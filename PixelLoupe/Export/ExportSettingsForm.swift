@@ -94,7 +94,12 @@ final class ExportSettingsForm: NSObject, NSTextFieldDelegate {
         self.settings = settings
         self.watermarks = watermarks
         super.init()
+        NotificationCenter.default.addObserver(self, selector: #selector(watermarksDidChange(_:)),
+                                               name: WatermarkPresets.didChangeNotification, object: watermarks)
     }
+
+    /// The watermarks there were when Edit Watermarks… was chosen here, to pick one made then.
+    private var watermarksBeforeEditing: Set<String>?
 
     /// A section, in a collapsible view whose state is remembered under `stateKey`. Ask for each one once.
     func section(_ section: Section, stateKey: String) -> NSView {
@@ -205,7 +210,26 @@ final class ExportSettingsForm: NSObject, NSTextFieldDelegate {
     }
 
     @objc private func editWatermarks(_ sender: Any?) {
+        beginEditingWatermarks()
         NSApp.sendAction(#selector(PixelLoupeActions.showWatermarkEditor(_:)), to: nil, from: self)
+        updateControls()
+    }
+
+    /// Notes the watermarks there are, so one made in the editor from here is chosen (as in Lightroom).
+    func beginEditingWatermarks() {
+        watermarksBeforeEditing = Set(watermarks.all.map(\.name))
+    }
+
+    /// Keeps the Watermark menu up to date as watermarks are made, renamed or deleted, and chooses one
+    /// just made from this form's Edit Watermarks….
+    @objc private func watermarksDidChange(_ notification: Notification) {
+        if let before = watermarksBeforeEditing, let made = watermarks.all.map(\.name).first(where: { !before.contains($0) }) {
+            watermarksBeforeEditing = Set(watermarks.all.map(\.name))
+            change {
+                $0.watermarks = true
+                $0.watermarkName = made
+            }
+        }
         updateControls()
     }
 
