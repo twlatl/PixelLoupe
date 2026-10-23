@@ -28,14 +28,22 @@ nonisolated protocol Publisher: Sendable {
     func remove(_ photo: RemotePhoto) async throws
 }
 
-/// The publisher for a kind of service that can't publish yet.
+/// The publisher for a service that can't publish (no API key in this build, or not signed in).
 nonisolated struct UnavailablePublisher: Publisher {
     struct Unavailable: LocalizedError {
         let errorDescription: String?
     }
 
-    let reason: String
+    struct StoppingUnavailable: LocalizedError, PublishStoppingError {
+        let errorDescription: String?
+    }
 
-    func publish(_ item: PublishItem) async throws -> RemotePhoto { throw Unavailable(errorDescription: reason) }
-    func remove(_ photo: RemotePhoto) async throws { throw Unavailable(errorDescription: reason) }
+    let reason: String
+    /// Whether Publish stops at the first photo, rather than failing each the same way.
+    var stopsPublishing = false
+
+    private var error: Error { stopsPublishing ? StoppingUnavailable(errorDescription: reason) : Unavailable(errorDescription: reason) }
+
+    func publish(_ item: PublishItem) async throws -> RemotePhoto { throw error }
+    func remove(_ photo: RemotePhoto) async throws { throw error }
 }

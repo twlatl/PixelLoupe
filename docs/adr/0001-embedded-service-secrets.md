@@ -29,5 +29,5 @@ or from the gitignored .env for local builds. Without them the app still builds,
   clone without .env, and CI. The phase is the target's only script.
 - The phase runs on every build, but rewrites its output only when a value changes, because the mask is derived
   from the value. Unchanged values don't recompile anything.
-- Releases need the `FLICKR_KEY` and `FLICKR_SECRET` repository secrets. Until Flickr publishing ships, the release
-  workflow only warns when they're missing.
+- Releases need the `FLICKR_KEY` and `FLICKR_SECRET` repository secrets. Since Flickr publishing shipped (RAW-181),
+  the release workflow fails without them.

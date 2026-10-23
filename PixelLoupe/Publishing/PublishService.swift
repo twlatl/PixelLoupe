@@ -30,14 +30,6 @@ nonisolated final class PublishService: NSManagedObject {
             case .flickr: 2
             }
         }
-
-        /// What publishes for this kind of service.
-        func publisher(settings: PublishSettings, watermark: PhotoExporter.Watermark?) -> any Publisher {
-            switch self {
-            case .hardDrive: HardDrivePublisher(settings: settings, watermark: watermark)
-            case .flickr: UnavailablePublisher(reason: "Publishing to Flickr isn’t available yet.")
-            }
-        }
     }
 
     @NSManaged var id: UUID
@@ -65,6 +57,25 @@ nonisolated final class PublishService: NSManagedObject {
     var settings: PublishSettings {
         get { settingsData.flatMap { try? JSONDecoder().decode(PublishSettings.self, from: $0) } ?? PublishSettings(kind) }
         set { settingsData = try? JSONEncoder().encode(newValue) }
+    }
+
+    /// What publishes this service, with its settings and (for Flickr) its sign-in.
+    @MainActor
+    func publisher(credentials: FlickrCredentialStore = KeychainFlickrCredentialStore.shared) -> any Publisher {
+        var settings = settings
+        let watermark = PhotoExporter.Watermark(settings.export)
+        switch kind {
+        case .hardDrive:
+            return HardDrivePublisher(settings: settings, watermark: watermark)
+        case .flickr:
+            guard Secrets.hasFlickr else { return UnavailablePublisher(reason: FlickrError.notConfigured.errorDescription ?? "") }
+            guard let account = credentials.credentials(for: id) else {
+                return UnavailablePublisher(reason: "Sign in to Flickr for “\(displayName)” in the Publishing Manager first.", stopsPublishing: true)
+            }
+            // Flickr takes JPEGs (the Publishing Manager doesn't offer anything else).
+            settings.export.format = .jpeg
+            return FlickrPublisher(api: FlickrAPI(credentials: account), settings: settings, watermark: watermark)
+        }
     }
 
     /// The name shown for the service: its Description, else the kind's title.

@@ -67,15 +67,20 @@ jobs:
           fi
 
       - name: Check the service secrets are set
-        # Flickr's API key and secret, compiled into the app by Scripts/generate-secrets.sh. Only a warning until
-        # Flickr publishing ships (RAW-173): without them the release builds, with Flickr unavailable.
+        # Flickr's API key and secret, compiled into the app by Scripts/generate-secrets.sh. Without them the app
+        # can't publish to Flickr, so a release isn't built.
         env:
           FLICKR_KEY: ${{ secrets.FLICKR_KEY }}
           FLICKR_SECRET: ${{ secrets.FLICKR_SECRET }}
         run: |
+          missing=()
           for name in FLICKR_KEY FLICKR_SECRET; do
-            [[ -n "${!name}" ]] || echo "::warning::$name is empty or missing on $GITHUB_REPOSITORY, so this release can't publish to Flickr. Set it with: gh secret set $name"
+            [[ -n "${!name}" ]] || missing+=("$name")
           done
+          if (( ${#missing[@]} )); then
+            echo "::error::These Actions secrets are empty or missing on $GITHUB_REPOSITORY: ${missing[*]}. Without them the release can't publish to Flickr. Set each with: gh secret set NAME"
+            exit 1
+          fi
 
       - name: Select Xcode
         run: |

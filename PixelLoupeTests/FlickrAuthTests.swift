@@ -15,20 +15,36 @@ final class MemoryFlickrCredentialStore: FlickrCredentialStore {
     func remove(for serviceID: UUID) { stored[serviceID] = nil }
 }
 
-/// Answers requests from a table instead of the network, and records them.
+/// Answers requests instead of the network, and records them. Each session gets its own `Table`, tied to it
+/// by a header, so suites running at once don't see each other's requests.
 nonisolated final class StubURLProtocol: URLProtocol, @unchecked Sendable {
     struct Response: Sendable {
         var status: Int
         var body: String
+        var headers: [String: String] = [:]
     }
 
-    /// By URL path.
-    static let responses = Mutex<[String: Response]>([:])
-    static let requests = Mutex<[URLRequest]>([])
+    final class Table: Sendable {
+        /// Answers a request (with its body); by default from `responses`, by URL path.
+        let handler = Mutex<(@Sendable (URLRequest, Data) -> Response)?>(nil)
+        let responses = Mutex<[String: Response]>([:])
+        let requests = Mutex<[(request: URLRequest, body: Data)]>([])
 
-    static func session() -> URLSession {
+        func respond(_ path: String, _ status: Int, _ body: String) {
+            responses.withLock { $0[path] = Response(status: status, body: body) }
+        }
+    }
+
+    private static let tables = Mutex<[String: Table]>([:])
+    private static let tableHeader = "X-Stub-Table"
+
+    /// A session whose requests `table` answers.
+    static func session(_ table: Table = Table()) -> URLSession {
+        let id = UUID().uuidString
+        tables.withLock { $0[id] = table }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubURLProtocol.self]
+        configuration.httpAdditionalHeaders = [tableHeader: id]
         return URLSession(configuration: configuration)
     }
 
@@ -36,15 +52,32 @@ nonisolated final class StubURLProtocol: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        Self.requests.withLock { $0.append(request) }
-        let response = Self.responses.withLock { $0[request.url?.path() ?? ""] } ?? Response(status: 404, body: "")
-        let http = HTTPURLResponse(url: request.url!, statusCode: response.status, httpVersion: "HTTP/1.1", headerFields: nil)!
+        let table = request.value(forHTTPHeaderField: Self.tableHeader).flatMap { id in Self.tables.withLock { $0[id] } }
+        let body = request.httpBody ?? request.httpBodyStream.map(Self.read) ?? Data()
+        table?.requests.withLock { $0.append((request, body)) }
+        let response = table?.handler.withLock { $0 }?(request, body)
+            ?? table?.responses.withLock { $0[request.url?.path() ?? ""] }
+            ?? Response(status: 404, body: "")
+        let http = HTTPURLResponse(url: request.url!, statusCode: response.status, httpVersion: "HTTP/1.1", headerFields: response.headers)!
         client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: Data(response.body.utf8))
         client?.urlProtocolDidFinishLoading(self)
     }
 
     override func stopLoading() {}
+
+    private static func read(_ stream: InputStream) -> Data {
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 65_536)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            guard count > 0 else { break }
+            data.append(buffer, count: count)
+        }
+        return data
+    }
 }
 
 @Suite("OAuth 1.0a signing")
@@ -89,16 +122,19 @@ struct OAuth1SignerTests {
     }
 }
 
-@Suite("Flickr sign-in", .serialized)
+@Suite("Flickr sign-in")
 struct FlickrAuthClientTests {
-    private let client = FlickrAuthClient(signer: OAuth1Signer(consumerKey: "key", consumerSecret: "secret"), session: StubURLProtocol.session())
+    private let table = StubURLProtocol.Table()
+    private var client: FlickrAuthClient {
+        FlickrAuthClient(signer: OAuth1Signer(consumerKey: "key", consumerSecret: "secret"), session: StubURLProtocol.session(table))
+    }
 
     private func respond(_ path: String, _ status: Int, _ body: String) {
-        StubURLProtocol.responses.withLock { $0[path] = .init(status: status, body: body) }
+        table.respond(path, status, body)
     }
 
     private func lastQuery() -> [String: String] {
-        let url = StubURLProtocol.requests.withLock { $0.last?.url }
+        let url = table.requests.withLock { $0.last?.request.url }
         return Dictionary(uniqueKeysWithValues: (URLComponents(url: url!, resolvingAgainstBaseURL: false)?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
     }
 

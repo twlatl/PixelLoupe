@@ -89,7 +89,9 @@ extension CatalogWindowController {
             }
             publishTask = nil
             state.publishStatus = nil
-            if !result.failures.isEmpty, let window { Self.publishSummary(result, service: service.displayName).beginSheetModal(for: window, completionHandler: nil) }
+            if !result.failures.isEmpty || result.stopReason != nil, let window {
+                Self.publishSummary(result, service: service.displayName).beginSheetModal(for: window, completionHandler: nil)
+            }
         }
     }
 
@@ -97,6 +99,11 @@ extension CatalogWindowController {
     static func publishSummary(_ result: PublishRun.Result, service: String) -> NSAlert {
         let alert = NSAlert()
         alert.alertStyle = .warning
+        if let reason = result.stopReason {
+            alert.messageText = "Publishing to \(service) stopped."
+            alert.informativeText = reason + (result.published > 0 ? "\n\n\(result.published.formatted()) published before it stopped." : "")
+            return alert
+        }
         let failed = result.failures.count
         alert.messageText = failed == 1 ? "1 photo couldn’t be published to \(service)." : "\(failed.formatted()) photos couldn’t be published to \(service)."
         let listed = result.failures.prefix(10).joined(separator: "\n")

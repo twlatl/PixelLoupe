@@ -10,6 +10,8 @@ enum PublishRun {
         var removed = 0
         /// "IMG_0001.CR3: why", for each photo that couldn't be published or removed.
         var failures: [String] = []
+        /// Why Publish stopped before the end (the service needs signing in again), if it did.
+        var stopReason: String?
     }
 
     /// One photo's work, captured so the publisher never touches Core Data.
@@ -29,7 +31,7 @@ enum PublishRun {
                     progress: @escaping @MainActor (Int, Int) -> Void = { _, _ in }) async -> Result {
         let context = store.viewContext
         let settings = service.settings
-        let publisher = publisher ?? service.kind.publisher(settings: settings, watermark: PhotoExporter.Watermark(settings.export))
+        let publisher = publisher ?? service.publisher()
         var result = Result()
         let jobs = withoutUndo(context) { jobs(for: service, store: store, settings: settings, failures: &result.failures) }
         let started = Date()
@@ -79,7 +81,7 @@ enum PublishRun {
     }
 
     /// Runs the jobs, `concurrency` at a time, handing each outcome back on the main actor as it finishes.
-    /// Cancelling stops starting new ones.
+    /// Cancelling, or a ``PublishStoppingError``, stops starting new ones.
     private nonisolated static func perform(
         _ jobs: [Job], with publisher: any Publisher, concurrency: Int,
         outcome: @escaping @MainActor (Job, Swift.Result<RemotePhoto?, Error>, Int) -> Void
@@ -103,10 +105,12 @@ enum PublishRun {
             }
             for _ in 0..<concurrency where !addNext() { break }
             var completed = 0
+            var isStopped = false
             for await (job, result) in group {
                 completed += 1
                 await outcome(job, result, completed)
-                if !Task.isCancelled { _ = addNext() }
+                if case .failure(let error) = result, error is PublishStoppingError { isStopped = true }
+                if !Task.isCancelled, !isStopped { _ = addNext() }
             }
         }
     }
@@ -118,7 +122,12 @@ enum PublishRun {
         case (.failure(let error), _):
             guard !(error is CancellationError) else { return }
             entry.lastError = error.localizedDescription
-            result.failures.append("\(job.fileName): \(error.localizedDescription)")
+            if error is PublishStoppingError {
+                // Said once, for the whole Publish: every other photo would fail the same way.
+                result.stopReason = result.stopReason ?? error.localizedDescription
+            } else {
+                result.failures.append("\(job.fileName): \(error.localizedDescription)")
+            }
         case (.success(let remote), .publish(_, let fingerprint)):
             entry.remoteID = remote?.id
             entry.remoteURL = remote?.url?.absoluteString
