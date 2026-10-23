@@ -118,6 +118,12 @@ final class PublishingManagerWindowController: NSWindowController, NSWindowDeleg
 
     // MARK: - Services
 
+    /// Selects a service by its ID.
+    func select(serviceID: UUID) {
+        guard let index = model.drafts.firstIndex(where: { $0.id == serviceID }) else { return }
+        serviceList.selectRowIndexes([index], byExtendingSelection: false)
+    }
+
     /// Adds a service of the kind and selects it.
     func add(_ kind: PublishService.Kind) {
         window?.makeFirstResponder(nil)

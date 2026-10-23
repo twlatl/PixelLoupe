@@ -8,6 +8,7 @@ final class LibraryViewController: NSViewController {
     private lazy var filterBar = FilterBarViewController(store: store, state: state)
     private(set) lazy var grid = GridViewController(store: store, state: state)
     private lazy var bottomBar = BottomBarViewController(state: state)
+    private(set) lazy var publishBar = PublishBarViewController(store: store, state: state)
     private lazy var loupe = LoupeViewController(store: store, state: state)
     private lazy var compare: CompareViewController = {
         let compare = CompareViewController(store: store, state: state)
@@ -16,9 +17,13 @@ final class LibraryViewController: NSViewController {
     }()
     private lazy var survey = SurveyViewController(store: store, state: state)
     private var topSeparator: NSBox!
-    /// The grid starts below the filter bar, or at the top when \ hides it.
+    /// The grid (under the publish bar, when there is one) starts below the filter bar, or at the top
+    /// when \ hides it.
     private var gridBelowFilterBar: NSLayoutConstraint!
     private var gridAtTop: NSLayoutConstraint!
+    /// The grid starts below the publish bar while it shows a publish service.
+    private var gridBelowPublishBar: NSLayoutConstraint!
+    private var publishBarHidden: NSLayoutConstraint!
 
     init(store: CatalogStore, state: LibraryState) {
         self.store = store
@@ -37,15 +42,17 @@ final class LibraryViewController: NSViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        for child in [filterBar, grid, bottomBar] as [NSViewController] {
+        for child in [filterBar, publishBar, grid, bottomBar] as [NSViewController] {
             addChild(child)
             child.view.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(child.view)
         }
         topSeparator = separator()
         let bottomSeparator = separator()
-        gridBelowFilterBar = grid.view.topAnchor.constraint(equalTo: topSeparator.bottomAnchor)
-        gridAtTop = grid.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor)
+        gridBelowFilterBar = publishBar.view.topAnchor.constraint(equalTo: topSeparator.bottomAnchor)
+        gridAtTop = publishBar.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor)
+        gridBelowPublishBar = grid.view.topAnchor.constraint(equalTo: publishBar.view.bottomAnchor)
+        publishBarHidden = grid.view.topAnchor.constraint(equalTo: publishBar.view.topAnchor)
 
         NSLayoutConstraint.activate([
             filterBar.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -55,6 +62,9 @@ final class LibraryViewController: NSViewController {
             topSeparator.topAnchor.constraint(equalTo: filterBar.view.bottomAnchor),
             topSeparator.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topSeparator.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+
+            publishBar.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            publishBar.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
 
             grid.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             grid.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -91,10 +101,16 @@ final class LibraryViewController: NSViewController {
             view.window?.makeFirstResponder(grid.preferredFirstResponder)
         }
         updateFilterBar()
+        grid.onPublishGroupsChange = { [weak self] groups in
+            self?.publishBar.groups = groups
+            self?.updatePublishBar()
+        }
+        updatePublishBar()
         state.addObserver(self) { [weak self] change in
             switch change {
             case .presentation: self?.updatePresentation()
             case .filterBar: self?.updateFilterBar()
+            case .filter: self?.updatePublishBar()
             default: break
             }
         }
@@ -107,6 +123,15 @@ final class LibraryViewController: NSViewController {
         // Deactivate first so the two never conflict.
         NSLayoutConstraint.deactivate(visible ? [gridAtTop] : [gridBelowFilterBar])
         NSLayoutConstraint.activate(visible ? [gridBelowFilterBar] : [gridAtTop])
+    }
+
+    /// Shows the publish bar above the grid while it shows a publish service.
+    private func updatePublishBar() {
+        let visible = state.filter.scope.publishServiceID != nil
+        publishBar.view.isHidden = !visible
+        NSLayoutConstraint.deactivate(visible ? [publishBarHidden] : [gridBelowPublishBar])
+        NSLayoutConstraint.activate(visible ? [gridBelowPublishBar] : [publishBarHidden])
+        if visible { publishBar.update() }
     }
 
     private func updatePresentation() {

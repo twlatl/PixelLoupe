@@ -17,6 +17,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             /// The Filter Collections field.
             case collectionFilter
             case collection(id: UUID, kind: PhotoCollection.Kind)
+            /// A publish service, under the Publishing header (RAW-179).
+            case publishService(id: UUID)
         }
 
         let kind: Kind
@@ -32,6 +34,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         var isFavorite = false
         /// A folder's color label (its icon's color).
         var label: ColorLabel = .none
+        /// Where a publish service publishes, for its tooltip.
+        var detail: String?
 
         init(kind: Kind, title: String) {
             self.kind = kind
@@ -45,7 +49,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             case .previousImport(let id): id.map { .previousImport(id: $0) }
             case .folder(let path): .folder(path: path)
             case .collection(let id, _): content.map { .collection(id: id, content: $0) }
+            case .publishService(let id): .publishService(id: id)
             }
+        }
+
+        var publishServiceID: UUID? {
+            if case .publishService(let id) = kind { id } else { nil }
         }
 
         var collectionID: UUID? {
@@ -227,11 +236,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     @objc private func contextObjectsDidChange(_ notification: Notification) {
         let keys = [NSInsertedObjectsKey, NSDeletedObjectsKey]
         var changed = keys.contains { key in
-            (notification.userInfo?[key] as? Set<NSManagedObject>)?.contains { $0 is Photo || $0 is Folder || $0 is PhotoCollection } ?? false
+            (notification.userInfo?[key] as? Set<NSManagedObject>)?.contains {
+                $0 is Photo || $0 is Folder || $0 is PhotoCollection || $0 is PublishService || $0 is PublishedPhoto
+            } ?? false
         }
         // Edits to collections and folders, and to photos (which can change what smart collections hold).
         changed = changed || [NSUpdatedObjectsKey, NSRefreshedObjectsKey].contains { key in
-            (notification.userInfo?[key] as? Set<NSManagedObject>)?.contains { $0 is PhotoCollection || $0 is Photo || $0 is Folder } ?? false
+            (notification.userInfo?[key] as? Set<NSManagedObject>)?.contains {
+                $0 is PhotoCollection || $0 is Photo || $0 is Folder || $0 is PublishService || $0 is PublishedPhoto
+            } ?? false
         }
         guard changed, !reloadScheduled else { return }
         // Coalesce the notifications an import (or a run of rating keystrokes) produces into one
@@ -289,6 +302,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         collectionsHeader.children = collectionItems()
 
         roots = [catalogHeader, foldersHeader, collectionsHeader]
+        let publishingHeader = Item(kind: .header, title: Self.publishingTitle)
+        publishingHeader.children = publishServiceItems()
+        if !publishingHeader.children.isEmpty { roots.append(publishingHeader) }
         // Forget folders that are no longer in the catalog.
         var paths = Set<String>()
         func collect(_ items: [Item]) {
@@ -311,6 +327,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         if !isCollectionsCollapsed { outlineView.expandItem(collectionsHeader) }
         if !isCollectionsCollapsed { expandSets(in: collectionsHeader.children) }
+        if !collapsedHeaders.contains(publishingHeader.title) { outlineView.expandItem(publishingHeader) }
         refreshCollectionScope(in: collectionsHeader.children)
         // Previous Import moves on to a new import as it comes in (and back to the one before when
         // every photo of the last is removed).
@@ -319,6 +336,38 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         selectItem(matching: state.filter.scope)
         isReloading = false
+    }
+
+    // MARK: - Publishing
+
+    static let publishingTitle = "Publishing"
+
+    /// The Publishing section's rows: each publish service, with the photos it has (those waiting to be
+    /// removed aside). Only shown once a service is set up in the Publishing Manager.
+    private func publishServiceItems() -> [Item] {
+        PublishService.all(in: store.viewContext).map { service in
+            let item = Item(kind: .publishService(id: service.id), title: service.displayName)
+            item.count = service.publishedPhotos.count { $0.photo != nil && !$0.isRemovalPending && !$0.isDeleted }
+            item.detail = switch service.kind {
+            case .hardDrive: (service.settings.export.folderPath as NSString).abbreviatingWithTildeInPath
+            case .flickr: service.accountName.map { "Flickr: \($0)" } ?? "Flickr: not signed in"
+            }
+            return item
+        }
+    }
+
+    /// A publish service's context menu, each item carrying the service's ID.
+    func publishServiceMenu(id: UUID) -> NSMenu {
+        let menu = NSMenu()
+        for (title, action) in [("Publish Now", #selector(PixelLoupeActions.publishNow(_:))),
+                                ("Edit Settings…", #selector(PixelLoupeActions.editPublishService(_:)))] {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.representedObject = id
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Publishing Manager…", action: #selector(PixelLoupeActions.showPublishingManager(_:)), keyEquivalent: ""))
+        return menu
     }
 
     // MARK: - Collections
@@ -554,6 +603,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 add("Create Smart Collection…", #selector(PixelLoupeActions.newSmartCollection(_:)))
                 add("Create Collection Set…", #selector(PixelLoupeActions.newCollectionSet(_:)))
             }
+        case .publishService(let id):
+            publishServiceMenu(id: id).items.forEach { menu.addItem($0.copy() as! NSMenuItem) }
+        case .header where item.title == Self.publishingTitle:
+            menu.addItem(NSMenuItem(title: "Publishing Manager…", action: #selector(PixelLoupeActions.showPublishingManager(_:)), keyEquivalent: ""))
         case .folder(let path):
             let folderMenu = folderMenu(for: item, path: path)
             for menuItem in folderMenu.items {
@@ -632,13 +685,20 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     // MARK: - Dropping photos on collections
 
     func outlineView(_ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?, proposedChildIndex index: Int) -> NSDragOperation {
-        guard let item = item as? Item, item.collectionKind == .collection, !PhotoDrag.objectIDs(from: info.draggingPasteboard, store: store).isEmpty
+        guard let item = item as? Item, item.collectionKind == .collection || item.publishServiceID != nil,
+              !PhotoDrag.objectIDs(from: info.draggingPasteboard, store: store).isEmpty
         else { return [] }
         outlineView.setDropItem(item, dropChildIndex: NSOutlineViewDropOnItemIndex)
         return .copy
     }
 
     func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
+        if let item = item as? Item, let serviceID = item.publishServiceID {
+            let ids = PhotoDrag.objectIDs(from: info.draggingPasteboard, store: store)
+            guard !ids.isEmpty else { return false }
+            PublishEditing(store: store).add(ids, to: serviceID)
+            return true
+        }
         guard let item = item as? Item, item.collectionKind == .collection, let id = item.collectionID else { return false }
         let ids = PhotoDrag.objectIDs(from: info.draggingPasteboard, store: store)
         guard !ids.isEmpty else { return false }
@@ -806,6 +866,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         case .collection(_, .collection): "rectangle.stack"
         case .collection(_, .smart): "gearshape.2"
         case .collection(_, .set): "archivebox"
+        case .publishService: "folder"
         default: "folder.fill"
         }
         // Lightroom marks the target collection with a +.
@@ -821,11 +882,13 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         // Cells are reused from row to row, so each row sets (or clears) its identifier.
         let accessibilityIdentifier: String? = switch item.kind {
         case .collection(let id, _): "collection.\(id.uuidString)"
+        case .publishService(let id): "publishService.\(id.uuidString)"
         case .previousImport: "previousImport"
         default: nil
         }
         cell.setAccessibilityIdentifier(accessibilityIdentifier)
         if !isEnabled { cell.toolTip = "The photos of your next import will appear here." }
+        if let detail = item.detail { cell.toolTip = detail }
         return cell
     }
 

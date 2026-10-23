@@ -13,6 +13,13 @@ nonisolated struct LibraryFilter: Equatable, Sendable {
         /// Photos whose Lightroom settings weren't fully imported for a reason (the import report's
         /// "Show Photos"), or for any reason when `nil`.
         case importDifference(reason: String?)
+        /// The photos of a publish service, in any state (RAW-179): the grid groups them into New,
+        /// Modified, Published and Deleted.
+        case publishService(id: UUID)
+
+        var publishServiceID: UUID? {
+            if case .publishService(let id) = self { id } else { nil }
+        }
 
         /// The collection whose own photos are shown (not a smart collection or a set).
         var membersCollectionID: UUID? {
@@ -455,6 +462,10 @@ nonisolated struct LibraryFilter: Equatable, Sendable {
 
     /// The photos of the source (folder, collection…) before the bar's criteria.
     var scopePredicate: NSPredicate {
+        // Every photo in a publish service, stacked or not: each is published on its own.
+        if case .publishService(let id) = scope {
+            return NSPredicate(format: "ANY publications.service.id == %@", id as CVarArg)
+        }
         // Photos a collapsed stack hides.
         let hidden = NSPredicate(format: "isHiddenInStack == NO")
         let scoped: NSPredicate? = switch scope {
@@ -468,6 +479,8 @@ nonisolated struct LibraryFilter: Equatable, Sendable {
             content.predicate
         case .importDifference(let reason):
             LightroomImportReport.predicate(forReason: reason)
+        case .publishService:
+            nil
         }
         return scoped.map { NSCompoundPredicate(andPredicateWithSubpredicates: [hidden, $0]) } ?? hidden
     }

@@ -48,9 +48,12 @@ final class PhotoGridItem: NSCollectionViewItem {
         cellView.setImage(nil, animated: false)
     }
 
-    func configure(with photo: Photo, thumbnails: ThumbnailStore, isMissing: Bool = false, reloadThumbnail: Bool = false) {
+    /// `publishError`: why the last Publish couldn't publish the photo, when the grid shows a publish service.
+    func configure(with photo: Photo, thumbnails: ThumbnailStore, isMissing: Bool = false, reloadThumbnail: Bool = false,
+                   publishError: String? = nil) {
         cellView.update(rating: Int(photo.rating), flag: photo.photoFlag, fileType: photo.fileType)
         cellView.setMissing(isMissing)
+        cellView.setPublishError(publishError)
         cellView.setColorLabel(photo.label)
         cellView.photoObjectID = photo.objectID
         cellView.setInfoBadge(Self.infoBadge(for: photo))
@@ -93,6 +96,8 @@ final class PhotoGridCellView: NSView {
     private let ratingLabel = NSTextField(labelWithString: "")
     private let flagView = NSImageView()
     private let missingBadge = NSImageView()
+    /// Shown when the last Publish failed for the photo, with why as its tooltip.
+    let publishErrorBadge = NSImageView()
     private let copyBadge = NSImageView()
     /// A stack's size on its top photo; clicking it sends `toggleStackFromBadge(_:)` up the responder chain.
     let stackBadge = NSButton()
@@ -140,6 +145,11 @@ final class PhotoGridCellView: NSView {
         missingBadge.isHidden = true
         missingBadge.setAccessibilityElement(false)
 
+        publishErrorBadge.image = NSImage(systemSymbolName: "exclamationmark.circle.fill", accessibilityDescription: "Couldn’t publish")
+        publishErrorBadge.contentTintColor = .systemRed
+        publishErrorBadge.imageScaling = .scaleProportionallyDown
+        publishErrorBadge.isHidden = true
+
         // Virtual copies show a badge and their name.
         copyBadge.image = NSImage(systemSymbolName: "square.on.square", accessibilityDescription: "Virtual copy")
         copyBadge.contentTintColor = .secondaryLabelColor
@@ -176,7 +186,7 @@ final class PhotoGridCellView: NSView {
         infoBadge.isHidden = true
         infoBadge.setAccessibilityElement(false)
 
-        for view in [placeholder, ratingLabel, flagView, missingBadge, copyBadge, copyLabel, stackBadge, infoBadge] as [NSView] {
+        for view in [placeholder, ratingLabel, flagView, missingBadge, publishErrorBadge, copyBadge, copyLabel, stackBadge, infoBadge] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
@@ -207,6 +217,10 @@ final class PhotoGridCellView: NSView {
             copyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: ratingLabel.trailingAnchor, constant: 4),
             copyLabel.trailingAnchor.constraint(lessThanOrEqualTo: flagView.leadingAnchor, constant: -4),
             missingBadge.widthAnchor.constraint(equalToConstant: 16),
+            publishErrorBadge.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            publishErrorBadge.trailingAnchor.constraint(equalTo: missingBadge.leadingAnchor, constant: -4),
+            publishErrorBadge.widthAnchor.constraint(equalToConstant: 16),
+            publishErrorBadge.heightAnchor.constraint(equalToConstant: 16),
             missingBadge.heightAnchor.constraint(equalToConstant: 16),
         ])
         updateAppearance()
@@ -241,6 +255,13 @@ final class PhotoGridCellView: NSView {
         }
         imageLayer.contents = image
         placeholder.isHidden = image != nil
+    }
+
+    /// Marks a photo the last Publish couldn't publish, with why as the badge's tooltip.
+    func setPublishError(_ message: String?) {
+        publishErrorBadge.isHidden = message == nil
+        publishErrorBadge.toolTip = message.map { "Couldn’t publish: \($0)" }
+        publishErrorBadge.setAccessibilityLabel(publishErrorBadge.toolTip)
     }
 
     /// Tints the cell in the photo's color label, as Lightroom does.

@@ -61,7 +61,7 @@ nonisolated final class PublishedPhoto: NSManagedObject {
     @MainActor
     var hasMetadataChangesSincePublished: Bool {
         guard let photo, publishedDate != nil else { return false }
-        return metadataFingerprint != Self.fingerprint(ExportItem(photo))
+        return metadataFingerprint != Self.fingerprint(photo)
     }
 
     private func hasEditsSincePublished(_ photo: Photo, _ publishedDate: Date) -> Bool {
@@ -74,10 +74,20 @@ nonisolated final class PublishedPhoto: NSManagedObject {
 
     /// A digest of the metadata a published photo carries, which changes when any of it does.
     static func fingerprint(_ item: ExportItem) -> String {
-        var text = item.metadata.values.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
-        text.append("keywords=\(item.keywords.sorted().joined(separator: "|"))")
-        text.append("rating=\(item.rating)")
-        text.append("gps=\(item.gps)")
+        fingerprint(metadata: item.metadata, keywords: item.keywords, rating: item.rating, gps: item.gps)
+    }
+
+    /// The same as the photo's ``ExportItem`` would give, without reading its Develop settings.
+    @MainActor
+    static func fingerprint(_ photo: Photo) -> String {
+        fingerprint(metadata: photo.metadata, keywords: Tag.exportNames(for: photo.tags), rating: Int(photo.rating), gps: ExportGPS(photo))
+    }
+
+    private static func fingerprint(metadata: PhotoMetadata, keywords: [String], rating: Int, gps: ExportGPS) -> String {
+        var text = metadata.values.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
+        text.append("keywords=\(keywords.sorted().joined(separator: "|"))")
+        text.append("rating=\(rating)")
+        text.append("gps=\(gps)")
         let digest = SHA256.hash(data: Data(text.joined(separator: "\n").utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
     }
