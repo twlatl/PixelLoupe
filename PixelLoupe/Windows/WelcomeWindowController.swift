@@ -38,6 +38,16 @@ final class WelcomeWindowController: NSWindowController {
         return "Version \(version) (\(build))"
     }
 
+    /// "Version 0.1", from the bundle's version alone (the About window's, opened normally).
+    static func shortVersionString(info: [String: Any]? = Bundle.main.infoDictionary) -> String {
+        "Version \(info?["CFBundleShortVersionString"] as? String ?? "?")"
+    }
+
+    /// "Build 67", from the bundle's build number (the About window's, opened with ⌥⌘ held).
+    static func buildString(info: [String: Any]? = Bundle.main.infoDictionary) -> String {
+        "Build \(info?["CFBundleVersion"] as? String ?? "?")"
+    }
+
     /// The welcome window's frame, also used by the About window: fixed size, with the content under a
     /// transparent title bar.
     static func makeWindow(title: String, identifier: String) -> NSWindow {
@@ -67,8 +77,8 @@ final class WelcomeWindowController: NSWindowController {
     }
 
     /// The version under the icon, selectable so it can be copied into a bug report.
-    static func makeVersionLabel(identifier: String) -> NSTextField {
-        let version = NSTextField(labelWithString: versionString())
+    static func makeVersionLabel(_ string: String = versionString(), identifier: String) -> NSTextField {
+        let version = NSTextField(labelWithString: string)
         version.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         version.textColor = .secondaryLabelColor
         version.isSelectable = true

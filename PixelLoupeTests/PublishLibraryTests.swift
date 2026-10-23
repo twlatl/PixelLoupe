@@ -295,13 +295,23 @@ struct PublishLibraryTests {
         controller.state.filter.scope = .publishService(id: library.service.id)
         let collectionView = try #require(controller.window!.contentView!.descendants.compactMap { $0 as? NSCollectionView }.first)
         collectionView.layoutSubtreeIfNeeded()
-        let cells = collectionView.visibleItems().compactMap { item in
-            ([item.view] + item.view.descendants).lazy.compactMap { $0 as? PhotoGridCellView }.first
+        // Each photo is in its own status section, so they don't all fit on a small screen (CI's): scroll each one
+        // into view, since only visible cells are made, and note its badge before the cell is reused.
+        let paths = (0..<collectionView.numberOfSections).flatMap { section in
+            (0..<collectionView.numberOfItems(inSection: section)).map { IndexPath(item: $0, section: section) }
         }
-        #expect(cells.count == 4)
-        let badges = cells.filter { !$0.publishErrorBadge.isHidden }
-        #expect(badges.count == 1)
-        #expect(badges.first?.publishErrorBadge.toolTip == "Couldn’t publish: The disk is full.")
+        #expect(paths.count == 4)
+        // Each badge's tooltip, or nil where it's hidden.
+        let badges = paths.compactMap { path -> String?? in
+            collectionView.scrollToItems(at: [path], scrollPosition: .centeredVertically)
+            collectionView.layoutSubtreeIfNeeded()
+            guard let view = collectionView.item(at: path)?.view,
+                  let cell = ([view] + view.descendants).lazy.compactMap({ $0 as? PhotoGridCellView }).first
+            else { return nil }
+            return .some(cell.publishErrorBadge.isHidden ? nil : cell.publishErrorBadge.toolTip)
+        }
+        #expect(badges.count == 4)
+        #expect(badges.compactMap { $0 } == ["Couldn’t publish: The disk is full."])
     }
 
     @Test func theContextMenuAddsToAndRemovesFromServices() throws {

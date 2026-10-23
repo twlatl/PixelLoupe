@@ -181,6 +181,11 @@ struct WelcomeWindowTests {
     @Test func versionComesFromTheBundle() {
         #expect(WelcomeWindowController.versionString(info: ["CFBundleShortVersionString": "1.2.3", "CFBundleVersion": "45"]) == "Version 1.2.3 (45)")
         #expect(WelcomeWindowController.versionString(info: nil) == "Version ? (?)")
+        let info = ["CFBundleShortVersionString": "1.2.3", "CFBundleVersion": "45"]
+        #expect(WelcomeWindowController.shortVersionString(info: info) == "Version 1.2.3")
+        #expect(WelcomeWindowController.buildString(info: info) == "Build 45")
+        #expect(WelcomeWindowController.shortVersionString(info: nil) == "Version ?")
+        #expect(WelcomeWindowController.buildString(info: nil) == "Build ?")
     }
 
     @Test func layoutMatchesTheMockup() throws {

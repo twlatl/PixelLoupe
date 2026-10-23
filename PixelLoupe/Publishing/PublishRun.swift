@@ -234,6 +234,7 @@ enum PublishRun {
     }
 
     /// Publishing's bookkeeping isn't something to undo.
+    @discardableResult
     private static func withoutUndo<T>(_ context: NSManagedObjectContext, _ body: () -> T) -> T {
         context.processPendingChanges()
         context.undoManager?.disableUndoRegistration()
