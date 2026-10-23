@@ -75,15 +75,21 @@ final class PublishBarViewController: NSViewController {
         }
         locationButton.title = location ?? ""
         locationButton.isHidden = location == nil
-        locationButton.toolTip = service.kind == .hardDrive ? "Show in Finder" : nil
+        locationButton.toolTip = service.kind == .hardDrive ? "Show in Finder" : "Open your photostream on flickr.com"
         let isPublishing = state.publishStatus != nil
         publishButton.isEnabled = !isPublishing && (groups?.hasWork ?? false)
         publishButton.toolTip = isPublishing ? "Publishing…" : publishButton.isEnabled ? nil : "Every photo is published."
     }
 
     @objc private func openLocation(_ sender: Any?) {
-        guard let service, service.kind == .hardDrive,
-              let folder = HardDrivePublisher(settings: service.settings, watermark: nil).folder else { return }
-        NSWorkspace.shared.open(folder)
+        guard let service else { return }
+        switch service.kind {
+        case .hardDrive:
+            HardDrivePublisher(settings: service.settings, watermark: nil).folder.map { _ = NSWorkspace.shared.open($0) }
+        case .flickr:
+            guard let account = KeychainFlickrCredentialStore.shared.credentials(for: service.id),
+                  let photostream = URL(string: "https://www.flickr.com/photos/\(account.userID)/") else { return }
+            NSWorkspace.shared.open(photostream)
+        }
     }
 }
