@@ -178,4 +178,15 @@ nonisolated final class Tag: NSManagedObject {
         }
         return names.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
+
+    /// Lightroom's separator in `lr:hierarchicalSubject` paths.
+    static let hierarchySeparator = "|"
+
+    /// Each exported keyword's path from the top of the tree, "Places|Ireland|Dublin", for
+    /// `lr:hierarchicalSubject`: the keywords marked to export, whichever of their parents are. Sorted,
+    /// without repeats.
+    static func exportPaths(for tags: Set<Tag>) -> [String] {
+        let paths = Set(tags.filter(\.includeOnExport).map { $0.pathComponents.joined(separator: hierarchySeparator) })
+        return paths.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
 }
