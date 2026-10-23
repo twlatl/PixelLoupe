@@ -49,3 +49,15 @@ The state is **derived**, not stored:
   opposite: it clears each entry's published date, remote ID, URL, fingerprint and error, so every photo is
   New, and drops entries waiting to be removed. It doesn't touch the service itself, which is why it asks
   first: anything still there is uploaded again by the next Publish.
+
+## Albums (RAW-185)
+
+Model v20 adds `PublishAlbum` for a Flickr service's albums. An album is a group of the service's
+`PublishedPhoto`s, not a container of its own: each photo is uploaded once however many albums hold it,
+and taking it out of an album leaves it in the photostream. A smart album's photos are whatever matches
+its rules, and they join the service at the next Publish.
+
+An album's Flickr state is derived the same way as a photo's: it keeps the name, description and photo
+IDs it last sent, and has changes to publish when those differ from what it holds now. Publish sends the
+photos first, then the albums, since a Flickr album can only be made with a photo that's already there.
+An album left with no published photos is deleted on Flickr and made again when it has some.

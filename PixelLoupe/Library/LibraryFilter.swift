@@ -16,9 +16,21 @@ nonisolated struct LibraryFilter: Equatable, Sendable {
         /// The photos of a publish service, in any state (RAW-179): the grid groups them into New,
         /// Modified, Published and Deleted.
         case publishService(id: UUID)
+        /// An album in a publish service (RAW-185): a regular album's photos, or a smart album's matches
+        /// (`rules`). Shown grouped like its service's photos.
+        case publishAlbum(id: UUID, serviceID: UUID, rules: SmartCollectionRules?)
 
+        /// The publish service shown, or the one whose album is shown.
         var publishServiceID: UUID? {
-            if case .publishService(let id) = self { id } else { nil }
+            switch self {
+            case .publishService(let id): id
+            case .publishAlbum(_, let serviceID, _): serviceID
+            default: nil
+            }
+        }
+
+        var publishAlbumID: UUID? {
+            if case .publishAlbum(let id, _, _) = self { id } else { nil }
         }
 
         /// The collection whose own photos are shown (not a smart collection or a set).
@@ -466,6 +478,9 @@ nonisolated struct LibraryFilter: Equatable, Sendable {
         if case .publishService(let id) = scope {
             return NSPredicate(format: "ANY publications.service.id == %@", id as CVarArg)
         }
+        if case .publishAlbum(let id, _, let rules) = scope {
+            return PublishAlbum.predicate(id: id, rules: rules)
+        }
         // Photos a collapsed stack hides.
         let hidden = NSPredicate(format: "isHiddenInStack == NO")
         let scoped: NSPredicate? = switch scope {
@@ -479,7 +494,7 @@ nonisolated struct LibraryFilter: Equatable, Sendable {
             content.predicate
         case .importDifference(let reason):
             LightroomImportReport.predicate(forReason: reason)
-        case .publishService:
+        case .publishService, .publishAlbum:
             nil
         }
         return scoped.map { NSCompoundPredicate(andPredicateWithSubpredicates: [hidden, $0]) } ?? hidden

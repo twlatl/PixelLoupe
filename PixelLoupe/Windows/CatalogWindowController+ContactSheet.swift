@@ -31,6 +31,7 @@ extension CatalogWindowController {
         case .collection(let id, _): PhotoCollection.with(id: id, in: store.viewContext)?.name ?? "Collection"
         case .importDifference(let reason): LightroomImportReport.title(forReason: reason)
         case .publishService(let id): PublishService.with(id: id, in: store.viewContext)?.displayName ?? "Publish Service"
+        case .publishAlbum(let id, _, _): PublishAlbum.with(id: id, in: store.viewContext)?.name ?? "Album"
         }
     }
 

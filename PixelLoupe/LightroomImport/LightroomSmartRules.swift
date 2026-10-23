@@ -45,6 +45,14 @@ nonisolated enum LightroomSmartRules {
         return Translation(rules: SmartCollectionRules(match: match, rules: rules, groups: groups), unmapped: unmapped)
     }
 
+    /// The rules in a smart collection settings file Lightroom exports (`.lrsmcol`, RAW-185): `s = { title = …,
+    /// value = { rules… } }`.
+    static func translateSettingsFile(_ data: Data) throws -> Translation {
+        let parsed = try LuaTableParser.parse(data)
+        guard let value = parsed["value"] else { throw CocoaError(.fileReadCorruptFile) }
+        return translate(value)
+    }
+
     /// `criteria operation value`, for the report.
     static func describe(_ rule: LuaTable) -> String {
         let criteria = rule["criteria"]?.string ?? "?"

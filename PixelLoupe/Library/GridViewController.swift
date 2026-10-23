@@ -553,7 +553,7 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
                 menu.addItem(publish)
             }
             if state.filter.scope.publishServiceID != nil {
-                menu.addItem(NSMenuItem(title: "Remove from Publish Service", action: #selector(PixelLoupeActions.removeFromPublishService(_:)),
+                menu.addItem(NSMenuItem(title: state.filter.scope.publishAlbumID == nil ? "Remove from Publish Service" : "Remove from Album", action: #selector(PixelLoupeActions.removeFromPublishService(_:)),
                                         keyEquivalent: ""))
             }
             let develop = NSMenuItem(title: "Develop Settings", action: nil, keyEquivalent: "")

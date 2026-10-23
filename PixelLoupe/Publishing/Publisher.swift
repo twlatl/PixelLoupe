@@ -28,6 +28,18 @@ nonisolated protocol Publisher: Sendable {
     func remove(_ photo: RemotePhoto) async throws
 }
 
+/// A publisher whose service has albums (Flickr's, RAW-185). Albums are sent after the photos, with their
+/// photos' IDs on the service.
+nonisolated protocol AlbumPublisher: Publisher {
+    /// Makes an album holding `coverID`, and returns its ID.
+    func createAlbum(title: String, description: String, coverID: String) async throws -> String
+    func editAlbum(_ id: String, title: String, description: String) async throws
+    /// Sets the album's photos, in order, with `photoIDs[0]` as its cover.
+    func setAlbumPhotos(_ id: String, photoIDs: [String]) async throws
+    /// Deletes an album, leaving its photos. One that's already gone isn't an error.
+    func deleteAlbum(_ id: String) async throws
+}
+
 /// The publisher for a service that can't publish (no API key in this build, or not signed in).
 nonisolated struct UnavailablePublisher: Publisher {
     struct Unavailable: LocalizedError {

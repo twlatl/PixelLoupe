@@ -4,7 +4,7 @@ import Foundation
 /// tags, privacy and safety. A re-published photo is replaced when its pixels changed (keeping its ID,
 /// page, comments and favourites), and has its title, description and tags updated; privacy isn't
 /// changed after the first upload. A removed photo is deleted from Flickr.
-nonisolated struct FlickrPublisher: Publisher {
+nonisolated struct FlickrPublisher: AlbumPublisher {
     let api: FlickrAPI
     let settings: PublishSettings
     let watermark: PhotoExporter.Watermark?
@@ -26,6 +26,35 @@ nonisolated struct FlickrPublisher: Publisher {
     func remove(_ photo: RemotePhoto) async throws {
         do {
             try await api.call("flickr.photos.delete", ["photo_id": photo.id])
+        } catch FlickrAPI.APIError.photoNotFound {
+            // Already gone.
+        }
+    }
+
+    // MARK: - Albums
+
+    @concurrent
+    func createAlbum(title: String, description: String, coverID: String) async throws -> String {
+        let json = try await api.call("flickr.photosets.create", ["title": title, "description": description, "primary_photo_id": coverID])
+        guard let id = (json["photoset"] as? [String: Any])?["id"].map({ "\($0)" }) else { throw FlickrAPI.APIError.unexpectedResponse }
+        return id
+    }
+
+    @concurrent
+    func editAlbum(_ id: String, title: String, description: String) async throws {
+        try await api.call("flickr.photosets.editMeta", ["photoset_id": id, "title": title, "description": description])
+    }
+
+    @concurrent
+    func setAlbumPhotos(_ id: String, photoIDs: [String]) async throws {
+        guard let cover = photoIDs.first else { return }
+        try await api.call("flickr.photosets.editPhotos", ["photoset_id": id, "primary_photo_id": cover, "photo_ids": photoIDs.joined(separator: ",")])
+    }
+
+    @concurrent
+    func deleteAlbum(_ id: String) async throws {
+        do {
+            try await api.call("flickr.photosets.delete", ["photoset_id": id])
         } catch FlickrAPI.APIError.photoNotFound {
             // Already gone.
         }

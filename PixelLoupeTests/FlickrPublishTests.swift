@@ -187,6 +187,27 @@ struct FlickrPublishTests {
         #expect(CatalogWindowController.publishSummary(result, service: "Flickr").messageText == "Publishing to Flickr stopped.")
     }
 
+    @Test func albumsAreMadeFilledRenamedAndDeleted() async throws {
+        let flickr = FakeFlickr { what, _ in
+            what == "flickr.photosets.create"
+                ? .init(status: 200, body: #"{"photoset":{"id":"72157720000000001","url":"https://www.flickr.com/photos/x/albums/72157720000000001"},"stat":"ok"}"#)
+                : .init(status: 200, body: #"{"stat":"ok"}"#)
+        }
+        let publisher = publisher(flickr)
+        let id = try await publisher.createAlbum(title: "Harbour", description: "Boats", coverID: "1")
+        #expect(id == "72157720000000001")
+        try await publisher.setAlbumPhotos(id, photoIDs: ["1", "2", "3"])
+        try await publisher.editAlbum(id, title: "Harbours", description: "")
+        try await publisher.deleteAlbum(id)
+        #expect(flickr.calls.map(\.what) == ["flickr.photosets.create", "flickr.photosets.editPhotos", "flickr.photosets.editMeta", "flickr.photosets.delete"])
+        #expect(flickr.calls[0].fields["title"] == "Harbour" && flickr.calls[0].fields["description"] == "Boats" && flickr.calls[0].fields["primary_photo_id"] == "1")
+        #expect(flickr.calls[1].fields["photo_ids"] == "1,2,3" && flickr.calls[1].fields["primary_photo_id"] == "1")
+        #expect(flickr.calls[2].fields["title"] == "Harbours" && flickr.calls[2].fields["photoset_id"] == id)
+
+        let gone = FakeFlickr { _, _ in .init(status: 200, body: #"{"stat":"fail","code":1,"message":"Photoset not found"}"#) }
+        try await self.publisher(gone).deleteAlbum("7")
+    }
+
     @Test func aServiceWithoutASignInCantPublish() async throws {
         let directory = try TemporaryDirectory()
         let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "C.pixelloupe"))

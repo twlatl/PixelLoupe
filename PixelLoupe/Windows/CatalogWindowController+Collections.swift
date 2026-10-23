@@ -136,6 +136,8 @@ extension CatalogWindowController {
             collectionEditing.toggle(state.selectedPhotoIDs, in: id)
         } else if PublishService.with(id: id, in: store.viewContext) != nil {
             PublishEditing(store: store).toggle(state.selectedPhotoIDs, in: id)
+        } else if PublishAlbum.with(id: id, in: store.viewContext)?.kind == .album {
+            PublishEditing(store: store).toggle(state.selectedPhotoIDs, inAlbum: id)
         } else {
             NSSound.beep()
         }
@@ -145,6 +147,7 @@ extension CatalogWindowController {
     var targetCollectionName: String? {
         guard let id = store.viewState.targetCollectionID else { return nil }
         return collectionEditing.collection(id)?.name ?? PublishService.with(id: id, in: store.viewContext)?.displayName
+            ?? PublishAlbum.with(id: id, in: store.viewContext).flatMap { $0.isDeletionPending ? nil : $0.name }
     }
 
     /// Whether the collection being shown is a regular collection (photos can be removed from it).

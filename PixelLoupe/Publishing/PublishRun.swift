@@ -42,13 +42,92 @@ enum PublishRun {
             store.save()
             progress(completed, jobs.count)
         }
+        if service.hasAlbums, let albums = publisher as? any AlbumPublisher, !Task.isCancelled, result.stopReason == nil {
+            await publishAlbums(of: service, with: albums, store: store, to: &result)
+        }
         store.save()
         return result
+    }
+
+    // MARK: - Albums
+
+    /// Sends the service's album changes (RAW-185), after its photos so the albums can hold them: creates
+    /// new albums, renames and re-fills changed ones, and deletes deleted ones and those with no photos left.
+    private static func publishAlbums(of service: PublishService, with publisher: any AlbumPublisher, store: CatalogStore,
+                                      to result: inout Result) async {
+        let context = store.viewContext
+        let albums = service.albums.filter(\.hasChangesToPublish).sorted { $0.createdDate < $1.createdDate }
+        for album in albums {
+            guard !Task.isCancelled else { return }
+            let name = album.name
+            do {
+                try await publish(album, with: publisher, context: context)
+            } catch FlickrAPI.APIError.photoNotFound where album.remoteID != nil && !album.isDeletionPending {
+                // Deleted on Flickr: made again.
+                withoutUndo(context) { album.forgetPublished() }
+                do {
+                    try await publish(album, with: publisher, context: context)
+                } catch {
+                    fail(album: name, error, &result)
+                }
+            } catch {
+                fail(album: name, error, &result)
+            }
+            store.save()
+            if result.stopReason != nil { return }
+        }
+    }
+
+    private static func publish(_ album: PublishAlbum, with publisher: any AlbumPublisher, context: NSManagedObjectContext) async throws {
+        let name = album.name
+        let description = album.albumDescription
+        let photoIDs = album.publishedPhotoIDsToSend()
+        if album.isDeletionPending || photoIDs.isEmpty {
+            if let id = album.remoteID { try await publisher.deleteAlbum(id) }
+            withoutUndo(context) { album.isDeletionPending ? context.delete(album) : album.forgetPublished() }
+            return
+        }
+        let id: String
+        if let existing = album.remoteID {
+            id = existing
+            if name != album.publishedName || description != album.publishedDescription {
+                try await publisher.editAlbum(id, title: name, description: description)
+            }
+        } else {
+            id = try await publisher.createAlbum(title: name, description: description, coverID: photoIDs[0])
+            withoutUndo(context) {
+                album.remoteID = id
+                album.publishedName = name
+                album.publishedDescription = description
+                album.publishedPhotoIDs = photoIDs[0]
+            }
+        }
+        let joined = photoIDs.joined(separator: ",")
+        if joined != album.publishedPhotoIDs {
+            try await publisher.setAlbumPhotos(id, photoIDs: photoIDs)
+        }
+        withoutUndo(context) {
+            album.remoteID = id
+            album.publishedName = name
+            album.publishedDescription = description
+            album.publishedPhotoIDs = joined
+        }
+    }
+
+    private static func fail(album name: String, _ error: Error, _ result: inout Result) {
+        guard !(error is CancellationError) else { return }
+        if error is PublishStoppingError {
+            result.stopReason = result.stopReason ?? error.localizedDescription
+        } else {
+            result.failures.append("Album “\(name)”: \(error.localizedDescription)")
+        }
     }
 
     /// The work for a service's photos, marking those that can't be published (videos) as failed.
     private static func jobs(for service: PublishService, store: CatalogStore, settings: PublishSettings,
                              failures: inout [String]) -> [Job] {
+        // A smart album's matches join the service, to be uploaded with the rest.
+        service.add(service.smartAlbumPhotosToJoin())
         service.pruneUnpublishedOrphans()
         // Results are saved as they come in, which would leave temporary IDs (of entries not saved yet)
         // pointing at nothing.
