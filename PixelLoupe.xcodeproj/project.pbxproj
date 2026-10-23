@@ -10,7 +10,7 @@
 		0A000000000000000000000E /* PixelLoupeIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 0A000000000000000000000D /* PixelLoupeIcon.icon */; };
 		0A0000000000000000000061 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 0A0000000000000000000062 /* Sparkle */; };
 		0A0000000000000000000064 /* JXLEncoder in Frameworks */ = {isa = PBXBuildFile; productRef = 0A0000000000000000000065 /* JXLEncoder */; };
-		608EAC9E308B8D9B001BA061 /* .env in Resources */ = {isa = PBXBuildFile; fileRef = 608EAC9D308B8D96001BA061 /* .env */; };
+		0A0000000000000000000069 /* Secrets+Generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A0000000000000000000068 /* Secrets+Generated.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -36,7 +36,7 @@
 		0A0000000000000000000011 /* PixelLoupe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PixelLoupe.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0A0000000000000000000012 /* PixelLoupeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PixelLoupeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		0A0000000000000000000013 /* PixelLoupeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PixelLoupeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		608EAC9D308B8D96001BA061 /* .env */ = {isa = PBXFileReference; lastKnownFileType = text; path = .env; sourceTree = "<group>"; };
+		0A0000000000000000000068 /* Secrets+Generated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Secrets+Generated.swift"; sourceTree = DERIVED_FILE_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -92,7 +92,6 @@
 				0A000000000000000000000C /* Design */,
 				0A0000000000000000000005 /* PixelLoupeTests */,
 				0A0000000000000000000006 /* PixelLoupeUITests */,
-				608EAC9D308B8D96001BA061 /* .env */,
 				0A0000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -111,6 +110,7 @@
 			isa = PBXGroup;
 			children = (
 				0A0000000000000000000008 /* Info.plist */,
+				0A0000000000000000000068 /* Secrets+Generated.swift */,
 			);
 			path = Config;
 			sourceTree = "<group>";
@@ -130,6 +130,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 0A0000000000000000000054 /* Build configuration list for PBXNativeTarget "PixelLoupe" */;
 			buildPhases = (
+				0A0000000000000000000067 /* Generate Secrets */,
 				0A0000000000000000000031 /* Sources */,
 				0A0000000000000000000032 /* Frameworks */,
 				0A0000000000000000000033 /* Resources */,
@@ -249,7 +250,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				608EAC9E308B8D9B001BA061 /* .env in Resources */,
 				0A000000000000000000000E /* PixelLoupeIcon.icon in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -270,11 +270,35 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		0A0000000000000000000067 /* Generate Secrets */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Generate Secrets";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Secrets+Generated.swift",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/Scripts/generate-secrets.sh\" \"$DERIVED_FILE_DIR/Secrets+Generated.swift\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		0A0000000000000000000031 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0A0000000000000000000069 /* Secrets+Generated.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -381,6 +405,7 @@
 				CURRENT_PROJECT_VERSION = 97;
 				DEVELOPMENT_TEAM = NLX95WAPTM;
 				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Config/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = PixelLoupe;
@@ -413,6 +438,7 @@
 				CURRENT_PROJECT_VERSION = 97;
 				DEVELOPMENT_TEAM = NLX95WAPTM;
 				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Config/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = PixelLoupe;
