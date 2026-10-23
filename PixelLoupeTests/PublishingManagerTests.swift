@@ -16,8 +16,14 @@ struct PublishingManagerTests {
             store = try CatalogStore.create(at: directory.url.appending(path: "C.pixelloupe", directoryHint: .isDirectory), info: Fixtures.referencedInfo)
         }
 
+        let credentials = MemoryFlickrCredentialStore()
+
+        func model() -> PublishingManagerModel {
+            PublishingManagerModel(context: context, credentials: credentials)
+        }
+
         func controller() -> PublishingManagerWindowController {
-            PublishingManagerWindowController(model: PublishingManagerModel(context: context),
+            PublishingManagerWindowController(model: model(),
                                               watermarks: WatermarkPresets(directory: directory.url.appending(path: "Watermarks")))
         }
 
@@ -113,14 +119,14 @@ struct PublishingManagerTests {
         let service = setup.publishedService()
         let flickr = PublishService.make(.flickr, in: setup.context)
         setup.store.save()
-        let model = PublishingManagerModel(context: setup.context)
+        let model = setup.model()
         #expect(model.drafts.map(\.publishedCount) == [1, 0])
         #expect(!model.hasChanges)
         model.update(at: 0) { $0.name = "Archive" }
         model.remove(at: 1)
         #expect(model.hasChanges)
         #expect(flickr.managedObjectContext != nil, "nothing changes before Save")
-        model.save()
+        try model.save()
         #expect(PublishService.all(in: setup.context) == [service])
         #expect(service.name == "Archive")
     }
@@ -128,7 +134,7 @@ struct PublishingManagerTests {
     @Test func onlyRenderingChangesAskToRepublish() throws {
         let setup = try Setup()
         setup.publishedService()
-        let model = PublishingManagerModel(context: setup.context)
+        let model = setup.model()
         model.update(at: 0) { $0.settings.isPublic = false; $0.settings.safety = .moderate }
         #expect(model.draftsChangingPublishedPhotos.isEmpty, "privacy applies to photos published from now on")
         model.update(at: 0) { $0.settings.export.quality = 95 }

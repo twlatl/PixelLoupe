@@ -44,12 +44,17 @@ final class PublishingManagerModel {
     }
 
     let context: NSManagedObjectContext
+    /// Where Flickr services' sign-ins are kept.
+    let credentials: FlickrCredentialStore
     private(set) var drafts: [Draft]
     /// Saved services removed since the window opened.
     private(set) var removed: [Draft] = []
+    /// Flickr sign-ins (and sign-outs, nil) since the window opened, by service ID, kept on Save.
+    private(set) var signIns: [UUID: FlickrCredentials?] = [:]
 
-    init(context: NSManagedObjectContext) {
+    init(context: NSManagedObjectContext, credentials: FlickrCredentialStore = KeychainFlickrCredentialStore.shared) {
         self.context = context
+        self.credentials = credentials
         drafts = PublishService.all(in: context).map { service in
             Draft(id: service.id, kind: service.kind, name: service.name, settings: service.settings, accountName: service.accountName,
                   objectID: service.objectID, publishedCount: service.publishedPhotos.count { $0.publishedDate != nil },
@@ -59,7 +64,7 @@ final class PublishingManagerModel {
 
     /// Whether anything would be saved.
     var hasChanges: Bool {
-        !removed.isEmpty || drafts.contains { draft in
+        !removed.isEmpty || !signIns.isEmpty || drafts.contains { draft in
             guard let objectID = draft.objectID, let service = try? context.existingObject(with: objectID) as? PublishService else { return true }
             return service.name != draft.name || service.settings != draft.settings
         }
@@ -82,6 +87,24 @@ final class PublishingManagerModel {
         change(&drafts[index])
     }
 
+    /// The Flickr account a service signed in to.
+    func signIn(at index: Int, _ account: FlickrCredentials) {
+        drafts[index].accountName = account.displayName
+        signIns[drafts[index].id] = .some(account)
+    }
+
+    /// Remove Authorization: the service forgets its Flickr account.
+    func signOut(at index: Int) {
+        drafts[index].accountName = nil
+        signIns[drafts[index].id] = .some(nil)
+    }
+
+    /// Whether a service can sign in to another account. Not once it has published photos: they belong
+    /// to the account they were published with, so another account is another service.
+    func canChangeAccount(at index: Int) -> Bool {
+        drafts[index].publishedCount == 0
+    }
+
     /// Saved services whose changes no longer match their published photos (see `Draft.changesPublishedPhotos`).
     var draftsChangingPublishedPhotos: [Draft] {
         drafts.filter(\.changesPublishedPhotos)
@@ -89,8 +112,9 @@ final class PublishingManagerModel {
 
     /// Writes the drafts to the catalog: new services made, changed ones updated, removed ones deleted
     /// (and with them, the record of their published photos; nothing is removed from the services
-    /// themselves). Services in `republishing` have every published photo marked Modified. Not undoable.
-    func save(republishing: Set<UUID> = []) {
+    /// themselves). Services in `republishing` have every published photo marked Modified. Sign-ins go to
+    /// the Keychain, and a removed service's sign-in leaves it. Not undoable.
+    func save(republishing: Set<UUID> = []) throws {
         context.processPendingChanges()
         context.undoManager?.disableUndoRegistration()
         defer {
@@ -99,7 +123,12 @@ final class PublishingManagerModel {
         }
         for draft in removed {
             if let objectID = draft.objectID, let service = try? context.existingObject(with: objectID) { context.delete(service) }
+            credentials.remove(for: draft.id)
         }
+        for (id, account) in signIns where drafts.contains(where: { $0.id == id }) {
+            if let account { try credentials.save(account, for: id) } else { credentials.remove(for: id) }
+        }
+        signIns = [:]
         for (index, draft) in drafts.enumerated() {
             let service: PublishService
             if let objectID = draft.objectID, let saved = try? context.existingObject(with: objectID) as? PublishService {
@@ -109,6 +138,7 @@ final class PublishingManagerModel {
                 service.id = draft.id
             }
             if service.name != draft.name { service.name = draft.name }
+            if service.accountName != draft.accountName { service.accountName = draft.accountName }
             if service.settings != draft.settings { service.settings = draft.settings }
             if service.sortOrder != Int32(index) { service.sortOrder = Int32(index) }
             if republishing.contains(draft.id) { service.markAllForRepublish() }
