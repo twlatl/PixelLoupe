@@ -118,6 +118,9 @@ nonisolated final class Photo: NSManagedObject {
     @NSManaged var snapshots: Set<DevelopSnapshot>
     /// Faces found in the photo (model v13).
     @NSManaged var faceRegions: Set<FaceRegion>
+    /// The photo's place in each publish service it's been added to (model v18). Deleting the photo leaves
+    /// them, without it, so a published copy can still be removed from the service.
+    @NSManaged var publications: Set<PublishedPhoto>
 
     @nonobjc class func fetchRequest() -> NSFetchRequest<Photo> {
         NSFetchRequest<Photo>(entityName: "Photo")

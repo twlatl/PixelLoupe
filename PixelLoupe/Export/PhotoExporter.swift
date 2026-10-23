@@ -170,6 +170,19 @@ nonisolated enum PhotoExporter {
     struct Watermark: Sendable {
         let settings: WatermarkSettings
         let imageURL: URL?
+
+        init(settings: WatermarkSettings, imageURL: URL?) {
+            self.settings = settings
+            self.imageURL = imageURL
+        }
+
+        /// The watermark export settings ask for, nil when they don't (or its preset is gone).
+        @MainActor
+        init?(_ settings: ExportSettings) {
+            guard settings.watermarks, settings.format != .original,
+                  let preset = WatermarkPresets.shared.preset(named: settings.watermarkName) else { return nil }
+            self.init(settings: preset.settings, imageURL: preset.settings.imageName.map(WatermarkPresets.shared.imageURL(named:)))
+        }
     }
 
     private static let context = CIContext(options: [.cacheIntermediates: false])
