@@ -21,16 +21,9 @@ final class FlickrSignIn: NSObject, ASWebAuthenticationPresentationContextProvid
         let request = try await client.requestToken()
         let callback: URL = try await withCheckedThrowingContinuation { continuation in
             let session = ASWebAuthenticationSession(
-                url: client.authorizationURL(token: request.token), callback: .customScheme(FlickrAuthClient.callbackScheme)
-            ) { url, error in
-                if let url {
-                    continuation.resume(returning: url)
-                } else if let error = error as? ASWebAuthenticationSessionError, error.code == .canceledLogin {
-                    continuation.resume(throwing: CancellationError())
-                } else {
-                    continuation.resume(throwing: error ?? FlickrError.unexpectedResponse)
-                }
-            }
+                url: client.authorizationURL(token: request.token), callback: .customScheme(FlickrAuthClient.callbackScheme),
+                completionHandler: Self.completionHandler(resuming: continuation)
+            )
             session.presentationContextProvider = self
             session.prefersEphemeralWebBrowserSession = anotherAccount
             self.session = session
@@ -39,6 +32,23 @@ final class FlickrSignIn: NSObject, ASWebAuthenticationPresentationContextProvid
         session = nil
         let verifier = try FlickrAuthClient.verifier(from: callback, token: request.token)
         return try await client.accessToken(token: request.token, secret: request.secret, verifier: verifier)
+    }
+
+    /// The session's completion handler, resuming the sign-in with the URL Flickr sent the browser back to.
+    ///
+    /// Made outside the main actor on purpose: the session calls it on an XPC queue, and a closure written in
+    /// this main-actor class would be checked to run on the main queue, which crashes the app.
+    nonisolated static func completionHandler(resuming continuation: CheckedContinuation<URL, Error>)
+        -> @Sendable (URL?, Error?) -> Void {
+        { @Sendable url, error in
+            if let url {
+                continuation.resume(returning: url)
+            } else if let error = error as? ASWebAuthenticationSessionError, error.code == .canceledLogin {
+                continuation.resume(throwing: CancellationError())
+            } else {
+                continuation.resume(throwing: error ?? FlickrError.unexpectedResponse)
+            }
+        }
     }
 
     nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {

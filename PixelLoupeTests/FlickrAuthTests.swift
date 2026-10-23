@@ -1,4 +1,5 @@
 import AppKit
+import AuthenticationServices
 import CoreData
 import Foundation
 import Synchronization
@@ -137,6 +138,30 @@ struct FlickrAuthClientTests {
         #expect(account.displayName == "Jamal Fanaian")
         let query = lastQuery()
         #expect(query["oauth_token"] == "request" && query["oauth_verifier"] == "5d1b96a26b494074")
+    }
+}
+
+@Suite("Flickr sign-in session")
+struct FlickrSignInSessionTests {
+    /// What the handler resumes the sign-in with when the session calls it from another queue, as
+    /// AuthenticationServices does (an XPC queue): it must not assume the main actor.
+    private func outcome(_ url: URL?, _ error: Error?) async -> Result<URL, Error> {
+        do {
+            return .success(try await withCheckedThrowingContinuation { continuation in
+                let handler = FlickrSignIn.completionHandler(resuming: continuation)
+                DispatchQueue.global().async { handler(url, error) }
+            })
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    @Test func theHandlerRunsOffTheMainThread() async throws {
+        let callback = URL(string: "pixelloupe://flickr-auth?oauth_token=a&oauth_verifier=b")!
+        #expect(try await outcome(callback, nil).get() == callback)
+        let cancelled = ASWebAuthenticationSessionError(.canceledLogin)
+        await #expect(throws: CancellationError.self) { try await outcome(nil, cancelled).get() }
+        await #expect(throws: FlickrError.unexpectedResponse) { try await outcome(nil, nil).get() }
     }
 }
 
