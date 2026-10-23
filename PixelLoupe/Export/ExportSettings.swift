@@ -261,6 +261,9 @@ nonisolated struct ExportSettings: Codable, Equatable, Sendable {
     var metadata = MetadataInclusion.all
     var removesPersonInfo = false
     var removesLocationInfo = false
+    /// Also write each keyword's path from the top of the keyword tree ("Places|Ireland|Dublin") as
+    /// `lr:hierarchicalSubject`, which Lightroom and other apps read back as a hierarchy (RAW-182).
+    var writesKeywordHierarchy = false
 
     // MARK: Watermarking
 
@@ -307,6 +310,7 @@ nonisolated struct ExportSettings: Codable, Equatable, Sendable {
         read(.resolutionUnit, &resolutionUnit)
         read(.sharpens, &sharpens); read(.sharpenMedium, &sharpenMedium); read(.sharpenAmount, &sharpenAmount)
         read(.metadata, &metadata); read(.removesPersonInfo, &removesPersonInfo); read(.removesLocationInfo, &removesLocationInfo)
+        read(.writesKeywordHierarchy, &writesKeywordHierarchy)
         read(.watermarks, &watermarks); read(.watermarkName, &watermarkName)
         read(.afterExport, &afterExport)
         applicationPath = try? container.decodeIfPresent(String.self, forKey: .applicationPath)

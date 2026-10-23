@@ -81,7 +81,7 @@ final class ExportSettingsForm: NSObject, NSTextFieldDelegate {
     let metadataPopUp = NSPopUpButton()
     let removePersonCheckbox = NSButton(checkboxWithTitle: "Remove Person Info", target: nil, action: nil)
     let removeLocationCheckbox = NSButton(checkboxWithTitle: "Remove Location Info", target: nil, action: nil)
-    let keywordHierarchyCheckbox = NSButton(checkboxWithTitle: "Write Keywords as Lightroom Hierarchy", target: nil, action: nil)
+    let keywordHierarchyCheckbox = NSButton(checkboxWithTitle: "Write Keywords as PixelLoupe Hierarchy", target: nil, action: nil)
 
     let watermarkCheckbox = NSButton(checkboxWithTitle: "Watermark:", target: nil, action: nil)
     let watermarkPopUp = NSPopUpButton()
@@ -167,6 +167,7 @@ final class ExportSettingsForm: NSObject, NSTextFieldDelegate {
             settings.metadata = ExportSettings.MetadataInclusion.allCases[max(0, metadataPopUp.indexOfSelectedItem)]
             settings.removesPersonInfo = removePersonCheckbox.state == .on
             settings.removesLocationInfo = removeLocationCheckbox.state == .on
+            settings.writesKeywordHierarchy = keywordHierarchyCheckbox.state == .on
 
             settings.watermarks = watermarkCheckbox.state == .on
             if let name = watermarkPopUp.selectedItem?.representedObject as? String { settings.watermarkName = name }
@@ -326,6 +327,8 @@ final class ExportSettingsForm: NSObject, NSTextFieldDelegate {
         removeLocationCheckbox.state = settings.removesLocationInfo ? .on : .off
         removePersonCheckbox.isEnabled = rendered && settings.metadata.includesDescriptive
         removeLocationCheckbox.isEnabled = rendered && settings.metadata.includesDescriptive
+        keywordHierarchyCheckbox.state = settings.writesKeywordHierarchy ? .on : .off
+        keywordHierarchyCheckbox.isEnabled = rendered && settings.metadata.includesDescriptive
 
         rebuildWatermarkMenu()
         watermarkCheckbox.state = settings.watermarks ? .on : .off
@@ -479,8 +482,9 @@ final class ExportSettingsForm: NSObject, NSTextFieldDelegate {
         popUp(metadataPopUp, ExportSettings.MetadataInclusion.allCases.map(\.title), id: "exportMetadata")
         control(removePersonCheckbox)
         control(removeLocationCheckbox)
-        // PixelLoupe's keywords aren't hierarchical (yet).
-        keywordHierarchyCheckbox.isEnabled = false
+        control(keywordHierarchyCheckbox)
+        keywordHierarchyCheckbox.toolTip = "Also writes each keyword with its parents (Places|Ireland|Dublin), "
+            + "which Lightroom and other apps read back as a keyword hierarchy. On Flickr, the tags are these paths."
         return grid([
             [label("Include:"), metadataPopUp],
             [NSGridCell.emptyContentView, row(removePersonCheckbox, removeLocationCheckbox)],

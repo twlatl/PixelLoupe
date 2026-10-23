@@ -44,7 +44,7 @@ nonisolated struct FlickrPublisher: Publisher {
         let contentType = switch settings.contentType { case .photo: "1"; case .screenshot: "2"; case .other: "3" }
         var parameters = [
             "description": description(item),
-            "tags": Self.tags(item.export.keywords),
+            "tags": tags(item),
             "is_public": settings.isPublic ? "1" : "0",
             "is_family": !settings.isPublic && settings.isVisibleToFamily ? "1" : "0",
             "is_friend": !settings.isPublic && settings.isVisibleToFriends ? "1" : "0",
@@ -62,11 +62,17 @@ nonisolated struct FlickrPublisher: Publisher {
         var meta = ["photo_id": id, "description": description(item)]
         if settings.titleUpdate == .replace { meta["title"] = item.title ?? "" }
         try await api.call("flickr.photos.setMeta", meta)
-        try await api.call("flickr.photos.setTags", ["photo_id": id, "tags": Self.tags(item.export.keywords)])
+        try await api.call("flickr.photos.setTags", ["photo_id": id, "tags": tags(item)])
     }
 
     private func description(_ item: PublishItem) -> String {
         item.export.metadata[.caption]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    /// The photo's tags: its keywords, or with Write Keywords as PixelLoupe Hierarchy, their paths
+    /// ("Places|Ireland|Dublin").
+    private func tags(_ item: PublishItem) -> String {
+        Self.tags(settings.export.writesKeywordHierarchy && !item.export.keywordPaths.isEmpty ? item.export.keywordPaths : item.export.keywords)
     }
 
     /// Flickr's tag list: space-separated, with multi-word tags in quotes.

@@ -10,6 +10,9 @@ nonisolated struct ExportItem: Sendable {
     let adjustments: PhotoAdjustments
     let metadata: PhotoMetadata
     let keywords: [String]
+    /// The keywords' paths in the keyword tree ("Places|Ireland|Dublin"), for Write Keywords as
+    /// PixelLoupe Hierarchy.
+    var keywordPaths: [String] = []
     let rating: Int
     let captureDate: Date
     /// The photo's Smart Preview, exported from (at its size) when the original can't be read.
@@ -25,7 +28,7 @@ extension ExportItem {
     init(_ photo: Photo, smartPreview: URL? = nil) {
         self.init(
             source: photo.fileURL, adjustments: photo.adjustments, metadata: photo.metadata,
-            keywords: Tag.exportNames(for: photo.tags),
+            keywords: Tag.exportNames(for: photo.tags), keywordPaths: Tag.exportPaths(for: photo.tags),
             rating: Int(photo.rating), captureDate: photo.captureDate, smartPreview: smartPreview, gps: ExportGPS(photo)
         )
     }
@@ -382,7 +385,7 @@ nonisolated enum PhotoExporter {
         "xmpRights": "http://ns.adobe.com/xap/1.0/rights/", "xmpMM": "http://ns.adobe.com/xap/1.0/mm/",
         "photoshop": "http://ns.adobe.com/photoshop/1.0/", "Iptc4xmpCore": "http://iptc.org/std/Iptc4xmpCore/1.0/xmlns/",
         "Iptc4xmpExt": "http://iptc.org/std/Iptc4xmpExt/2008-02-29/", "tiff": "http://ns.adobe.com/tiff/1.0/",
-        "exif": "http://ns.adobe.com/exif/1.0/",
+        "exif": "http://ns.adobe.com/exif/1.0/", "lr": "http://ns.adobe.com/lightroom/1.0/",
     ]
 
     /// The exported file's metadata: the original's, as much as Include allows, with the
@@ -452,6 +455,14 @@ nonisolated enum PhotoExporter {
                 namespaces["dc"]! as CFString, "dc" as CFString, "subject" as CFString, .arrayUnordered, item.keywords as CFArray
             ) {
                 CGImageMetadataSetTagWithPath(result, nil, "dc:subject" as CFString, tag)
+            }
+            // The original's hierarchy is as stale as its keywords: the catalog's replaces it, or none.
+            CGImageMetadataRemoveTagWithPath(result, nil, "lr:hierarchicalSubject" as CFString)
+            if settings.writesKeywordHierarchy, !item.keywordPaths.isEmpty, let tag = CGImageMetadataTagCreate(
+                namespaces["lr"]! as CFString, "lr" as CFString, "hierarchicalSubject" as CFString, .arrayUnordered,
+                item.keywordPaths as CFArray
+            ) {
+                CGImageMetadataSetTagWithPath(result, nil, "lr:hierarchicalSubject" as CFString, tag)
             }
             if item.rating > 0 {
                 CGImageMetadataSetValueWithPath(result, nil, "xmp:Rating" as CFString, item.rating as CFNumber)
