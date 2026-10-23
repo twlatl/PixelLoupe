@@ -201,6 +201,20 @@ struct PublishServiceTests {
         #expect(catalog.context.undoManager?.canUndo == false, "publishing's bookkeeping isn't undoable")
     }
 
+    /// The record of a photo already on the service is saved as soon as it's there (a crash part way
+    /// through once left photos on Flickr that the catalog still thought were new).
+    @Test func eachPhotosResultIsSavedAsItFinishes() async throws {
+        let catalog = try Catalog()
+        let service = PublishService.make(.hardDrive, in: catalog.context)
+        service.add(try (0..<4).map { try catalog.photo("P\($0).jpg") })
+        catalog.store.save()
+        var unsaved: [Bool] = []
+        _ = await PublishRun.run(service, store: catalog.store, publisher: FakePublisher()) { _, _ in
+            unsaved.append(catalog.context.hasChanges)
+        }
+        #expect(unsaved == [false, false, false, false])
+    }
+
     @Test func anEditMadeWhilePublishingLeavesThePhotoModified() async throws {
         let catalog = try Catalog()
         let service = PublishService.make(.hardDrive, in: catalog.context)
