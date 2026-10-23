@@ -19,6 +19,15 @@ struct PublishEditing {
         store.save()
     }
 
+    /// B with a service as the target collection: takes the photos out when they're all in the service
+    /// already, otherwise adds them.
+    func toggle(_ ids: [NSManagedObjectID], in serviceID: UUID) {
+        guard let service = PublishService.with(id: serviceID, in: context) else { return }
+        let photos = photos(ids)
+        let allIn = !photos.isEmpty && photos.allSatisfy { service.entry(for: $0).map { !$0.isRemovalPending } ?? false }
+        allIn ? remove(ids, from: serviceID) : add(ids, to: serviceID)
+    }
+
     /// Takes photos out of a service: those never published go, published ones wait for the next Publish
     /// to remove them.
     func remove(_ ids: [NSManagedObjectID], from serviceID: UUID) {

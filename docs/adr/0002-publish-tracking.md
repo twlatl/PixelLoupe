@@ -45,3 +45,7 @@ The state is **derived**, not stored:
   Re-Publish All, as Lightroom does. Re-Publish All sets each published date to `distantPast`, so every
   photo counts as edited since it was published. Privacy and safety changes don't ask: they only apply
   to photos published from then on.
+- Mark to Republish in a service's menu (RAW-184) does the same as Re-Publish All. Reset Export Status does the
+  opposite: it clears each entry's published date, remote ID, URL, fingerprint and error, so every photo is
+  New, and drops entries waiting to be removed. It doesn't touch the service itself, which is why it asks
+  first: anything still there is uploaded again by the next Publish.

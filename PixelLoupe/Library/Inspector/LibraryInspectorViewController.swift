@@ -760,7 +760,8 @@ final class LibraryInspectorViewController: NSViewController {
             editing.autoStack(groups.map { $0.map { model.photoIDs[$0] } }, criteria: cullingCriteria)
         }
         if model.method == .similarity { model.onNeedsDistances?() }
-        presentAsSheet(sheet)
+        // From a publish service's menu the inspector may be hidden, so the window's content shows it.
+        (view.window == nil ? NSApp.keyWindow?.contentViewController ?? self : self).presentAsSheet(sheet)
     }
 
     // MARK: - Presets
