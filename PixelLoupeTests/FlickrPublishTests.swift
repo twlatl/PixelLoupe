@@ -187,6 +187,37 @@ struct FlickrPublishTests {
         #expect(CatalogWindowController.publishSummary(result, service: "Flickr").messageText == "Publishing to Flickr stopped.")
     }
 
+    @Test func albumsAreMadeRenamedAndHavePhotosAddedAndRemoved() async throws {
+        let flickr = FakeFlickr { what, _ in
+            what == "flickr.photosets.create"
+                ? .init(status: 200, body: #"{"photoset":{"id":"72157720000000001","url":"https://www.flickr.com/photos/x/albums/72157720000000001"},"stat":"ok"}"#)
+                : .init(status: 200, body: #"{"stat":"ok"}"#)
+        }
+        let publisher = publisher(flickr)
+        let id = try await publisher.createAlbum(title: "Harbour", description: "Boats", coverID: "1")
+        #expect(id == "72157720000000001")
+        try await publisher.addAlbumPhoto(id, photoID: "2")
+        try await publisher.removeAlbumPhoto(id, photoID: "1")
+        try await publisher.editAlbum(id, title: "Harbours", description: "")
+        #expect(flickr.calls.map(\.what) == ["flickr.photosets.create", "flickr.photosets.addPhoto", "flickr.photosets.removePhoto", "flickr.photosets.editMeta"])
+        #expect(flickr.calls[0].fields["title"] == "Harbour" && flickr.calls[0].fields["description"] == "Boats" && flickr.calls[0].fields["primary_photo_id"] == "1")
+        #expect(flickr.calls[1].fields["photoset_id"] == id && flickr.calls[1].fields["photo_id"] == "2")
+        #expect(flickr.calls[2].fields["photo_id"] == "1")
+        #expect(flickr.calls[3].fields["title"] == "Harbours" && flickr.calls[3].fields["photoset_id"] == id)
+        #expect(!flickr.calls.contains { $0.what == "flickr.photosets.editPhotos" || $0.what == "flickr.photosets.delete" },
+                "never replaces an album's photos or deletes it: others may have photos in it")
+
+        let already = FakeFlickr { _, _ in .init(status: 200, body: #"{"stat":"fail","code":3,"message":"Photo already in set"}"#) }
+        try await self.publisher(already).addAlbumPhoto("7", photoID: "2")
+        let notInSet = FakeFlickr { _, _ in .init(status: 200, body: #"{"stat":"fail","code":2,"message":"Photo not found"}"#) }
+        try await self.publisher(notInSet).removeAlbumPhoto("7", photoID: "2")
+        let gone = FakeFlickr { _, _ in .init(status: 200, body: #"{"stat":"fail","code":1,"message":"Photoset not found"}"#) }
+        try await self.publisher(gone).removeAlbumPhoto("7", photoID: "2")
+        await #expect(throws: FlickrAPI.APIError.photoNotFound, "adding to an album that's gone: Publish makes it again") {
+            try await self.publisher(gone).addAlbumPhoto("7", photoID: "2")
+        }
+    }
+
     @Test func aServiceWithoutASignInCantPublish() async throws {
         let directory = try TemporaryDirectory()
         let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "C.pixelloupe"))

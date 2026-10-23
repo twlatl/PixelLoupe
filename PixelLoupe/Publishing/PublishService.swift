@@ -46,6 +46,8 @@ nonisolated final class PublishService: NSManagedObject {
     /// Its color label in the sidebar (model v19, RAW-184); see `label`.
     @NSManaged var colorLabel: Int16
     @NSManaged var publishedPhotos: Set<PublishedPhoto>
+    /// Its Flickr albums (model v20, RAW-185), including those waiting to be deleted on Flickr.
+    @NSManaged var albums: Set<PublishAlbum>
 
     @nonobjc class func fetchRequest() -> NSFetchRequest<PublishService> {
         NSFetchRequest<PublishService>(entityName: "PublishService")
@@ -162,6 +164,7 @@ nonisolated final class PublishService: NSManagedObject {
                 managedObjectContext?.delete(entry)
             } else {
                 entry.isRemovalPending = true
+                entry.albums = []
             }
         }
     }
@@ -181,6 +184,33 @@ nonisolated final class PublishService: NSManagedObject {
             // Earlier than any edit, so each counts as edited since it was published.
             entry.publishedDate = .distantPast
         }
+    }
+
+    // MARK: - Albums
+
+    /// Whether the service can have albums: Flickr's can.
+    var hasAlbums: Bool { kind == .flickr }
+
+    /// The albums shown in the sidebar, by name.
+    var visibleAlbums: [PublishAlbum] {
+        albums.filter { !$0.isDeletionPending && !$0.isDeleted }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// The photos smart albums hold that aren't in the service yet: they join it at the next Publish.
+    func smartAlbumPhotosToJoin() -> [Photo] {
+        var seen = Set<NSManagedObjectID>()
+        return albums.filter { $0.kind == .smart && !$0.isDeletionPending }
+            .flatMap { $0.photos() }
+            .filter { photo in
+                guard entry(for: photo).map({ $0.isRemovalPending }) ?? true else { return false }
+                return seen.insert(photo.objectID).inserted
+            }
+    }
+
+    /// Whether Publish has album work: smart album photos to add, or albums to create, update or delete.
+    var hasAlbumWork: Bool {
+        hasAlbums && (albums.contains { $0.hasChangesToPublish } || !smartAlbumPhotosToJoin().isEmpty)
     }
 
     /// Whether any photo has been published, so there's something for Mark to Republish to mark.
@@ -203,6 +233,7 @@ nonisolated final class PublishService: NSManagedObject {
             entry.metadataFingerprint = nil
             entry.lastError = nil
         }
+        albums.forEach { $0.forgetPublished() }
     }
 
     /// The service's entries in a state, in the order they were added.

@@ -19,6 +19,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             case collection(id: UUID, kind: PhotoCollection.Kind)
             /// A publish service, under the Publishing header (RAW-179).
             case publishService(id: UUID)
+            /// An album in a publish service, under the service (RAW-185).
+            case publishAlbum(id: UUID, serviceID: UUID, isSmart: Bool)
         }
 
         let kind: Kind
@@ -36,6 +38,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         var label: ColorLabel = .none
         /// Where a publish service publishes, for its tooltip.
         var detail: String?
+        /// A smart album's rules, for its scope.
+        var albumRules: SmartCollectionRules?
 
         init(kind: Kind, title: String) {
             self.kind = kind
@@ -50,6 +54,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             case .folder(let path): .folder(path: path)
             case .collection(let id, _): content.map { .collection(id: id, content: $0) }
             case .publishService(let id): .publishService(id: id)
+            case .publishAlbum(let id, let serviceID, _): .publishAlbum(id: id, serviceID: serviceID, rules: albumRules)
             }
         }
 
@@ -57,8 +62,16 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             if case .publishService(let id) = kind { id } else { nil }
         }
 
+        var publishAlbumID: UUID? {
+            if case .publishAlbum(let id, _, _) = kind { id } else { nil }
+        }
+
         var collectionID: UUID? {
             if case .collection(let id, _) = kind { id } else { nil }
+        }
+
+        var isRegularAlbum: Bool {
+            if case .publishAlbum(_, _, false) = kind { true } else { false }
         }
 
         var collectionKind: PhotoCollection.Kind? {
@@ -327,7 +340,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         if !isCollectionsCollapsed { outlineView.expandItem(collectionsHeader) }
         if !isCollectionsCollapsed { expandSets(in: collectionsHeader.children) }
-        if !collapsedHeaders.contains(publishingHeader.title) { outlineView.expandItem(publishingHeader) }
+        if !collapsedHeaders.contains(publishingHeader.title) {
+            outlineView.expandItem(publishingHeader)
+            for service in publishingHeader.children where !collapsedSets.contains(service.publishServiceID!) {
+                outlineView.expandItem(service)
+            }
+        }
         refreshCollectionScope(in: collectionsHeader.children)
         // Previous Import moves on to a new import as it comes in (and back to the one before when
         // every photo of the last is removed).
@@ -354,6 +372,21 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             case .hardDrive: (service.settings.export.folderPath as NSString).abbreviatingWithTildeInPath
             case .flickr: service.accountName.map { "Flickr: \($0)" } ?? "Flickr: not signed in"
             }
+            item.children = service.visibleAlbums.map { album in
+                let row = Item(kind: .publishAlbum(id: album.id, serviceID: service.id, isSmart: album.kind == .smart), title: album.name)
+                row.albumRules = album.kind == .smart ? album.rules : nil
+                row.isTarget = album.id == store.viewState.targetCollectionID
+                row.warning = album.importWarning
+                row.count = switch album.kind {
+                case .album: album.entries.count { !$0.isRemovalPending && $0.photo != nil }
+                case .smart: (try? store.viewContext.count(for: {
+                    let request = Photo.fetchRequest()
+                    request.predicate = album.rules.predicate
+                    return request
+                }())).map { $0 == NSNotFound ? 0 : $0 } ?? 0
+                }
+                return row
+            }
             return item
         }
     }
@@ -369,6 +402,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             item.tag = tag
             menu.addItem(item)
             return item
+        }
+        if service?.hasAlbums == true {
+            add("Create Album…", #selector(PixelLoupeActions.createPublishAlbum(_:)))
+            add("Create Smart Album…", #selector(PixelLoupeActions.createPublishSmartAlbum(_:)))
+            menu.addItem(.separator())
         }
         let isTarget = store.viewState.targetCollectionID == id
         add(isTarget ? "Clear Target Collection" : "Set as Target Collection", #selector(PixelLoupeActions.setTargetCollection(_:)))
@@ -395,6 +433,36 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         menu.addItem(.separator())
         add("Edit Settings…", #selector(PixelLoupeActions.editPublishService(_:)))
         menu.addItem(NSMenuItem(title: "Publishing Manager…", action: #selector(PixelLoupeActions.showPublishingManager(_:)), keyEquivalent: ""))
+        if service?.hasAlbums == true {
+            menu.addItem(.separator())
+            add("Import Smart Collection Settings…", #selector(PixelLoupeActions.importSmartAlbumSettings(_:)))
+        }
+        return menu
+    }
+
+    /// An album's context menu (RAW-185). Its items carry the album's ID, except Publish Now, which
+    /// publishes the whole service.
+    func publishAlbumMenu(id: UUID, serviceID: UUID) -> NSMenu {
+        let menu = NSMenu()
+        let album = PublishAlbum.with(id: id, in: store.viewContext)
+        @discardableResult
+        func add(_ title: String, _ action: Selector, _ object: UUID = id) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.representedObject = object
+            menu.addItem(item)
+            return item
+        }
+        if album?.kind == .album {
+            add(store.viewState.targetCollectionID == id ? "Clear Target Collection" : "Set as Target Collection",
+                #selector(PixelLoupeActions.setTargetCollection(_:)))
+            menu.addItem(.separator())
+        }
+        add(album?.kind == .smart ? "Edit Smart Album…" : "Edit Album…", #selector(PixelLoupeActions.editPublishAlbum(_:)))
+        add("Rename…", #selector(PixelLoupeActions.renamePublishAlbum(_:)))
+        add("Delete…", #selector(PixelLoupeActions.deletePublishAlbum(_:)))
+        menu.addItem(.separator())
+        add("Publish Now", #selector(PixelLoupeActions.publishNow(_:)), serviceID)
+        add("Show in Flickr", #selector(PixelLoupeActions.showPublishAlbumLocation(_:)))
         return menu
     }
 
@@ -633,6 +701,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             }
         case .publishService(let id):
             publishServiceMenu(id: id).items.forEach { menu.addItem($0.copy() as! NSMenuItem) }
+        case .publishAlbum(let id, let serviceID, _):
+            publishAlbumMenu(id: id, serviceID: serviceID).items.forEach { menu.addItem($0.copy() as! NSMenuItem) }
         case .header where item.title == Self.publishingTitle:
             menu.addItem(NSMenuItem(title: "Publishing Manager…", action: #selector(PixelLoupeActions.showPublishingManager(_:)), keyEquivalent: ""))
         case .folder(let path):
@@ -713,7 +783,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     // MARK: - Dropping photos on collections
 
     func outlineView(_ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?, proposedChildIndex index: Int) -> NSDragOperation {
-        guard let item = item as? Item, item.collectionKind == .collection || item.publishServiceID != nil,
+        guard let item = item as? Item, item.collectionKind == .collection || item.publishServiceID != nil || item.isRegularAlbum,
               !PhotoDrag.objectIDs(from: info.draggingPasteboard, store: store).isEmpty
         else { return [] }
         outlineView.setDropItem(item, dropChildIndex: NSOutlineViewDropOnItemIndex)
@@ -721,6 +791,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
+        if let item = item as? Item, item.isRegularAlbum, let albumID = item.publishAlbumID {
+            let ids = PhotoDrag.objectIDs(from: info.draggingPasteboard, store: store)
+            guard !ids.isEmpty else { return false }
+            PublishEditing(store: store).add(ids, toAlbum: albumID)
+            return true
+        }
         if let item = item as? Item, let serviceID = item.publishServiceID {
             let ids = PhotoDrag.objectIDs(from: info.draggingPasteboard, store: store)
             guard !ids.isEmpty else { return false }
@@ -895,6 +971,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         case .collection(_, .smart): "gearshape.2"
         case .collection(_, .set): "archivebox"
         case .publishService: "folder"
+        case .publishAlbum(_, _, false): "rectangle.stack"
+        case .publishAlbum(_, _, true): "gearshape.2"
         default: "folder.fill"
         }
         // Lightroom marks the target collection with a +.
@@ -911,6 +989,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let accessibilityIdentifier: String? = switch item.kind {
         case .collection(let id, _): "collection.\(id.uuidString)"
         case .publishService(let id): "publishService.\(id.uuidString)"
+        case .publishAlbum(let id, _, _): "publishAlbum.\(id.uuidString)"
         case .previousImport: "previousImport"
         default: nil
         }
@@ -928,7 +1007,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             restoreExpansion(expandedPaths, in: item.children)
             isReloading = false
         }
-        if !isReloading, let item = notification.userInfo?["NSObject"] as? Item, let id = item.collectionID {
+        if !isReloading, let item = notification.userInfo?["NSObject"] as? Item, let id = item.collectionID ?? item.publishServiceID {
             collapsedSets.remove(id)
         }
         guard !isReloading, let item = notification.userInfo?["NSObject"] as? Item,
@@ -945,7 +1024,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         if !isReloading, let item = notification.userInfo?["NSObject"] as? Item, case .header = item.kind {
             collapsedHeaders.insert(item.title)
         }
-        if !isReloading, collectionFilterText.isEmpty, let item = notification.userInfo?["NSObject"] as? Item, let id = item.collectionID {
+        if !isReloading, collectionFilterText.isEmpty, let item = notification.userInfo?["NSObject"] as? Item, let id = item.collectionID ?? item.publishServiceID {
             collapsedSets.insert(id)
         }
         guard !isReloading, let item = notification.userInfo?["NSObject"] as? Item,

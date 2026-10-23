@@ -42,13 +42,104 @@ enum PublishRun {
             store.save()
             progress(completed, jobs.count)
         }
+        if service.hasAlbums, let albums = publisher as? any AlbumPublisher, !Task.isCancelled, result.stopReason == nil {
+            await publishAlbums(of: service, with: albums, store: store, to: &result)
+        }
         store.save()
         return result
+    }
+
+    // MARK: - Albums
+
+    /// Sends the service's album changes (RAW-185), after its photos so the albums can hold them: creates
+    /// new albums, renames changed ones, and adds and removes this catalog's photos. Photos in an album that
+    /// this catalog didn't put there are never touched, so an album can be shared with flickr.com and other
+    /// catalogs. A deleted album, or one with none of this catalog's photos left, only loses this catalog's
+    /// photos; it isn't deleted on Flickr.
+    private static func publishAlbums(of service: PublishService, with publisher: any AlbumPublisher, store: CatalogStore,
+                                      to result: inout Result) async {
+        let context = store.viewContext
+        let albums = service.albums.filter(\.hasChangesToPublish).sorted { $0.createdDate < $1.createdDate }
+        for album in albums {
+            guard !Task.isCancelled else { return }
+            let name = album.name
+            do {
+                try await publish(album, with: publisher, context: context)
+            } catch FlickrAPI.APIError.photoNotFound where album.remoteID != nil && !album.isDeletionPending {
+                // Deleted on Flickr: made again.
+                withoutUndo(context) { album.forgetPublished() }
+                do {
+                    try await publish(album, with: publisher, context: context)
+                } catch {
+                    fail(album: name, error, &result)
+                }
+            } catch {
+                fail(album: name, error, &result)
+            }
+            store.save()
+            if result.stopReason != nil { return }
+        }
+    }
+
+    private static func publish(_ album: PublishAlbum, with publisher: any AlbumPublisher, context: NSManagedObjectContext) async throws {
+        let name = album.name
+        let description = album.albumDescription
+        let photoIDs = album.isDeletionPending ? [] : album.publishedPhotoIDsToSend()
+        if photoIDs.isEmpty {
+            if let id = album.remoteID { try await send(photoIDs, to: id, of: album, with: publisher, context: context) }
+            withoutUndo(context) { album.isDeletionPending ? context.delete(album) : album.forgetPublished() }
+            return
+        }
+        let id: String
+        if let existing = album.remoteID {
+            id = existing
+            if name != album.publishedName || description != album.publishedDescription {
+                try await publisher.editAlbum(id, title: name, description: description)
+            }
+        } else {
+            id = try await publisher.createAlbum(title: name, description: description, coverID: photoIDs[0])
+            withoutUndo(context) {
+                album.remoteID = id
+                album.sentPhotoIDs = [photoIDs[0]]
+            }
+        }
+        withoutUndo(context) {
+            album.publishedName = name
+            album.publishedDescription = description
+        }
+        try await send(photoIDs, to: id, of: album, with: publisher, context: context)
+    }
+
+    /// Adds the photos the album should have that this catalog hasn't put in it yet, in capture order, and takes
+    /// out those it put in and shouldn't have any more. What's been sent is recorded photo by photo, so a
+    /// Publish that fails part way carries on from there next time.
+    private static func send(_ photoIDs: [String], to id: String, of album: PublishAlbum, with publisher: any AlbumPublisher,
+                             context: NSManagedObjectContext) async throws {
+        let wanted = Set(photoIDs)
+        for photoID in album.sentPhotoIDs.subtracting(wanted).sorted() {
+            try await publisher.removeAlbumPhoto(id, photoID: photoID)
+            withoutUndo(context) { album.sentPhotoIDs.remove(photoID) }
+        }
+        for photoID in photoIDs where !album.sentPhotoIDs.contains(photoID) {
+            try await publisher.addAlbumPhoto(id, photoID: photoID)
+            withoutUndo(context) { album.sentPhotoIDs.insert(photoID) }
+        }
+    }
+
+    private static func fail(album name: String, _ error: Error, _ result: inout Result) {
+        guard !(error is CancellationError) else { return }
+        if error is PublishStoppingError {
+            result.stopReason = result.stopReason ?? error.localizedDescription
+        } else {
+            result.failures.append("Album “\(name)”: \(error.localizedDescription)")
+        }
     }
 
     /// The work for a service's photos, marking those that can't be published (videos) as failed.
     private static func jobs(for service: PublishService, store: CatalogStore, settings: PublishSettings,
                              failures: inout [String]) -> [Job] {
+        // A smart album's matches join the service, to be uploaded with the rest.
+        service.add(service.smartAlbumPhotosToJoin())
         service.pruneUnpublishedOrphans()
         // Results are saved as they come in, which would leave temporary IDs (of entries not saved yet)
         // pointing at nothing.

@@ -1,7 +1,8 @@
 import AppKit
 
 /// Lightroom's Create Collection / Create Smart Collection / Create Collection Set dialog (and Edit
-/// Smart Collection), shown as a sheet.
+/// Smart Collection), shown as a sheet. It also makes and edits a Flickr service's albums and smart albums
+/// (RAW-185), which have a Description and no collection set.
 final class CollectionDialog: NSViewController {
     struct Result: Equatable {
         var name: String
@@ -9,12 +10,16 @@ final class CollectionDialog: NSViewController {
         var includeSelectedPhotos: Bool
         var setAsTarget: Bool
         var rules: SmartCollectionRules
+        /// An album's description.
+        var description = ""
     }
 
     let kind: PhotoCollection.Kind
     private let isEditing: Bool
     private let sets: [(id: UUID, path: String)]
     private let hasSelection: Bool
+    /// Making or editing a publish service's album.
+    let isAlbum: Bool
     var onFinish: (Result?) -> Void = { _ in }
 
     let nameField = NSTextField()
@@ -23,22 +28,28 @@ final class CollectionDialog: NSViewController {
     let includeSelectedCheckbox = NSButton(checkboxWithTitle: "Include selected photos", target: nil, action: nil)
     let targetCheckbox = NSButton(checkboxWithTitle: "Set as target collection", target: nil, action: nil)
     let matchPopUp = NSPopUpButton()
+    let descriptionField = NSTextField()
     private var existingGroups: [SmartCollectionRules] = []
     private(set) var rulesEditor: SmartRulesEditor?
 
-    /// `parentID`: the set to put it in; `rules` and `name` when editing a smart collection.
+    /// `parentID`: the set to put it in; `rules` and `name` when editing a smart collection. An album
+    /// (`album`) is edited when given its description.
     init(kind: PhotoCollection.Kind, sets: [(id: UUID, path: String)], parentID: UUID?, hasSelection: Bool,
-         name: String? = nil, rules: SmartCollectionRules? = nil) {
+         name: String? = nil, rules: SmartCollectionRules? = nil, album: Bool = false, description: String? = nil) {
         self.kind = kind
         self.sets = sets
         self.hasSelection = hasSelection
-        isEditing = rules != nil
+        isAlbum = album
+        isEditing = rules != nil || description != nil
         super.init(nibName: nil, bundle: nil)
-        let defaultName = switch kind {
-        case .collection: "Collection"
-        case .smart: "Smart Collection"
-        case .set: "Collection Set"
+        let defaultName = switch (kind, album) {
+        case (.collection, false): "Collection"
+        case (.smart, false): "Smart Collection"
+        case (.collection, true), (.set, true): "Album"
+        case (.smart, true): "Smart Album"
+        case (.set, false): "Collection Set"
         }
+        descriptionField.stringValue = description ?? ""
         nameField.stringValue = name ?? defaultName
         nameField.placeholderString = defaultName
         for set in sets {
@@ -61,7 +72,11 @@ final class CollectionDialog: NSViewController {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     var title_: String {
-        switch kind {
+        if isAlbum {
+            let noun = kind == .smart ? "Smart Album" : "Album"
+            return isEditing ? "Edit \(noun)" : "Create \(noun)"
+        }
+        return switch kind {
         case .collection: "Create Collection"
         case .smart: isEditing ? "Edit Smart Collection" : "Create Smart Collection"
         case .set: "Create Collection Set"
@@ -85,12 +100,20 @@ final class CollectionDialog: NSViewController {
         let location = box("Location", [insideSetCheckbox, setPopUp])
 
         var sections: [NSView] = [heading, nameRow, location]
+        if isAlbum {
+            descriptionField.setAccessibilityLabel("Description")
+            descriptionField.setAccessibilityIdentifier("albumDescription")
+            descriptionField.placeholderString = "Shown on the album’s page on Flickr"
+            let label = NSTextField(labelWithString: "Description:")
+            let descriptionRow = NSStackView(views: [label, descriptionField])
+            sections = [heading, nameRow, descriptionRow]
+        }
         switch kind {
         case .collection:
-            includeSelectedCheckbox.isEnabled = hasSelection
+            includeSelectedCheckbox.isEnabled = hasSelection && !isEditing
             includeSelectedCheckbox.setAccessibilityIdentifier("collectionIncludeSelected")
             targetCheckbox.setAccessibilityIdentifier("collectionSetTarget")
-            sections.append(box("Options", [includeSelectedCheckbox, targetCheckbox]))
+            if !(isAlbum && isEditing) { sections.append(box("Options", [includeSelectedCheckbox, targetCheckbox])) }
         case .smart:
             matchPopUp.setAccessibilityIdentifier("collectionMatch")
             let matchRow = NSStackView(views: [NSTextField(labelWithString: "Match"), matchPopUp,
@@ -140,6 +163,10 @@ final class CollectionDialog: NSViewController {
             view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
         }
         stack.widthAnchor.constraint(equalToConstant: kind == .smart ? 760 : 460).isActive = true
+        // An album's Description field lines up with its Name field.
+        if isAlbum, let descriptionRow = descriptionField.superview as? NSStackView {
+            descriptionRow.views[0].widthAnchor.constraint(equalTo: nameRow.views[0].widthAnchor).isActive = true
+        }
         view = stack
         update()
     }
@@ -194,10 +221,11 @@ final class CollectionDialog: NSViewController {
         let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         return Result(
             name: name.isEmpty ? nameField.placeholderString ?? "Collection" : name,
-            parentID: insideSetCheckbox.state == .on ? setPopUp.selectedItem?.representedObject as? UUID : nil,
-            includeSelectedPhotos: kind == .collection && includeSelectedCheckbox.state == .on,
+            parentID: !isAlbum && insideSetCheckbox.state == .on ? setPopUp.selectedItem?.representedObject as? UUID : nil,
+            includeSelectedPhotos: kind == .collection && !isEditing && includeSelectedCheckbox.state == .on,
             setAsTarget: kind == .collection && targetCheckbox.state == .on,
-            rules: rules
+            rules: rules,
+            description: descriptionField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         )
     }
 

@@ -36,7 +36,12 @@ extension CatalogWindowController {
     }
 
     /// Remove from Publish Service: the selected photos, from the service the grid shows.
+    /// Viewing an album, they're taken out of the album only (RAW-185).
     @objc func removeFromPublishService(_ sender: Any?) {
+        if let albumID = state.filter.scope.publishAlbumID {
+            PublishEditing(store: store).remove(state.selectedPhotoIDs, fromAlbum: albumID)
+            return
+        }
         guard let id = state.filter.scope.publishServiceID else { return }
         PublishEditing(store: store).remove(state.selectedPhotoIDs, from: id)
     }
@@ -194,6 +199,8 @@ extension CatalogWindowController {
         case #selector(addToPublishService(_:)):
             return !state.selectedPhotoIDs.isEmpty
         case #selector(removeFromPublishService(_:)):
+            // A smart album's photos are its rules' to choose.
+            if case .publishAlbum(_, _, .some) = state.filter.scope { return false }
             return state.filter.scope.publishServiceID != nil && !state.selectedPhotoIDs.isEmpty
         default:
             return nil

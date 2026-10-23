@@ -22,14 +22,23 @@ struct PublishGroups {
         var byState: [PublishedPhoto.State: [NSManagedObjectID]] = [:]
         var errors: [NSManagedObjectID: String] = [:]
         for id in photoIDs {
-            guard let photo = try? context.existingObject(with: id) as? Photo, let entry = service.entry(for: photo) else { continue }
+            guard let photo = try? context.existingObject(with: id) as? Photo else { continue }
+            // A smart album's match that hasn't joined the service yet is new to it.
+            guard let entry = service.entry(for: photo) else {
+                byState[.new, default: []].append(id)
+                continue
+            }
             byState[entry.state, default: []].append(id)
             if let error = entry.lastError { errors[id] = error }
         }
         groups = PublishedPhoto.State.allCases.compactMap { state in byState[state].map { Group(state: state, photoIDs: $0) } }
         deletedFromCatalog = service.publishedPhotos.count { $0.photo == nil && $0.publishedDate != nil && !$0.isDeleted }
         self.errors = errors
+        hasAlbumWork = service.hasAlbumWork
     }
+
+    /// Whether the service's albums have changes for Publish to send (RAW-185).
+    let hasAlbumWork: Bool
 
     func count(of state: PublishedPhoto.State) -> Int {
         (groups.first { $0.state == state }?.photoIDs.count ?? 0) + (state == .deleted ? deletedFromCatalog : 0)
@@ -37,6 +46,6 @@ struct PublishGroups {
 
     /// Whether Publish has anything to do.
     var hasWork: Bool {
-        count(of: .new) + count(of: .modified) + count(of: .deleted) > 0
+        count(of: .new) + count(of: .modified) + count(of: .deleted) > 0 || hasAlbumWork
     }
 }

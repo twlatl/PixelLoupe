@@ -229,6 +229,7 @@ final class FilmstripViewController: NSViewController, NSCollectionViewDelegate 
         case .collection(let id, _): "Collection: \(PhotoCollection.with(id: id, in: store.viewContext)?.name ?? "")"
         case .importDifference(let reason): "Lightroom import: \(LightroomImportReport.title(forReason: reason))"
         case .publishService(let id): "Publish Service: \(PublishService.with(id: id, in: store.viewContext)?.displayName ?? "")"
+        case .publishAlbum(let id, _, _): "Album: \(PublishAlbum.with(id: id, in: store.viewContext)?.name ?? "")"
         }
         let filtered = state.filter.isFiltering
         let count = filtered

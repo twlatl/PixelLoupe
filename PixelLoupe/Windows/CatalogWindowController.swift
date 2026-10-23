@@ -1113,6 +1113,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         if let valid = validateFolderItem(item) { return valid }
         if let valid = validateSmartPreviewItem(item) { return valid }
         if let valid = validatePublishItem(item) { return valid }
+        if let valid = validateAlbumItem(item) { return valid }
         switch item.action {
         case #selector(addKeywords(_:)):
             return !state.selectedPhotoIDs.isEmpty
