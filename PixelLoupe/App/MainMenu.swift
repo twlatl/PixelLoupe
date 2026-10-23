@@ -14,6 +14,7 @@ import AppKit
     @objc optional func toggleSecondarySlideshow(_ sender: Any?)
     @objc optional func impromptuSlideshow(_ sender: Any?)
     @objc optional func showContactSheet(_ sender: Any?)
+    @objc optional func showPublishingManager(_ sender: Any?)
     @objc optional func showSecondaryView(_ sender: NSMenuItem)
     @objc optional func importPhotos(_ sender: Any?)
     @objc optional func importLightroomCatalog(_ sender: Any?)
@@ -410,6 +411,7 @@ enum MainMenu {
         // ⌘Return, Lightroom's Impromptu Slideshow.
         menu.addItem(item("Impromptu Slideshow", #selector(PixelLoupeActions.impromptuSlideshow(_:)), "\r"))
         menu.addItem(item("Contact Sheet", #selector(PixelLoupeActions.showContactSheet(_:)), "c", modifiers: [.control, .option, .command]))
+        menu.addItem(item("Publishing Manager…", #selector(PixelLoupeActions.showPublishingManager(_:))))
         menu.addItem(.separator())
         menu.addItem(item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:))))
         return menu

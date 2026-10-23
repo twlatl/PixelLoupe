@@ -408,36 +408,36 @@ struct ExportDialogTests {
         let (dialog, directory) = try dialog()
         _ = directory
         #expect(dialog.window?.title == "Export 2 Files")
-        #expect(dialog.exampleLabel.stringValue == "IMG_0.jpg")
+        #expect(dialog.form.exampleLabel.stringValue == "IMG_0.jpg")
         dialog.choosePreset(named: "For Email")
         #expect(dialog.settings.edge == 500)
-        #expect(dialog.resizeCheckbox.state == .on)
-        #expect(dialog.widthField.stringValue == "500")
-        #expect(dialog.heightField.isHidden, "long edge takes one value")
-        #expect(dialog.resolutionField.stringValue == "72")
+        #expect(dialog.form.resizeCheckbox.state == .on)
+        #expect(dialog.form.widthField.stringValue == "500")
+        #expect(dialog.form.heightField.isHidden, "long edge takes one value")
+        #expect(dialog.form.resolutionField.stringValue == "72")
     }
 
     @Test func controlsFollowTheFormat() throws {
         let (dialog, directory) = try dialog()
         _ = directory
-        #expect(dialog.qualityRow.slider.isEnabled)
-        #expect(!dialog.bitDepthPopUp.isEnabled)
-        dialog.formatPopUp.selectItem(withTitle: "TIFF")
-        dialog.formatPopUp.sendAction(dialog.formatPopUp.action, to: dialog.formatPopUp.target)
+        #expect(dialog.form.qualityRow.slider.isEnabled)
+        #expect(!dialog.form.bitDepthPopUp.isEnabled)
+        dialog.form.formatPopUp.selectItem(withTitle: "TIFF")
+        dialog.form.formatPopUp.sendAction(dialog.form.formatPopUp.action, to: dialog.form.formatPopUp.target)
         #expect(dialog.settings.format == .tiff)
-        #expect(!dialog.qualityRow.slider.isEnabled)
-        #expect(dialog.bitDepthPopUp.isEnabled && dialog.compressionPopUp.isEnabled)
-        #expect(dialog.exampleLabel.stringValue == "IMG_0.tif")
-        dialog.formatPopUp.selectItem(withTitle: "Original")
-        dialog.formatPopUp.sendAction(dialog.formatPopUp.action, to: dialog.formatPopUp.target)
-        #expect(!dialog.resizeCheckbox.isEnabled && !dialog.watermarkCheckbox.isEnabled, "originals are copied as they are")
+        #expect(!dialog.form.qualityRow.slider.isEnabled)
+        #expect(dialog.form.bitDepthPopUp.isEnabled && dialog.form.compressionPopUp.isEnabled)
+        #expect(dialog.form.exampleLabel.stringValue == "IMG_0.tif")
+        dialog.form.formatPopUp.selectItem(withTitle: "Original")
+        dialog.form.formatPopUp.sendAction(dialog.form.formatPopUp.action, to: dialog.form.formatPopUp.target)
+        #expect(!dialog.form.resizeCheckbox.isEnabled && !dialog.form.watermarkCheckbox.isEnabled, "originals are copied as they are")
     }
 
     @Test func addingAndRemovingUserPresets() throws {
         let (dialog, directory) = try dialog()
         _ = directory
-        dialog.formatPopUp.selectItem(withTitle: "PNG")
-        dialog.formatPopUp.sendAction(dialog.formatPopUp.action, to: dialog.formatPopUp.target)
+        dialog.form.formatPopUp.selectItem(withTitle: "PNG")
+        dialog.form.formatPopUp.sendAction(dialog.form.formatPopUp.action, to: dialog.form.formatPopUp.target)
         try dialog.addPreset(named: "Web PNGs")
         #expect(dialog.presets.preset(named: "Web PNGs")?.settings.format == .png)
         #expect(dialog.removePresetButton.isEnabled)
