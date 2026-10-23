@@ -106,11 +106,7 @@ extension CatalogWindowController {
 
     private func run(_ plan: ExportPlan, settings: ExportSettings) {
         guard !plan.entries.isEmpty else { return }
-        let watermark = settings.watermarks && settings.format != .original
-            ? WatermarkPresets.shared.preset(named: settings.watermarkName).map {
-                PhotoExporter.Watermark(settings: $0.settings, imageURL: $0.settings.imageName.map(WatermarkPresets.shared.imageURL(named:)))
-            }
-            : nil
+        let watermark = PhotoExporter.Watermark(settings)
         state.exportStatus = LibraryState.ImportStatus(completed: 0, total: plan.entries.count)
         exportTask = Task { [weak self] in
             let result = await PhotoExporter.run(plan, settings: settings, watermark: watermark) { completed, total in
