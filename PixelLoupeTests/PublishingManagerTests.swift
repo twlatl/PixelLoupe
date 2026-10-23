@@ -164,6 +164,27 @@ struct PublishingManagerTests {
         #expect(controller.model.hasChanges)
     }
 
+    /// A watermark made while the window is open shows up in the menu, and one made from its Edit
+    /// Watermarks… is chosen (it once stayed on Simple Copyright Watermark, which was published instead).
+    @Test func watermarksMadeMeanwhileAppearAndOneMadeFromHereIsChosen() throws {
+        let setup = try Setup()
+        let watermarks = WatermarkPresets(directory: setup.directory.url.appending(path: "Watermarks"))
+        let controller = PublishingManagerWindowController(model: PublishingManagerModel(context: setup.context), watermarks: watermarks)
+        controller.add(.flickr)
+        let form = try #require(controller.form)
+        try watermarks.save(WatermarkPreset(name: "Elsewhere", settings: WatermarkSettings()))
+        #expect(form.watermarkPopUp.itemTitles.contains("Elsewhere"))
+        #expect(controller.model.drafts[0].settings.export.watermarkName == WatermarkPresets.simpleCopyrightName, "not made from here")
+
+        form.beginEditingWatermarks()
+        try watermarks.save(WatermarkPreset(name: "TWL Upper Right Semi Opaque", settings: WatermarkSettings()))
+        let export = controller.model.drafts[0].settings.export
+        #expect(export.watermarks && export.watermarkName == "TWL Upper Right Semi Opaque")
+        #expect(form.watermarkPopUp.titleOfSelectedItem == "TWL Upper Right Semi Opaque")
+        controller.save(nil)
+        #expect(PublishService.all(in: setup.context).first?.settings.export.watermarkName == "TWL Upper Right Semi Opaque")
+    }
+
     @Test func theWindowMenuOpensIt() throws {
         let window = try #require(MainMenu.make().items.first { $0.submenu?.title == "Window" }?.submenu)
         let item = try #require(window.items.first { $0.title == "Publishing Manager…" })
