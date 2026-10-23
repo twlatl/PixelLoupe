@@ -33,6 +33,17 @@ final class PublishingManagerWindowController: NSWindowController, NSWindowDeleg
     private(set) var form: ExportSettingsForm?
     let descriptionField = NSTextField()
     let accountLabel = NSTextField(labelWithString: "")
+    let authorizeButton = NSButton(title: "Authorize", target: nil, action: nil)
+    let changeAccountButton = NSButton(title: "Change Account", target: nil, action: nil)
+    let removeAuthorizationButton = NSButton(title: "Remove Authorization", target: nil, action: nil)
+    /// Signs in to Flickr over the window (`anotherAccount` without flickr.com's cookies). Replaced in tests.
+    lazy var signIn: (NSWindow, _ anotherAccount: Bool) async throws -> FlickrCredentials = { window, anotherAccount in
+        try await FlickrSignIn(window: window).signIn(anotherAccount: anotherAccount)
+    }
+    /// The service signing in, while flickr.com's page is up.
+    private(set) var signingIn: UUID?
+    /// Whether this build can sign in to Flickr (it has an API key). Replaced in tests.
+    var canSignIn = Secrets.hasFlickr
     let titleSourcePopUp = NSPopUpButton()
     let titleUpdatePopUp = NSPopUpButton()
     let publicRadio = NSButton(radioButtonWithTitle: "Public", target: nil, action: nil)
@@ -86,8 +97,12 @@ final class PublishingManagerWindowController: NSWindowController, NSWindowDeleg
     }
 
     private func finish(saving republishing: Set<UUID>) {
-        model.save(republishing: republishing)
-        close()
+        do {
+            try model.save(republishing: republishing)
+            close()
+        } catch {
+            if let window { presentError(error, modalFor: window, delegate: nil, didPresent: nil, contextInfo: nil) }
+        }
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -266,7 +281,7 @@ final class PublishingManagerWindowController: NSWindowController, NSWindowDeleg
         let draft = model.drafts[index]
         let settings = draft.settings
         if descriptionField.currentEditor() == nil { descriptionField.stringValue = draft.name }
-        accountLabel.stringValue = draft.accountName.map { "Authorized as \($0)" } ?? "Not signed in. Signing in to Flickr is coming soon."
+        updateAccount(index)
         titleSourcePopUp.selectItem(at: PublishSettings.TitleSource.allCases.firstIndex(of: settings.titleSource) ?? 0)
         titleUpdatePopUp.selectItem(at: PublishSettings.TitleUpdate.allCases.firstIndex(of: settings.titleUpdate) ?? 0)
         titleUpdatePopUp.isEnabled = settings.titleSource != .none
@@ -297,15 +312,76 @@ final class PublishingManagerWindowController: NSWindowController, NSWindowDeleg
     }
 
     private func accountSection() -> NSView {
-        let buttons = ["Authorize", "Change Account", "Remove Authorization"].map { title in
-            let button = NSButton(title: title, target: nil, action: nil)
-            button.isEnabled = false
-            return button
+        for (button, action) in [(authorizeButton, #selector(authorize(_:))), (changeAccountButton, #selector(changeAccount(_:))),
+                                 (removeAuthorizationButton, #selector(removeAuthorization(_:)))] {
+            button.target = self
+            button.action = action
         }
+        accountLabel.lineBreakMode = .byWordWrapping
+        accountLabel.preferredMaxLayoutWidth = 420
         return FormLayout.grid([
             [NSGridCell.emptyContentView, accountLabel],
-            [NSGridCell.emptyContentView, FormLayout.row(buttons)],
+            [NSGridCell.emptyContentView, FormLayout.row([authorizeButton, changeAccountButton, removeAuthorizationButton])],
         ])
+    }
+
+    private func updateAccount(_ index: Int) {
+        let draft = model.drafts[index]
+        let waiting = signingIn == draft.id
+        let signedIn = draft.accountName != nil
+        accountLabel.stringValue = if waiting {
+            "Waiting for you to sign in on flickr.com…"
+        } else if let account = draft.accountName {
+            "Authorized as \(account)"
+        } else if canSignIn {
+            "Not signed in. Authorize opens flickr.com, where you sign in and allow PixelLoupe to publish."
+        } else {
+            FlickrError.notConfigured.errorDescription ?? ""
+        }
+        authorizeButton.isEnabled = canSignIn && !signedIn && signingIn == nil
+        changeAccountButton.isEnabled = canSignIn && signedIn && signingIn == nil && model.canChangeAccount(at: index)
+        changeAccountButton.toolTip = model.canChangeAccount(at: index) ? nil
+            : "Photos are already published to this account. Add another Flickr service to publish to another account."
+        removeAuthorizationButton.isEnabled = signedIn && signingIn == nil
+    }
+
+    @objc func authorize(_ sender: Any?) {
+        startSignIn(anotherAccount: false)
+    }
+
+    @objc func changeAccount(_ sender: Any?) {
+        startSignIn(anotherAccount: true)
+    }
+
+    @objc func removeAuthorization(_ sender: Any?) {
+        guard let index = selectedIndex else { return }
+        model.signOut(at: index)
+        updateControls()
+        reloadSelectedRow()
+    }
+
+    private func startSignIn(anotherAccount: Bool) {
+        guard let index = selectedIndex, let window, signingIn == nil else { return }
+        let id = model.drafts[index].id
+        signingIn = id
+        updateControls()
+        Task { [weak self] in
+            guard let self else { return }
+            let result: Result<FlickrCredentials, Error>
+            do { result = .success(try await signIn(window, anotherAccount)) } catch { result = .failure(error) }
+            signingIn = nil
+            // The service may have moved, or gone, while the page was up.
+            if let index = model.drafts.firstIndex(where: { $0.id == id }) {
+                switch result {
+                case .success(let account): model.signIn(at: index, account)
+                case .failure(let error) where !(error is CancellationError): presentError(error, modalFor: window, delegate: nil, didPresent: nil, contextInfo: nil)
+                case .failure: break
+                }
+            }
+            serviceList.reloadData()
+            if let index = model.drafts.firstIndex(where: { $0.id == id }) { serviceList.selectRowIndexes([index], byExtendingSelection: false) }
+            updateControls()
+        }
     }
 
     private func titleSection() -> NSView {
