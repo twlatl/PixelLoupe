@@ -102,7 +102,7 @@ nonisolated final class PublishAlbum: NSManagedObject {
         guard kind == .album, let service else { return }
         service.add(photos)
         for photo in photos {
-            service.entry(for: photo).map { $0.albums.insert(self) }
+            if let entry = service.entry(for: photo) { entry.albums.insert(self) }
         }
     }
 
@@ -110,7 +110,7 @@ nonisolated final class PublishAlbum: NSManagedObject {
     func remove(_ photos: [Photo]) {
         guard let service else { return }
         for photo in photos {
-            service.entry(for: photo).map { $0.albums.remove(self) }
+            if let entry = service.entry(for: photo) { entry.albums.remove(self) }
         }
     }
 

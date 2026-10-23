@@ -61,7 +61,7 @@ struct PublishingManagerTests {
         let cell = try #require(controller.serviceList.view(atColumn: 0, row: 0, makeIfNecessary: true))
         #expect(cell.accessibilityLabel() == "Flickr, (not saved)")
         #expect(controller.descriptionField.stringValue == "Flickr")
-        #expect(try PublishService.all(in: setup.context).isEmpty, "nothing is saved yet")
+        #expect(PublishService.all(in: setup.context).isEmpty, "nothing is saved yet")
     }
 
     @Test func eachKindShowsItsSections() throws {
