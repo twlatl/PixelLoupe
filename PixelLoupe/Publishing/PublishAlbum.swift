@@ -4,6 +4,10 @@ import CoreData
 /// Flickr as an album (a photoset) when the service is published. Each photo is uploaded once however many
 /// albums hold it, so taking a photo out of an album leaves it in the photostream.
 ///
+/// Publish only adds and removes the photos this catalog put in the album. Anything else in it on Flickr
+/// (added on flickr.com, or from another catalog) is left alone, and deleting the album here only takes this
+/// catalog's photos out of it.
+///
 /// A smart album holds the photos that match its rules. They join the service at the next Publish, and
 /// leave the album (but not the photostream) once they stop matching.
 @objc(PublishAlbum)
@@ -26,10 +30,11 @@ nonisolated final class PublishAlbum: NSManagedObject {
     /// The album's Flickr ID, once it's on Flickr.
     @NSManaged var remoteID: String?
     /// The name, description and photos (Flickr IDs, comma-separated) last sent, to tell what's changed since.
+    /// The photos are the ones this catalog put in the album: the only ones Publish ever takes out.
     @NSManaged var publishedName: String?
     @NSManaged var publishedDescription: String?
     @NSManaged var publishedPhotoIDs: String?
-    /// Deleted in PixelLoupe, and waiting for the next Publish to delete it on Flickr.
+    /// Deleted in PixelLoupe, and waiting for the next Publish to take this catalog's photos out of it on Flickr.
     @NSManaged var isDeletionPending: Bool
     @NSManaged var service: PublishService?
     /// A regular album's photos (a smart album's come from its rules).
@@ -135,12 +140,18 @@ nonisolated final class PublishAlbum: NSManagedObject {
         .map(\.1)
     }
 
+    /// The Flickr IDs of the photos this catalog last put in the album.
+    var sentPhotoIDs: Set<String> {
+        get { Set((publishedPhotoIDs ?? "").split(separator: ",").map(String.init)) }
+        set { publishedPhotoIDs = newValue.isEmpty ? nil : newValue.sorted().joined(separator: ",") }
+    }
+
     /// Whether the next Publish has something to send for the album.
     var hasChangesToPublish: Bool {
         if isDeletionPending { return remoteID != nil }
         let photoIDs = publishedPhotoIDsToSend()
         guard !photoIDs.isEmpty else { return remoteID != nil }
-        return remoteID == nil || photoIDs.joined(separator: ",") != publishedPhotoIDs
+        return remoteID == nil || Set(photoIDs) != sentPhotoIDs
             || name != publishedName || albumDescription != publishedDescription
     }
 

@@ -46,17 +46,22 @@ nonisolated struct FlickrPublisher: AlbumPublisher {
     }
 
     @concurrent
-    func setAlbumPhotos(_ id: String, photoIDs: [String]) async throws {
-        guard let cover = photoIDs.first else { return }
-        try await api.call("flickr.photosets.editPhotos", ["photoset_id": id, "primary_photo_id": cover, "photo_ids": photoIDs.joined(separator: ",")])
+    func addAlbumPhoto(_ id: String, photoID: String) async throws {
+        do {
+            try await api.call("flickr.photosets.addPhoto", ["photoset_id": id, "photo_id": photoID])
+        } catch FlickrAPI.APIError.failed(code: 3, _) {
+            // Already in the album.
+        }
     }
 
     @concurrent
-    func deleteAlbum(_ id: String) async throws {
+    func removeAlbumPhoto(_ id: String, photoID: String) async throws {
         do {
-            try await api.call("flickr.photosets.delete", ["photoset_id": id])
+            try await api.call("flickr.photosets.removePhoto", ["photoset_id": id, "photo_id": photoID])
         } catch FlickrAPI.APIError.photoNotFound {
-            // Already gone.
+            // The album is gone (code 1).
+        } catch FlickrAPI.APIError.failed(code: 2, _) {
+            // The photo is gone, or isn't in the album.
         }
     }
 

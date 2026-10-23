@@ -4,11 +4,14 @@ import Synchronization
 import Testing
 @testable import PixelLoupe
 
-/// Publishes and makes albums, recording each call ("publish P0", "create Harbour P0", "set A1 P0,P1"…).
+/// Publishes and makes albums, recording each call ("publish P0", "unpublish P0", "create Harbour P0",
+/// "add A1 P1", "remove A1 P0"…).
 /// A photo's ID is its file name without the extension; albums are A1, A2…
 private final class FakeAlbumPublisher: AlbumPublisher {
     let calls = Mutex<[String]>([])
     private let albums = Mutex(0)
+    /// An album deleted on flickr.com: adding to it fails as Flickr's does.
+    let goneAlbum = Mutex<String?>(nil)
 
     var recorded: [String] { calls.withLock { $0 } }
     func clear() { calls.withLock { $0 = [] } }
@@ -20,7 +23,7 @@ private final class FakeAlbumPublisher: AlbumPublisher {
     }
 
     func remove(_ photo: RemotePhoto) async throws {
-        calls.withLock { $0.append("remove \(photo.id)") }
+        calls.withLock { $0.append("unpublish \(photo.id)") }
     }
 
     func createAlbum(title: String, description: String, coverID: String) async throws -> String {
@@ -33,12 +36,13 @@ private final class FakeAlbumPublisher: AlbumPublisher {
         calls.withLock { $0.append("edit \(id) \(title)") }
     }
 
-    func setAlbumPhotos(_ id: String, photoIDs: [String]) async throws {
-        calls.withLock { $0.append("set \(id) \(photoIDs.joined(separator: ","))") }
+    func addAlbumPhoto(_ id: String, photoID: String) async throws {
+        if goneAlbum.withLock({ $0 == id }) { throw FlickrAPI.APIError.photoNotFound }
+        calls.withLock { $0.append("add \(id) \(photoID)") }
     }
 
-    func deleteAlbum(_ id: String) async throws {
-        calls.withLock { $0.append("delete \(id)") }
+    func removeAlbumPhoto(_ id: String, photoID: String) async throws {
+        calls.withLock { $0.append("remove \(id) \(photoID)") }
     }
 }
 
@@ -87,7 +91,7 @@ private struct AlbumLibrary {
     }
 
     /// The album calls of the last Publish (the photos are published two at a time, in no fixed order).
-    var albumCalls: [String] { publisher.recorded.filter { !$0.hasPrefix("publish") && !$0.hasPrefix("remove") } }
+    var albumCalls: [String] { publisher.recorded.filter { !$0.hasPrefix("publish") && !$0.hasPrefix("unpublish") } }
 }
 
 @Suite("Flickr albums")
@@ -103,13 +107,13 @@ struct PublishAlbumTests {
         #expect(album.photos().map(\.fileName) == ["P1.JPG"])
     }
 
-    @Test func publishMakesFillsRenamesAndDeletesAlbums() async throws {
+    @Test func publishOnlyAddsAndRemovesThisCatalogsPhotos() async throws {
         let library = try AlbumLibrary()
         let album = library.album("Harbour", Array(library.photos.prefix(2)))
         #expect(!album.hasChangesToPublish, "its photos aren't on Flickr yet: they're the service's work")
         await library.publish()
         #expect(Set(library.publisher.recorded.filter { $0.hasPrefix("publish") }) == ["publish P0", "publish P1"])
-        #expect(library.albumCalls == ["create Harbour P0", "set A1 P0,P1"])
+        #expect(library.albumCalls == ["create Harbour P0", "add A1 P1"])
         #expect(album.remoteID == "A1" && !album.hasChangesToPublish)
         #expect(!library.service.hasAlbumWork)
 
@@ -119,27 +123,39 @@ struct PublishAlbumTests {
         album.name = "Harbours"
         album.remove([library.photos[0]])
         await library.publish()
-        #expect(library.albumCalls == ["edit A1 Harbours", "set A1 P1"])
+        #expect(library.albumCalls == ["edit A1 Harbours", "remove A1 P0"], "only P0 is taken out; nothing else is touched")
 
         album.delete()
         #expect(album.isDeletionPending, "it's on Flickr, so it waits for Publish")
         #expect(library.service.visibleAlbums.isEmpty)
         await library.publish()
-        #expect(library.albumCalls == ["delete A1"])
+        #expect(library.albumCalls == ["remove A1 P1"], "the album isn't deleted on Flickr: others may have photos in it")
         #expect(library.service.albums.isEmpty)
     }
 
-    @Test func anAlbumLeftEmptyIsDeletedAndMadeAgain() async throws {
+    @Test func anAlbumWithNoneOfOurPhotosLeftIsForgottenAndMadeAgain() async throws {
         let library = try AlbumLibrary()
         let album = library.album("Harbour", [library.photos[0]])
         await library.publish()
         album.remove([library.photos[0]])
         await library.publish()
-        #expect(library.albumCalls == ["delete A1"])
+        #expect(library.albumCalls == ["remove A1 P0"])
         #expect(album.remoteID == nil && !album.isDeleted, "kept, to be made again when it has photos")
         album.add([library.photos[0]])
         await library.publish()
         #expect(library.albumCalls == ["create Harbour P0"], "its only photo is its cover")
+    }
+
+    @Test func anAlbumDeletedOnFlickrIsMadeAgain() async throws {
+        let library = try AlbumLibrary()
+        let album = library.album("Harbour", [library.photos[0]])
+        await library.publish()
+        library.publisher.goneAlbum.withLock { $0 = "A1" }
+        album.add([library.photos[1]])
+        library.store.save()
+        await library.publish()
+        #expect(library.albumCalls == ["create Harbour P0", "add A2 P1"])
+        #expect(album.remoteID == "A2" && album.sentPhotoIDs == ["P0", "P1"])
     }
 
     @Test func aPhotoTakenOutOfTheServiceLeavesItsAlbums() async throws {
@@ -149,8 +165,8 @@ struct PublishAlbumTests {
         library.service.remove([library.photos[1]])
         #expect(album.photos().map(\.fileName) == ["P0.JPG"])
         await library.publish()
-        #expect(library.publisher.recorded.contains("remove P1"))
-        #expect(library.albumCalls == ["set A1 P0"])
+        #expect(library.publisher.recorded.contains("unpublish P1"))
+        #expect(library.albumCalls == ["remove A1 P1"])
     }
 
     @Test func smartAlbumMatchesJoinTheServiceAtPublish() async throws {
@@ -167,13 +183,13 @@ struct PublishAlbumTests {
 
         await library.publish()
         #expect(Set(library.publisher.recorded.filter { $0.hasPrefix("publish") }) == ["publish P2", "publish P3"])
-        #expect(library.albumCalls == ["create Best P2", "set A1 P2,P3"])
+        #expect(library.albumCalls == ["create Best P2", "add A1 P3"])
 
         // P3 stops matching: it leaves the album, not the photostream.
         library.photos[3].rating = 1
         library.store.save()
         await library.publish()
-        #expect(library.albumCalls == ["set A1 P2"])
+        #expect(library.albumCalls == ["remove A1 P3"])
         #expect(library.publisher.recorded.contains("publish P3"), "its rating changed, so it's sent again")
         #expect(library.service.entry(for: library.photos[3]) != nil)
     }

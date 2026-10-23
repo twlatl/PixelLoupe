@@ -52,7 +52,10 @@ enum PublishRun {
     // MARK: - Albums
 
     /// Sends the service's album changes (RAW-185), after its photos so the albums can hold them: creates
-    /// new albums, renames and re-fills changed ones, and deletes deleted ones and those with no photos left.
+    /// new albums, renames changed ones, and adds and removes this catalog's photos. Photos in an album that
+    /// this catalog didn't put there are never touched, so an album can be shared with flickr.com and other
+    /// catalogs. A deleted album, or one with none of this catalog's photos left, only loses this catalog's
+    /// photos; it isn't deleted on Flickr.
     private static func publishAlbums(of service: PublishService, with publisher: any AlbumPublisher, store: CatalogStore,
                                       to result: inout Result) async {
         let context = store.viewContext
@@ -81,9 +84,9 @@ enum PublishRun {
     private static func publish(_ album: PublishAlbum, with publisher: any AlbumPublisher, context: NSManagedObjectContext) async throws {
         let name = album.name
         let description = album.albumDescription
-        let photoIDs = album.publishedPhotoIDsToSend()
-        if album.isDeletionPending || photoIDs.isEmpty {
-            if let id = album.remoteID { try await publisher.deleteAlbum(id) }
+        let photoIDs = album.isDeletionPending ? [] : album.publishedPhotoIDsToSend()
+        if photoIDs.isEmpty {
+            if let id = album.remoteID { try await send(photoIDs, to: id, of: album, with: publisher, context: context) }
             withoutUndo(context) { album.isDeletionPending ? context.delete(album) : album.forgetPublished() }
             return
         }
@@ -97,20 +100,29 @@ enum PublishRun {
             id = try await publisher.createAlbum(title: name, description: description, coverID: photoIDs[0])
             withoutUndo(context) {
                 album.remoteID = id
-                album.publishedName = name
-                album.publishedDescription = description
-                album.publishedPhotoIDs = photoIDs[0]
+                album.sentPhotoIDs = [photoIDs[0]]
             }
         }
-        let joined = photoIDs.joined(separator: ",")
-        if joined != album.publishedPhotoIDs {
-            try await publisher.setAlbumPhotos(id, photoIDs: photoIDs)
-        }
         withoutUndo(context) {
-            album.remoteID = id
             album.publishedName = name
             album.publishedDescription = description
-            album.publishedPhotoIDs = joined
+        }
+        try await send(photoIDs, to: id, of: album, with: publisher, context: context)
+    }
+
+    /// Adds the photos the album should have that this catalog hasn't put in it yet, in capture order, and takes
+    /// out those it put in and shouldn't have any more. What's been sent is recorded photo by photo, so a
+    /// Publish that fails part way carries on from there next time.
+    private static func send(_ photoIDs: [String], to id: String, of album: PublishAlbum, with publisher: any AlbumPublisher,
+                             context: NSManagedObjectContext) async throws {
+        let wanted = Set(photoIDs)
+        for photoID in album.sentPhotoIDs.subtracting(wanted).sorted() {
+            try await publisher.removeAlbumPhoto(id, photoID: photoID)
+            withoutUndo(context) { album.sentPhotoIDs.remove(photoID) }
+        }
+        for photoID in photoIDs where !album.sentPhotoIDs.contains(photoID) {
+            try await publisher.addAlbumPhoto(id, photoID: photoID)
+            withoutUndo(context) { album.sentPhotoIDs.insert(photoID) }
         }
     }
 

@@ -78,7 +78,7 @@ extension CatalogWindowController {
         alert.messageText = "Delete the album “\(album.name)”?"
         alert.informativeText = album.remoteID == nil
             ? "The photos stay in the service and in your catalog."
-            : "It’s deleted on Flickr at the next Publish. Its photos stay on Flickr and in your catalog."
+            : "At the next Publish, the photos this catalog added are taken out of the album on Flickr. The album, anything else in it, and the photos themselves stay on Flickr."
         alert.addButton(withTitle: "Delete").hasDestructiveAction = true
         alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { [weak self] response in

@@ -30,14 +30,17 @@ nonisolated protocol Publisher: Sendable {
 
 /// A publisher whose service has albums (Flickr's, RAW-185). Albums are sent after the photos, with their
 /// photos' IDs on the service.
+///
+/// Photos are added and removed one at a time, never by setting an album's whole list, so photos put in an
+/// album by anyone else (on flickr.com, or from another catalog) are left where they are.
 nonisolated protocol AlbumPublisher: Publisher {
     /// Makes an album holding `coverID`, and returns its ID.
     func createAlbum(title: String, description: String, coverID: String) async throws -> String
     func editAlbum(_ id: String, title: String, description: String) async throws
-    /// Sets the album's photos, in order, with `photoIDs[0]` as its cover.
-    func setAlbumPhotos(_ id: String, photoIDs: [String]) async throws
-    /// Deletes an album, leaving its photos. One that's already gone isn't an error.
-    func deleteAlbum(_ id: String) async throws
+    /// Adds a photo to the end of an album. One that's already there isn't an error.
+    func addAlbumPhoto(_ id: String, photoID: String) async throws
+    /// Takes a photo out of an album. One that's already gone, or an album that's gone, isn't an error.
+    func removeAlbumPhoto(_ id: String, photoID: String) async throws
 }
 
 /// The publisher for a service that can't publish (no API key in this build, or not signed in).
