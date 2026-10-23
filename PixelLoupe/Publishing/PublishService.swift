@@ -43,6 +43,8 @@ nonisolated final class PublishService: NSManagedObject {
     @NSManaged var createdDate: Date
     /// The service's place in the sidebar and the Publishing Manager.
     @NSManaged var sortOrder: Int32
+    /// Its color label in the sidebar (model v19, RAW-184); see `label`.
+    @NSManaged var colorLabel: Int16
     @NSManaged var publishedPhotos: Set<PublishedPhoto>
 
     @nonobjc class func fetchRequest() -> NSFetchRequest<PublishService> {
@@ -52,6 +54,11 @@ nonisolated final class PublishService: NSManagedObject {
     var kind: Kind {
         get { Kind(rawValue: kindValue) ?? .hardDrive }
         set { kindValue = newValue.rawValue }
+    }
+
+    var label: ColorLabel {
+        get { ColorLabel(rawValue: colorLabel) ?? .none }
+        set { colorLabel = newValue.rawValue }
     }
 
     var settings: PublishSettings {
@@ -75,6 +82,18 @@ nonisolated final class PublishService: NSManagedObject {
             // Flickr takes JPEGs (the Publishing Manager doesn't offer anything else).
             settings.export.format = .jpeg
             return FlickrPublisher(api: FlickrAPI(credentials: account), settings: settings, watermark: watermark)
+        }
+    }
+
+    /// Where the service's photos can be seen: its folder, or the Flickr account's photostream. Nil for a
+    /// Flickr service nobody has signed in to.
+    @MainActor
+    func location(credentials: FlickrCredentialStore = KeychainFlickrCredentialStore.shared) -> URL? {
+        switch kind {
+        case .hardDrive:
+            HardDrivePublisher(settings: settings, watermark: nil).folder
+        case .flickr:
+            credentials.credentials(for: id).flatMap { URL(string: "https://www.flickr.com/photos/\($0.userID)/") }
         }
     }
 
@@ -161,6 +180,28 @@ nonisolated final class PublishService: NSManagedObject {
         for entry in publishedPhotos where entry.publishedDate != nil {
             // Earlier than any edit, so each counts as edited since it was published.
             entry.publishedDate = .distantPast
+        }
+    }
+
+    /// Whether any photo has been published, so there's something for Mark to Republish to mark.
+    var hasPublishedPhotos: Bool {
+        publishedPhotos.contains { $0.publishedDate != nil && !$0.isDeleted }
+    }
+
+    /// Reset Export Status: forgets what was published, so every photo is New again. Nothing changes on
+    /// the service itself, and photos waiting to be removed are dropped, since there's no longer a
+    /// published copy to remove.
+    func resetPublishStatus() {
+        for entry in publishedPhotos {
+            if entry.photo == nil || entry.isRemovalPending {
+                managedObjectContext?.delete(entry)
+                continue
+            }
+            entry.publishedDate = nil
+            entry.remoteID = nil
+            entry.remoteURL = nil
+            entry.metadataFingerprint = nil
+            entry.lastError = nil
         }
     }
 

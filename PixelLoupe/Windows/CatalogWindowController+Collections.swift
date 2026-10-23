@@ -126,13 +126,25 @@ extension CatalogWindowController {
     }
 
     /// B: adds the selected photos to the target collection, or removes them if they're all in it.
+    /// The target can be a publish service (RAW-184): B adds the photos to it, or takes them out.
     @objc func addToTargetCollection(_ sender: Any?) {
-        guard let id = store.viewState.targetCollectionID, collectionEditing.collection(id) != nil,
-              !state.selectedPhotoIDs.isEmpty else {
+        guard let id = store.viewState.targetCollectionID, !state.selectedPhotoIDs.isEmpty else {
             NSSound.beep()
             return
         }
-        collectionEditing.toggle(state.selectedPhotoIDs, in: id)
+        if collectionEditing.collection(id) != nil {
+            collectionEditing.toggle(state.selectedPhotoIDs, in: id)
+        } else if PublishService.with(id: id, in: store.viewContext) != nil {
+            PublishEditing(store: store).toggle(state.selectedPhotoIDs, in: id)
+        } else {
+            NSSound.beep()
+        }
+    }
+
+    /// The target collection's name: a collection's, or a publish service's.
+    var targetCollectionName: String? {
+        guard let id = store.viewState.targetCollectionID else { return nil }
+        return collectionEditing.collection(id)?.name ?? PublishService.with(id: id, in: store.viewContext)?.displayName
     }
 
     /// Whether the collection being shown is a regular collection (photos can be removed from it).

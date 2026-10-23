@@ -347,6 +347,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private func publishServiceItems() -> [Item] {
         PublishService.all(in: store.viewContext).map { service in
             let item = Item(kind: .publishService(id: service.id), title: service.displayName)
+            item.isTarget = service.id == store.viewState.targetCollectionID
+            item.label = service.label
             item.count = service.publishedPhotos.count { $0.photo != nil && !$0.isRemovalPending && !$0.isDeleted }
             item.detail = switch service.kind {
             case .hardDrive: (service.settings.export.folderPath as NSString).abbreviatingWithTildeInPath
@@ -356,16 +358,42 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
     }
 
-    /// A publish service's context menu, each item carrying the service's ID.
+    /// A publish service's context menu (Lightroom's, RAW-184), each item carrying the service's ID.
     func publishServiceMenu(id: UUID) -> NSMenu {
         let menu = NSMenu()
-        for (title, action) in [("Publish Now", #selector(PixelLoupeActions.publishNow(_:))),
-                                ("Edit Settings…", #selector(PixelLoupeActions.editPublishService(_:)))] {
+        let service = PublishService.with(id: id, in: store.viewContext)
+        @discardableResult
+        func add(_ title: String, _ action: Selector, to menu: NSMenu = menu, tag: Int = 0) -> NSMenuItem {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
             item.representedObject = id
+            item.tag = tag
             menu.addItem(item)
+            return item
         }
+        let isTarget = store.viewState.targetCollectionID == id
+        add(isTarget ? "Clear Target Collection" : "Set as Target Collection", #selector(PixelLoupeActions.setTargetCollection(_:)))
         menu.addItem(.separator())
+        add("Reset Export Status…", #selector(PixelLoupeActions.resetPublishStatus(_:)))
+        menu.addItem(.separator())
+        add("Auto Stack…", #selector(PixelLoupeActions.autoStackPublishService(_:)))
+        menu.addItem(.separator())
+        let labels = NSMenu(title: "Add Color Label to Service")
+        for label in ColorLabel.allCases {
+            let labelItem = add(label == .none ? "No Label" : label.title, #selector(PixelLoupeActions.setPublishServiceColorLabel(_:)),
+                                to: labels, tag: Int(label.rawValue))
+            labelItem.state = service?.label == label ? .on : .off
+            if label != .none { labelItem.image = Self.swatch(label.color) }
+        }
+        let labelsItem = NSMenuItem(title: "Add Color Label to Service", action: nil, keyEquivalent: "")
+        labelsItem.submenu = labels
+        menu.addItem(labelsItem)
+        menu.addItem(.separator())
+        add("Publish Now", #selector(PixelLoupeActions.publishNow(_:)))
+        add("Mark to Republish", #selector(PixelLoupeActions.markToRepublish(_:)))
+        add(service?.kind == .hardDrive ? "Show in Finder" : "Show in \(service?.kind.title ?? "Flickr")",
+            #selector(PixelLoupeActions.showPublishServiceLocation(_:)))
+        menu.addItem(.separator())
+        add("Edit Settings…", #selector(PixelLoupeActions.editPublishService(_:)))
         menu.addItem(NSMenuItem(title: "Publishing Manager…", action: #selector(PixelLoupeActions.showPublishingManager(_:)), keyEquivalent: ""))
         return menu
     }

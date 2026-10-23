@@ -52,6 +52,59 @@ extension CatalogWindowController {
         return menu
     }
 
+    // MARK: - The service's menu (RAW-184)
+
+    /// Reset Export Status: once confirmed, every photo in the service is New again.
+    @objc func resetPublishStatus(_ sender: Any?) {
+        guard let id = publishServiceID(from: sender), let service = PublishService.with(id: id, in: store.viewContext),
+              let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Reset the export status of “\(service.displayName)”?"
+        alert.informativeText = "Every photo in it will be New, as if it had never been published. Nothing is removed from "
+            + (service.kind == .hardDrive ? "its folder" : service.kind.title)
+            + ", so the next Publish adds another copy of each photo that’s still there."
+        alert.addButton(withTitle: "Reset")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            service.resetPublishStatus()
+            store.viewContext.undoManager?.setActionName("Reset Export Status")
+            store.save()
+        }
+    }
+
+    /// Mark to Republish: every published photo in the service is Modified.
+    @objc func markToRepublish(_ sender: Any?) {
+        guard let id = publishServiceID(from: sender), let service = PublishService.with(id: id, in: store.viewContext) else { return }
+        service.markAllForRepublish()
+        store.viewContext.undoManager?.setActionName("Mark to Republish")
+        store.save()
+    }
+
+    /// Auto Stack… on a service: shows the service, then Auto Stack on its photos (or the selected ones).
+    @objc func autoStackPublishService(_ sender: Any?) {
+        guard let id = publishServiceID(from: sender) else { return }
+        if state.filter.scope.publishServiceID != id {
+            state.filter.scope = .publishService(id: id)
+        }
+        rootViewController.main.inspector.showAutoStack()
+    }
+
+    /// Add Color Label to Service ▸ (a label); the item's tag is the label.
+    @objc func setPublishServiceColorLabel(_ sender: NSMenuItem) {
+        guard let id = publishServiceID(from: sender), let service = PublishService.with(id: id, in: store.viewContext),
+              let label = ColorLabel(rawValue: Int16(sender.tag)), service.label != label else { return }
+        service.label = label
+        store.viewContext.undoManager?.setActionName("Service Color Label")
+        store.save()
+    }
+
+    /// Show in Flickr (the account's photostream), or Show in Finder (a Hard Drive service's folder).
+    @objc func showPublishServiceLocation(_ sender: Any?) {
+        guard let id = publishServiceID(from: sender) else { return }
+        PublishService.with(id: id, in: store.viewContext)?.location().map { _ = NSWorkspace.shared.open($0) }
+    }
+
     // MARK: - Publish
 
     /// Publishes a service: its new and modified photos, and (once confirmed) removes its deleted ones.
@@ -120,6 +173,20 @@ extension CatalogWindowController {
                   let service = PublishService.with(id: id, in: store.viewContext) else { return false }
             return PublishGroups(service: service, photoIDs: service.publishedPhotos.compactMap { $0.photo?.objectID },
                                  context: store.viewContext).hasWork
+        case #selector(resetPublishStatus(_:)):
+            guard publishTask == nil, window?.attachedSheet == nil, let id = publishServiceID(from: item),
+                  let service = PublishService.with(id: id, in: store.viewContext) else { return false }
+            return !service.publishedPhotos.isEmpty
+        case #selector(markToRepublish(_:)):
+            guard publishTask == nil, let id = publishServiceID(from: item) else { return false }
+            return PublishService.with(id: id, in: store.viewContext)?.hasPublishedPhotos ?? false
+        case #selector(autoStackPublishService(_:)):
+            return publishServiceID(from: item) != nil && window?.attachedSheet == nil
+        case #selector(setPublishServiceColorLabel(_:)):
+            return publishServiceID(from: item) != nil
+        case #selector(showPublishServiceLocation(_:)):
+            guard let id = publishServiceID(from: item) else { return false }
+            return PublishService.with(id: id, in: store.viewContext)?.location() != nil
         case #selector(cancelPublish(_:)):
             return publishTask != nil
         case #selector(editPublishService(_:)):

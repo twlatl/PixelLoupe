@@ -122,8 +122,118 @@ struct PublishLibraryTests {
         let row = try #require(items.first { $0.publishServiceID == library.service.id })
         #expect(row.count == 3, "the removed photo waits to go, and isn't counted")
         #expect(row.scope == .publishService(id: library.service.id))
+    }
+
+    // MARK: - The service's menu (RAW-184)
+
+    @Test func theServiceMenuIsLightrooms() throws {
+        let library = try PublishLibrary()
+        let controller = window(library)
+        defer { controller.close() }
         let menu = controller.rootViewController.main.sidebar.publishServiceMenu(id: library.service.id)
-        #expect(menu.items.map(\.title).prefix(2) == ["Publish Now", "Edit Settings…"])
+        #expect(menu.items.map { $0.isSeparatorItem ? "-" : $0.title } == [
+            "Set as Target Collection", "-", "Reset Export Status…", "-", "Auto Stack…", "-", "Add Color Label to Service", "-",
+            "Publish Now", "Mark to Republish", "Show in Finder", "-", "Edit Settings…", "Publishing Manager…",
+        ])
+        for item in menu.items where item.action != nil && !item.hasSubmenu && item.title != "Publishing Manager…" {
+            #expect(item.representedObject as? UUID == library.service.id, "\(item.title)")
+        }
+        for item in menu.items where item.action != nil && !item.hasSubmenu && item.title != "Publishing Manager…" {
+            #expect(controller.validateUserInterfaceItem(item), "\(item.title)")
+        }
+
+        let flickr = PublishService.make(.flickr, in: library.context)
+        library.store.save()
+        let flickrMenu = controller.rootViewController.main.sidebar.publishServiceMenu(id: flickr.id)
+        let show = try #require(flickrMenu.items.first { $0.title == "Show in Flickr" })
+        #expect(!controller.validateUserInterfaceItem(show), "nobody has signed in")
+        let republish = try #require(flickrMenu.items.first { $0.title == "Mark to Republish" })
+        #expect(!controller.validateUserInterfaceItem(republish), "nothing has been published")
+        let reset = try #require(flickrMenu.items.first { $0.title == "Reset Export Status…" })
+        #expect(!controller.validateUserInterfaceItem(reset), "it has no photos")
+    }
+
+    @Test func aServiceCanBeTheTargetCollection() throws {
+        let library = try PublishLibrary()
+        let controller = window(library)
+        defer { controller.close() }
+        let sidebar = controller.rootViewController.main.sidebar
+        let set = try #require(sidebar.publishServiceMenu(id: library.service.id).items.first)
+        controller.setTargetCollection(set)
+        #expect(library.store.viewState.targetCollectionID == library.service.id)
+        #expect(sidebar.publishServiceMenu(id: library.service.id).items.first?.title == "Clear Target Collection")
+        let outline = try #require(controller.window!.contentView!.descendants.compactMap { $0 as? NSOutlineView }.first)
+        let row = (0..<outline.numberOfRows).compactMap { outline.item(atRow: $0) as? SidebarViewController.Item }
+            .first { $0.publishServiceID == library.service.id }
+        #expect(row?.isTarget == true)
+
+        let item = NSMenuItem(title: "", action: #selector(PixelLoupeActions.addToTargetCollection(_:)), keyEquivalent: "")
+        controller.state.selectedPhotoIDs = library.ids("Elsewhere.jpg")
+        #expect(controller.validateUserInterfaceItem(item))
+        #expect(item.title == "Add to Target Collection (Backup)")
+        controller.addToTargetCollection(nil)
+        #expect(library.service.entry(for: library.photos["Elsewhere.jpg"]!)?.state == .new)
+        controller.addToTargetCollection(nil)
+        #expect(library.service.entry(for: library.photos["Elsewhere.jpg"]!) == nil, "B again takes it out")
+    }
+
+    @Test func resetExportStatusMakesEveryPhotoNewAndUndoes() throws {
+        let library = try PublishLibrary()
+        let undo = try #require(library.context.undoManager)
+        undo.removeAllActions()
+        library.service.resetPublishStatus()
+        undo.setActionName("Reset Export Status")
+        library.store.save()
+        let entries = library.service.publishedPhotos
+        #expect(entries.count == 3, "the photo waiting to be removed is dropped")
+        #expect(entries.allSatisfy { $0.state == .new && $0.remoteID == nil && $0.lastError == nil })
+        undo.undo()
+        #expect(library.service.entry(for: library.photos["Published.jpg"]!)?.state == .published)
+        #expect(library.service.entry(for: library.photos["Removed.jpg"]!)?.state == .deleted)
+    }
+
+    @Test func markToRepublishMakesPublishedPhotosModified() throws {
+        let library = try PublishLibrary()
+        let controller = window(library)
+        defer { controller.close() }
+        let item = try #require(controller.rootViewController.main.sidebar.publishServiceMenu(id: library.service.id).items
+            .first { $0.title == "Mark to Republish" })
+        library.context.undoManager?.removeAllActions()
+        controller.markToRepublish(item)
+        #expect(library.service.entry(for: library.photos["Published.jpg"]!)?.state == .modified)
+        #expect(library.service.entry(for: library.photos["New.jpg"]!)?.state == .new)
+        #expect(library.context.undoManager?.undoActionName == "Mark to Republish")
+        library.context.undoManager?.undo()
+        #expect(library.service.entry(for: library.photos["Published.jpg"]!)?.state == .published)
+    }
+
+    @Test func aServiceTakesAColorLabel() async throws {
+        let library = try PublishLibrary()
+        let controller = window(library)
+        defer { controller.close() }
+        let sidebar = controller.rootViewController.main.sidebar
+        let labels = try #require(sidebar.publishServiceMenu(id: library.service.id).items.first { $0.title == "Add Color Label to Service" }?.submenu)
+        #expect(labels.items.first?.state == .on, "No Label")
+        let red = try #require(labels.items.first { $0.title == ColorLabel.red.title })
+        controller.setPublishServiceColorLabel(red)
+        #expect(library.service.label == .red)
+        try await Task.sleep(for: .seconds(SidebarViewController.reloadDelay + 0.5))
+        let outline = try #require(controller.window!.contentView!.descendants.compactMap { $0 as? NSOutlineView }.first)
+        let row = (0..<outline.numberOfRows).compactMap { outline.item(atRow: $0) as? SidebarViewController.Item }
+            .first { $0.publishServiceID == library.service.id }
+        #expect(row?.label == .red)
+        let again = sidebar.publishServiceMenu(id: library.service.id).items.first { $0.title == "Add Color Label to Service" }?.submenu
+        #expect(again?.items.first { $0.title == ColorLabel.red.title }?.state == .on)
+    }
+
+    @Test func autoStackWorksOnTheServicesPhotos() throws {
+        let library = try PublishLibrary()
+        let controller = window(library)
+        defer { controller.close() }
+        controller.state.filter.scope = .publishService(id: library.service.id)
+        let photos = controller.rootViewController.main.inspector.autoStackPhotos()
+        #expect(photos.photos.map(\.fileName) == ["New.jpg", "Modified.jpg", "Published.jpg", "Removed.jpg"])
+        #expect(!photos.isSelection)
     }
 
     @Test func theGridShowsTheServicesGroupsAndTheyCollapse() throws {

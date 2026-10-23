@@ -1125,8 +1125,8 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         case #selector(addToTargetCollection(_:)):
             // Shown with B in the menu; disabled while typing so the key reaches the text field.
             let typing = (window?.firstResponder as? NSText)?.isEditable ?? false
-            let target = store.viewState.targetCollectionID.flatMap { collectionEditing.collection($0) }
-            (item as? NSMenuItem)?.title = target.map { "Add to Target Collection (\($0.name))" } ?? "Add to Target Collection"
+            let target = targetCollectionName
+            (item as? NSMenuItem)?.title = target.map { "Add to Target Collection (\($0))" } ?? "Add to Target Collection"
             return !typing && target != nil && !state.selectedPhotoIDs.isEmpty
         case #selector(removeFromCollection(_:)):
             return isShowingCollection && !state.selectedPhotoIDs.isEmpty
