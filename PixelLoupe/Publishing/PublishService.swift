@@ -15,6 +15,14 @@ nonisolated final class PublishService: NSManagedObject {
             }
         }
 
+        /// The service's icon (an SF Symbol).
+        var symbolName: String {
+            switch self {
+            case .hardDrive: "externaldrive"
+            case .flickr: "globe"
+            }
+        }
+
         /// How many photos are published at once: Flickr throttles busy API keys.
         var concurrency: Int {
             switch self {
@@ -133,6 +141,15 @@ nonisolated final class PublishService: NSManagedObject {
     func pruneUnpublishedOrphans() {
         for entry in publishedPhotos where entry.photo == nil && entry.publishedDate == nil {
             managedObjectContext?.delete(entry)
+        }
+    }
+
+    /// Marks every published photo Modified, so the next Publish sends them all again: after settings
+    /// that change how they're rendered, named or titled.
+    func markAllForRepublish() {
+        for entry in publishedPhotos where entry.publishedDate != nil {
+            // Earlier than any edit, so each counts as edited since it was published.
+            entry.publishedDate = .distantPast
         }
     }
 

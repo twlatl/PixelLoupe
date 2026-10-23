@@ -159,6 +159,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         slideshowController?.stop()
         secondarySlideshowController?.stop()
         for controller in contactSheetControllers { controller.close() }
+        publishingManager?.close()
         // Closed quietly, so it reopens with the next catalog.
         secondaryWindowController?.closeQuietly()
         secondaryWindowController = nil
@@ -596,6 +597,8 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
     var exportTask: Task<Void, Never>?
     var lightroomReportController: LightroomImportReportWindowController?
     var lastExportDialog: ExportDialogController?
+    /// Window ▸ Publishing Manager…, while it's open.
+    var publishingManager: PublishingManagerWindowController?
     /// Photo ▸ Photo Merge's merge (HDR or Panorama), running in the background.
     var mergeTask: Task<Void, Never>?
     var mergeSheet: NSWindowController?

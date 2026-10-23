@@ -40,5 +40,8 @@ The state is **derived**, not stored:
 - Modified and Published can't be told apart in a fetch predicate. The Library computes them in memory
   for the selected service's entries (RAW-179). That's fine for a service's hundreds or thousands of
   photos, but it isn't a predicate over the whole catalog.
-- Changing a service's settings doesn't mark its photos Modified. Lightroom asks whether to re-publish
-  everything when settings change; that belongs with the Publishing Manager (RAW-178).
+- Changing a service's settings doesn't mark its photos Modified by itself. When you save settings that
+  change how photos are rendered, named or titled, the Publishing Manager (RAW-178) asks whether to
+  Re-Publish All, as Lightroom does. Re-Publish All sets each published date to `distantPast`, so every
+  photo counts as edited since it was published. Privacy and safety changes don't ask: they only apply
+  to photos published from then on.
