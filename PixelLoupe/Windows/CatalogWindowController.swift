@@ -57,11 +57,14 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         window.isReleasedWhenClosed = false
         super.init(window: window)
 
+        // The delegate first: setting the window up (its content, size and saved frame) asks it for its undo
+        // manager, and with no delegate to ask, the window makes and keeps its own, so ⌘Z never reached the
+        // catalog's edits.
+        window.delegate = self
         window.contentViewController = rootViewController
         window.setContentSize(NSSize(width: 1400, height: 900))
         window.center()
         window.setFrameAutosaveName("CatalogWindow")
-        window.delegate = self
         window.registerForDraggedTypes([.fileURL])
 
         let toolbar = NSToolbar(identifier: "CatalogToolbar")
@@ -245,7 +248,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
 
     /// Single-key shortcuts (G, D, 0–5, P/X/U, Return, F, Escape, ← →) for the catalog window and its
     /// full-screen view. Keys typed into text fields, sheets and alerts are left alone.
-    private func handleKeyDown(_ event: NSEvent) -> Bool {
+    func handleKeyDown(_ event: NSEvent) -> Bool {
         guard let eventWindow = event.window,
               eventWindow === window || eventWindow === fullScreenController?.window
                 || eventWindow === secondaryWindowController?.window,
@@ -256,6 +259,9 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         if eventWindow === secondaryWindowController?.window, let secondary = secondaryWindowController {
             return performInSecondaryWindow(command, secondary)
         }
+        // While the brush is active, Space is its hand, not Toggle Zoom. This monitor can see the key before
+        // Develop's, so it hands it over rather than swallowing it (Develop's sees the key coming up).
+        if state.mode == .develop, rootViewController.main.develop.handleHandKey(event) { return true }
         return perform(command)
     }
 

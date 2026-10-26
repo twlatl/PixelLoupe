@@ -16,7 +16,9 @@ final class AdjustmentSectionView: NSView {
     private let toggleButton = NSButton()
     private let separator = NSBox()
 
-    private var expandedKey: String { "AdjustSectionExpanded.\(title)" }
+    /// Set apart from the photo's sections (a mask's are "Mask."), so each remembers its own.
+    private let scope: String
+    private var expandedKey: String { "AdjustSectionExpanded.\(scope)\(title)" }
 
     private(set) var isExpanded: Bool {
         get {
@@ -28,13 +30,14 @@ final class AdjustmentSectionView: NSView {
         }
     }
 
-    init(title: String, symbolName: String, hasAuto: Bool = false, expandedByDefault: Bool = false) {
+    init(title: String, symbolName: String, hasAuto: Bool = false, expandedByDefault: Bool = false, scope: String = "") {
         self.title = title
+        self.scope = scope
         super.init(frame: .zero)
         if Defaults.store.object(forKey: expandedKey) == nil {
             Defaults.store.set(expandedByDefault, forKey: expandedKey)
         }
-        setAccessibilityIdentifier("adjustSection.\(title)")
+        setAccessibilityIdentifier("adjustSection.\(scope)\(title)")
 
         disclosureButton.bezelStyle = .disclosure
         disclosureButton.setButtonType(.pushOnPushOff)

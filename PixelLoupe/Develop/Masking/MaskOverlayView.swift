@@ -3,7 +3,9 @@ import AppKit
 /// The selected mask's shapes drawn over the Develop preview, with handles to drag: a linear
 /// gradient's zero and full lines (and the band between), a radial gradient's edge, feather and
 /// rotation handle. On a brush mask, dragging paints (⌥-dragging erases) and the pointer shows the brush; on a
-/// Subject or Background mask, the brush refines it (adds, or with ⌥ takes away).
+/// Subject or Background mask, the brush refines it (adds, or with ⌥ takes away). While the brush is active,
+/// swiping up or down with two fingers sizes it (with ⇧, softens it), and holding Space turns the pointer into a
+/// hand that moves a zoomed photo around.
 final class MaskOverlayView: NSView {
     /// The photo's frame in view points.
     var frameRect = CGRect.zero { didSet { needsDisplay = true } }
@@ -12,6 +14,24 @@ final class MaskOverlayView: NSView {
     var onChange: ((_ adjustment: PhotoAdjustments.LocalAdjustment, _ isFinal: Bool, _ actionName: String) -> Void)?
     /// What the next brush stroke is painted with.
     var brush = MaskGeometry.BrushSettings() { didSet { needsDisplay = true } }
+    /// The brush was sized or softened with a swipe.
+    var onBrushChange: ((MaskGeometry.BrushSettings) -> Void)?
+    /// A drag with Space held, in points, to move the zoomed photo.
+    var onPan: ((CGVector) -> Void)?
+    /// Space is held while the brush is active: the pointer is a hand, and dragging pans instead of painting.
+    var isHandHeld = false {
+        didSet {
+            guard isHandHeld != oldValue else { return }
+            // Where the pointer is now: it may not have moved since the brush became active.
+            if let window { pointer = convert(window.mouseLocationOutsideOfEventStream, from: nil) }
+            if paints, let pointer, bounds.contains(pointer), !isHidden {
+                (isHandHeld ? NSCursor.openHand : NSCursor.crosshair).set()
+            }
+            needsDisplay = true
+        }
+    }
+    /// Whether Space is still down (it can be let go in another window, out of sight of the key handler).
+    var isSpaceDown: () -> Bool = { CGEventSource.keyState(.combinedSessionState, key: 49) }
     /// A click on empty space (to pick another mask or clear the selection).
     var onClickEmpty: (() -> Void)?
 
@@ -21,6 +41,8 @@ final class MaskOverlayView: NSView {
         case brush(component: Int)
         /// Refining a Subject or Background mask; `last` is the stroke's last point.
         case refine(last: PhotoAdjustments.UnitPoint, isErasing: Bool)
+        /// Moving the photo with Space held; `last` is the pointer's last place in view points.
+        case hand(last: CGPoint)
     }
 
     private var drag: Drag?
@@ -73,7 +95,7 @@ final class MaskOverlayView: NSView {
                 }
             }
         }
-        if paints, let pointer, frameRect.contains(pointer) { drawBrush(at: pointer) }
+        if paints, !isHandHeld, let pointer, frameRect.contains(pointer) { drawBrush(at: pointer) }
         NSGraphicsContext.restoreGraphicsState()
     }
 
@@ -161,7 +183,7 @@ final class MaskOverlayView: NSView {
     }
 
     override func cursorUpdate(with event: NSEvent) {
-        if paints { NSCursor.crosshair.set() } else { super.cursorUpdate(with: event) }
+        if paints { (isHandHeld ? NSCursor.openHand : NSCursor.crosshair).set() } else { super.cursorUpdate(with: event) }
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -174,9 +196,31 @@ final class MaskOverlayView: NSView {
         needsDisplay = true
     }
 
+    /// Two fingers up or down: a larger or smaller brush; with ⇧, softer or harder.
+    override func scrollWheel(with event: NSEvent) {
+        guard paints else { super.scrollWheel(with: event); return }
+        let shift = event.modifierFlags.contains(.shift)
+        var vertical = Double(event.scrollingDeltaY)
+        // A mouse wheel turned with ⇧ scrolls sideways.
+        if shift, vertical == 0 { vertical = Double(event.scrollingDeltaX) }
+        // Lines from a wheel, points from a trackpad.
+        if !event.hasPreciseScrollingDeltas { vertical *= 8 }
+        // Fingers moving up, whichever way the system scrolls.
+        let up = event.isDirectionInvertedFromDevice ? -vertical : vertical
+        guard up != 0 else { return }
+        brush.scroll(by: up, feather: shift)
+        onBrushChange?(brush)
+    }
+
     // MARK: - Mouse
 
     override func mouseDown(with event: NSEvent) {
+        if isHandHeld, !isSpaceDown() { isHandHeld = false }
+        if isHandHeld, paints {
+            drag = .hand(last: convert(event.locationInWindow, from: nil))
+            NSCursor.closedHand.set()
+            return
+        }
         let point = framePoint(convert(event.locationInWindow, from: nil))
         guard var adjustment else { onClickEmpty?(); return }
         if adjustment.usesSubject {
@@ -221,11 +265,23 @@ final class MaskOverlayView: NSView {
         update(with: event, isFinal: false)
     }
     override func mouseUp(with event: NSEvent) {
+        if case .hand = drag {
+            update(with: event, isFinal: true)
+            drag = nil
+            (isHandHeld ? NSCursor.openHand : NSCursor.crosshair).set()
+            return
+        }
         update(with: event, isFinal: true)
         drag = nil
     }
 
     private func update(with event: NSEvent, isFinal: Bool) {
+        if case .hand(let last) = drag {
+            let point = convert(event.locationInWindow, from: nil)
+            onPan?(CGVector(dx: point.x - last.x, dy: point.y - last.y))
+            drag = .hand(last: point)
+            return
+        }
         guard var adjustment, let drag else { return }
         let point = framePoint(convert(event.locationInWindow, from: nil))
         switch drag {
@@ -247,6 +303,8 @@ final class MaskOverlayView: NSView {
             adjustment.components[component].shape = .brush(brush)
             self.adjustment = adjustment
             onChange?(adjustment, isFinal, strokeActionName(brush))
+            return
+        case .hand:
             return
         case .refine(let last, let isErasing):
             let next = MaskGeometry.unitPoint(point, frame: frameRect.size)

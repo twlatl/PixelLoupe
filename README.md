@@ -122,6 +122,8 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `0`–`5` | Set rating; Photo ▸ Set Rating and the grid's right-click menu show the keys (a pill over the photos confirms each rating, flag and label applied: "Rating ★★★", "Flag Rejected", "Label ●") |
 | `[` / `]` | Decrease / increase rating (each photo one star down or up); with a brush mask selected in Masking, a smaller / larger brush |
 | `⇧[` / `⇧]` | With a brush mask selected in Masking: a harder / softer brush (Feather) |
+| Two-finger swipe up / down (or scroll wheel) | While the brush is active in Masking (a brush, Subject or Background mask): a larger / smaller brush; with `⇧` held, softer / harder |
+| `Space` (held) | While the brush is active in Masking: the pointer becomes a hand, and dragging moves the zoomed photo around (instead of Toggle Zoom) |
 | `M` / `⇧M` / `K` | Develop Masking: add a linear gradient / radial gradient / brush mask (`O` shows the selected mask in red) |
 | `P` / `U` / `X` | Flagged / Unflagged / Rejected |
 | `6` / `7` / `8` / `9` | Color label red / yellow / green / blue; press the same key again to clear it (purple has no key, as in Lightroom: Photo ▸ Set Color Label) |
@@ -578,8 +580,13 @@ are also in the View menu). On the photo, drag a linear gradient's lines (or its
 or a radial gradient's handles (edge, feather ring, center, and the outer handle to turn it). On a brush mask, drag to paint and
 ⌥-drag to erase; the pointer shows the brush's edge and where its feather starts. The brush's Size (a share of the photo's long
 edge), Feather, Flow (how much each pass adds) and Density (the most a stroke reaches) apply to the next stroke, and `[` `]` and
-`⇧[` `⇧]` change its size and feather. Each mask has its type and an Invert switch at the top, then Amount, Exposure,
-Contrast, Highlights, Shadows, Whites, Blacks, Temp, Tint, Saturation, Clarity, Texture and Dehaze sliders, and the red ⊗ button
+`⇧[` `⇧]` change its size and feather, as does swiping up or down with two fingers over the photo (with `⇧` for the feather);
+holding Space turns the pointer into a hand to move a zoomed photo around. Each mask has its type and an Invert switch at the top, then Amount, then the Develop
+panel's own sections for the masked area: White Balance (Temp and Tint, warmer or cooler than the photo), Light, Presence,
+Color Grading, Black & White, Curves, Levels, Definition, Color Mixer, Noise Reduction, Sharpen and Effects (grain), each with its switch
+and reset as in the Adjust panel; they render just as the photo's do. Light starts open, and which sections are open is
+remembered for masks apart from the Adjust panel. Masks from before these sections open with their sliders in Light and
+Presence. the red ⊗ button
 at the end of its row in the mask list deletes it; all of it is undoable, one step per brush stroke. Masks are stored as shapes and
 brush strokes, not bitmaps, in the photo's coordinates before cropping, so they stay on the subject if the crop changes and are as
 sharp in an export as on screen. Delete All Empty Masks also removes brushes that were never painted. **Subject** and

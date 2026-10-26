@@ -215,6 +215,80 @@ struct BrushMaskTests {
         #expect(steps.last?.1 == true && steps.last?.2 == "Erase")
     }
 
+    @Test("A swipe sizes the brush up or down, or with ⇧ softens or hardens it, within its ranges")
+    func scrollSettings() {
+        var brush = MaskGeometry.BrushSettings()
+        brush.scroll(by: 20, feather: false)
+        #expect(brush.size > 0.04 && brush.feather == 0.5)
+        brush.scroll(by: -40, feather: false)
+        #expect(brush.size < 0.04)
+        brush.scroll(by: -10_000, feather: false)
+        #expect(brush.size == MaskGeometry.BrushSettings.sizeRange.lowerBound)
+        brush.scroll(by: 50, feather: true)
+        #expect(abs(brush.feather - 0.7) < 1e-9)
+        brush.scroll(by: 1_000, feather: true)
+        #expect(brush.feather == 1)
+    }
+
+    @MainActor
+    @Test("Over the photo with the brush active, two fingers size the brush and ⇧ softens it; Space held pans instead of painting")
+    func overlayGestures() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 220), styleMask: [.borderless], backing: .buffered, defer: false)
+        let overlay = MaskOverlayView(frame: NSRect(x: 0, y: 0, width: 420, height: 220))
+        window.contentView?.addSubview(overlay)
+        overlay.frameRect = CGRect(x: 10, y: 10, width: 400, height: 200)
+        overlay.adjustment = brushMask([])
+        var reported: MaskGeometry.BrushSettings?
+        overlay.onBrushChange = { reported = $0 }
+
+        func scroll(_ pixels: Int32, shift: Bool = false) throws -> NSEvent {
+            let cg = try #require(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: pixels, wheel2: 0, wheel3: 0))
+            if shift { cg.flags = .maskShift }
+            return try #require(NSEvent(cgEvent: cg))
+        }
+        let up = try scroll(20)
+        // Fingers moving up, whichever way the system scrolls.
+        let grows = (up.isDirectionInvertedFromDevice ? -up.scrollingDeltaY : up.scrollingDeltaY) > 0
+        overlay.scrollWheel(with: up)
+        #expect(grows ? overlay.brush.size > 0.04 : overlay.brush.size < 0.04)
+        #expect(reported == overlay.brush)
+        let size = overlay.brush.size
+        overlay.scrollWheel(with: try scroll(20, shift: true))
+        #expect(overlay.brush.size == size && overlay.brush.feather != 0.5, "⇧ changes the feather")
+
+        // Not on a gradient: the swipe isn't the brush's.
+        var radial = PhotoAdjustments.LocalAdjustment()
+        radial.components = [.init(shape: .radial(MaskGeometry.defaultRadial()))]
+        overlay.adjustment = radial
+        let before = overlay.brush
+        overlay.scrollWheel(with: try scroll(20))
+        #expect(overlay.brush == before)
+
+        // Space held: a drag moves the photo and paints nothing.
+        overlay.adjustment = brushMask([])
+        var spaceDown = true
+        overlay.isSpaceDown = { spaceDown }
+        overlay.isHandHeld = true
+        var panned: [CGVector] = []
+        overlay.onPan = { panned.append($0) }
+        var painted = false
+        overlay.onChange = { _, _, _ in painted = true }
+        func event(_ type: NSEvent.EventType, _ x: Double) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: NSPoint(x: x, y: 110), modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                               context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+        }
+        overlay.mouseDown(with: event(.leftMouseDown, 100))
+        overlay.mouseDragged(with: event(.leftMouseDragged, 130))
+        overlay.mouseUp(with: event(.leftMouseUp, 140))
+        #expect(panned.map(\.dx) == [30, 10] && !painted)
+
+        // Space let go somewhere the key handler didn't see: the next drag paints.
+        spaceDown = false
+        overlay.mouseDown(with: event(.leftMouseDown, 100))
+        overlay.mouseUp(with: event(.leftMouseUp, 100))
+        #expect(!overlay.isHandHeld && painted)
+    }
+
     // MARK: Panel and keys
 
     @MainActor
@@ -274,5 +348,64 @@ struct BrushMaskTests {
     private func subview<View: NSView>(_ identifier: String, of type: View.Type, in view: NSView) -> View? {
         if let view = view as? View, view.accessibilityIdentifier() == identifier { return view }
         return view.subviews.lazy.compactMap { self.subview(identifier, of: type, in: $0) }.first
+    }
+}
+
+@MainActor
+@Suite("Brush hand key (RAW-189)", .serialized)
+struct BrushHandKeyTests {
+    @Test("Space held in the window, with a brush mask selected in Masking, gives the brush its hand; letting go ends it")
+    func spaceHoldsTheHand() async throws {
+        let directory = try TemporaryDirectory()
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "C.pixelloupe"))
+        let photo = Photo(context: store.viewContext)
+        photo.id = UUID()
+        photo.fileName = "IMG.jpg"
+        let url = directory.url.appending(path: photo.fileName)
+        try Fixtures.writeJPEG(to: url, width: 600, height: 400)
+        photo.filePath = url.path(percentEncoded: false)
+        photo.fileType = "JPG"
+        photo.pixelWidth = 600
+        photo.pixelHeight = 400
+        photo.orientation = 1
+        photo.captureDate = Date()
+        photo.importDate = Date()
+        photo.editDate = Date()
+        var adjustments = PhotoAdjustments()
+        var brush = PhotoAdjustments.LocalAdjustment()
+        brush.components = [.init(shape: .brush(.init()))]
+        brush.settings.exposure = -0.5
+        adjustments.masks = [brush]
+        photo.adjustments = adjustments
+        try store.viewContext.save()
+
+        let controller = CatalogWindowController(store: store)
+        controller.showWindow(nil)
+        defer { controller.close() }
+        let window = try #require(controller.window)
+        controller.state.selectedPhotoIDs = [try #require(controller.state.photoOrder.first)]
+        controller.state.mode = .develop
+        controller.state.developTool = .mask
+        let develop = controller.rootViewController.main.develop
+        let start = Date()
+        while !develop.isBrushing, Date().timeIntervalSince(start) < 30 { try await Task.sleep(for: .milliseconds(50)) }
+        #expect(develop.isBrushing)
+
+        func space(_ type: NSEvent.EventType) -> NSEvent {
+            NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                             characters: " ", charactersIgnoringModifiers: " ", isARepeat: false, keyCode: 49)!
+        }
+        let zoomed = controller.state.zoom.isZoomed
+        #expect(controller.handleKeyDown(space(.keyDown)), "the window takes Space")
+        #expect(develop.isBrushHandHeld, "and gives the brush its hand")
+        #expect(controller.state.zoom.isZoomed == zoomed, "not Toggle Zoom")
+        // Key repeats while held keep it; letting go (seen by Develop's own key handler) ends it.
+        #expect(controller.handleKeyDown(space(.keyDown)) && develop.isBrushHandHeld)
+        #expect(develop.handleHandKey(space(.keyUp)))
+        #expect(!develop.isBrushHandHeld)
+
+        // Without a brush, Space is Toggle Zoom again.
+        controller.state.developTool = .adjust
+        #expect(!develop.handleHandKey(space(.keyDown)))
     }
 }

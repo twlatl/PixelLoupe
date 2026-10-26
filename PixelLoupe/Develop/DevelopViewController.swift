@@ -916,6 +916,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         maskPanel.onSelectionChange = { [weak self] id in self?.maskOverlay.adjustment = self?.adjustments.masks.first { $0.id == id } }
         maskPanel.onAdd = { [weak self] kind in self?.addMask(kind) }
         maskPanel.onBrushChange = { [weak self] brush in self?.maskOverlay.brush = brush }
+        maskOverlay.onBrushChange = { [weak self] brush in self?.maskPanel.brush = brush }
         maskOverlay.brush = maskPanel.brush
         maskPanel.onOverlayChange = { [weak self] on in
             self?.showsMaskOverlay = on
@@ -1109,9 +1110,31 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
             nonisolated(unsafe) let event = event
-            let handled = MainActor.assumeIsolated { self?.handleLoupeKey(event) ?? false }
+            let handled = MainActor.assumeIsolated { (self?.handleHandKey(event) ?? false) || (self?.handleLoupeKey(event) ?? false) }
             return handled ? nil : event
         }
+    }
+
+    /// The masks the Masking panel shows.
+    var shownMasks: [PhotoAdjustments.LocalAdjustment] { maskPanel.masks }
+
+    /// Whether Space is held for the brush's hand.
+    var isBrushHandHeld: Bool { maskOverlay.isHandHeld }
+
+    /// Space held while the brush is active: a hand that moves the photo (as in Lightroom), not Toggle Zoom.
+    func handleHandKey(_ event: NSEvent) -> Bool {
+        let spaceKeyCode: UInt16 = 49
+        guard event.keyCode == spaceKeyCode, event.window === view.window,
+              !((view.window?.firstResponder as? NSText)?.isEditable ?? false)
+        else { return false }
+        if event.type == .keyUp {
+            guard maskOverlay.isHandHeld else { return false }
+            maskOverlay.isHandHeld = false
+            return true
+        }
+        guard isBrushing, event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.capsLock).isEmpty else { return false }
+        maskOverlay.isHandHeld = true
+        return true
     }
 
     private func handleLoupeKey(_ event: NSEvent) -> Bool {
@@ -1389,6 +1412,9 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         panel.display(stored, asShotWhiteBalance: source.asShotWhiteBalance, isRaw: source.isRaw)
         if state.developTool == .crop { showCrop(stored.crop) }
         showLens()
+        // The masks and spots too, or their panels would show (and their next edit put back) what was undone.
+        showMasks()
+        showRetouch()
         metalView.needsDisplay = true
     }
 
@@ -1570,6 +1596,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         // Spot Removal takes clicks on the photo itself, but a zoomed photo still pans.
         retouchOverlay.isZoomed = { [weak self] in self?.state.zoom.isZoomed ?? false }
         retouchOverlay.onPan = { [weak self] delta in self?.pan(by: delta) }
+        // So does the brush, with Space held.
+        maskOverlay.onPan = { [weak self] delta in self?.pan(by: delta) }
     }
 
     /// Pans the zoomed photo by a drag of this many points.
