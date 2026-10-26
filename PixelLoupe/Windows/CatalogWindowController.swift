@@ -29,6 +29,8 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
     var secondarySlideshowController: SlideshowController?
     /// Window ▸ Contact Sheet windows that are open (each keeps the photos it opened with).
     var contactSheetControllers: [ContactSheetWindowController] = []
+    /// Window ▸ Web Gallery windows that are open (each keeps the photos it opened with).
+    var webGalleryControllers: [WebGalleryWindowController] = []
     /// The display button (shown only with more than one display).
     private(set) var displayToolbarItem: NSMenuToolbarItem?
     private let inspectorButton = NSButton()
@@ -162,6 +164,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         slideshowController?.stop()
         secondarySlideshowController?.stop()
         for controller in contactSheetControllers { controller.close() }
+        for controller in webGalleryControllers { controller.close() }
         publishingManager?.close()
         // Closed quietly, so it reopens with the next catalog.
         secondaryWindowController?.closeQuietly()

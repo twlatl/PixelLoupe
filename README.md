@@ -111,6 +111,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `PixelLoupe/Develop/Panel` | Adjust panel and its controls |
 | `PixelLoupe/Merge` | Photo Merge: the HDR and panorama merges, their sheets, and the Linear DNG writer |
 | `PixelLoupe/ContactSheet` | Contact Sheet: its window, page layout, preview and PDF writer |
+| `PixelLoupe/WebGallery` | Web Gallery: its window, HTML pages and stylesheet, preview and folder writer |
 | `PixelLoupe/Windows` | Welcome, About, new-catalog and catalog windows |
 
 ## Keyboard shortcuts
@@ -175,6 +176,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `⌘Return` | Impromptu Slideshow of the selected photos (or every photo in the grid) on this display; `Esc` or `⌘Return` stops, `Space` pauses, `←` / `→` step |
 | `⌥⇧⌘Return` | Slideshow on the secondary display while you keep working (again to stop) |
 | `⌃⌥⌘C` | Contact Sheet: a window laying out the selected photos (or every photo in the grid) on pages, saved as a PDF with Generate… (see [Contact sheets](#contact-sheets)) |
+| `⌃⌥⌘W` | Web Gallery: a window laying out the selected photos (or every photo in the grid) as web pages (see [Web galleries](#web-galleries)) |
 
 Single-key shortcuts are ignored while typing in a text field.
 
@@ -319,6 +321,48 @@ The choices other than the headline and description are remembered for the next 
 the PDF and writes it in the background, rendering each photo at 300 pixels per inch of its cell (from its Smart
 Preview when the original is missing; a gray placeholder with its name when neither can be read). The text stays text,
 so the PDF can be searched. Cancel stops it without leaving a file behind.
+
+## Web galleries
+
+Window ▸ Web Gallery (`⌃⌥⌘W`) opens a window of the same photos a contact sheet would show: the selected photos when
+several are selected, otherwise every photo in the grid, in grid order, without videos. The photos are fixed when the
+window opens, and you can open several galleries at once.
+
+The middle of the window shows the gallery as a browser shows it, with the photos' Develop edits; its page links work.
+The sidebar on the right sets it up, and the preview follows as you change it, staying on the page you're viewing:
+
+- **Headline** and **Description**, at the top of every page (they start empty for each gallery).
+- **Email**: a link under them that opens the viewer's mail app. Every character of it is written as an HTML character
+  reference, so the address isn't in the page as plain text for address harvesters to find.
+- **Text Color** and **Background Color**: black on white unless you choose others.
+- **Photos per Page** (24, 48, 96 or 192) and **Page Numbers**. A gallery with more than one page has Previous and
+  Next links under the photos; Page Numbers adds numbered links to the pages between them.
+- **Image Size**: larger photos mean fewer across. It sets the most columns across a wide window; a phone shows at most
+  two, and a very narrow screen one.
+- **Image Border** (white), **Shadow**, and **Image Caption**: one line under every photo with the field you choose,
+  as on a contact sheet.
+- **Head** and **Body**: HTML added, exactly as you type it, at the end of every page's `<head>` and `<body>` (after
+  the gallery's scripts), for analytics, fonts or a footer. Smart quotes and spelling are off in these fields. The
+  preview leaves them out, so a tracking script doesn't run as you work. A warning shows under a field that opens a
+  `<style>`, `<script>`, `<title>`, `<textarea>` or `<!--` comment without closing it, since a browser would treat the
+  rest of the page as part of it and show none of it.
+- **Watermark** (None, or one of your watermarks), drawn on the large images only, and **JPEG Quality** for the
+  generated images. The preview doesn't change with these.
+
+Clicking a photo shows it large in a lightbox, in the preview too (there with its thumbnail). Previous and Next (the
+arrows, `←` and `→`, or a swipe) step through every photo in the gallery, not just the page's; `Esc`, the close button
+or a click beside the photo closes it, on the page of the photo it was showing. The address follows the photo
+(`page-2.html#30`), so a link to it opens it. Without JavaScript, a photo is a link to its large image.
+
+The choices other than the headline and description are remembered for the next gallery. **Generate…** asks for a
+folder and writes the gallery into it in the background: `index.html` (then `page-2.html`, …), `gallery.css`,
+`gallery.js` (the lightbox, with no libraries, so it works offline and opened from the disk), `photos.js`, and each
+photo twice, numbered in order (`images/thumbs/001.jpg`, about 800 pixels on the long edge, and `images/large/001.jpg`,
+2048), as sRGB JPEGs with their Develop edits, screen sharpening, and only the copyright and creator from their metadata.
+A photo that can't be read uses its thumbnail, or has no image (you're told which). If the folder already has an
+`index.html` you're asked before it's replaced; only the gallery's own files are replaced, and pages and images left
+from a larger gallery are removed. Cancel stops it without changing the folder. The folder is shown in the Finder when
+it's done.
 
 ## Library views
 
