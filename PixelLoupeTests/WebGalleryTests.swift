@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import Foundation
 import Testing
 import WebKit
@@ -197,6 +198,178 @@ struct WebGallerySettingsTests {
         #expect(settings.captionField == .fileName)
         #expect(settings.showsBorder)
         #expect(settings.showsPageNumbers)
+        #expect(settings.jpegQuality == 85)
+        #expect(settings.watermarkName == nil)
+    }
+
+    @Test func qualityStaysInRangeOnItsSteps() throws {
+        #expect(WebGallerySettings.clampedQuality(83) == 85)
+        #expect(WebGallerySettings.clampedQuality(0) == 10)
+        #expect(WebGallerySettings.clampedQuality(140) == 100)
+        let data = Data(#"{"jpegQuality": 3, "watermarkName": "Mine"}"#.utf8)
+        let settings = try JSONDecoder().decode(WebGallerySettings.self, from: data)
+        #expect(settings.jpegQuality == 10)
+        #expect(settings.watermarkName == "Mine")
+    }
+
+    @Test func outputChoicesAreRemembered() throws {
+        let suite = "WebGallerySettingsTests.output"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var settings = WebGallerySettings()
+        settings.jpegQuality = 60
+        settings.watermarkName = WatermarkPresets.simpleCopyrightName
+        settings.remember(in: defaults)
+        let remembered = WebGallerySettings.remembered(in: defaults)
+        #expect(remembered.jpegQuality == 60)
+        #expect(remembered.watermarkName == WatermarkPresets.simpleCopyrightName)
+    }
+}
+
+/// Progress reported on the main actor.
+@MainActor private final class Reported {
+    var values: [Double] = []
+}
+
+@Suite("Web gallery generate")
+struct WebGalleryWriterTests {
+    private func photo(_ file: URL, creator: String? = nil) -> WebGalleryWriter.Photo {
+        let snapshot = ContactSheetPhoto(source: PhotoSourceLocation(original: file), fileName: file.lastPathComponent)
+        var metadata = PhotoMetadata()
+        metadata[.creator] = creator
+        metadata[.creatorEmail] = creator.map { "\($0.lowercased())@example.com" }
+        let item = ExportItem(source: file, adjustments: PhotoAdjustments(), metadata: metadata, keywords: [], rating: 0,
+                              captureDate: .now)
+        return WebGalleryWriter.Photo(photo: snapshot, item: item)
+    }
+
+    private func size(of url: URL) -> CGSize? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int, let height = properties[kCGImagePropertyPixelHeight] as? Int
+        else { return nil }
+        return CGSize(width: width, height: height)
+    }
+
+    @Test func listsEveryFileItWrites() {
+        #expect(WebGalleryWriter.files(count: 2, pages: 1) == [
+            "index.html", "gallery.css",
+            "images/thumbs/001.jpg", "images/large/001.jpg", "images/thumbs/002.jpg", "images/large/002.jpg",
+        ])
+    }
+
+    @Test func writesThePagesAndBothSizesOfEachPhoto() async throws {
+        let directory = try TemporaryDirectory()
+        let wide = try Fixtures.writeJPEG(to: directory.url.appending(path: "Wide.jpg"), width: 3000, height: 2000,
+                                          gps: (latitude: 53.35, longitude: -6.26, altitude: nil))
+        let small = try Fixtures.writeJPEG(to: directory.url.appending(path: "Small.jpg"), width: 600, height: 900)
+        let folder = directory.url.appending(path: "Gallery")
+        var settings = WebGallerySettings()
+        settings.photosPerPage = 24
+        let reported = Reported()
+        let result = try await WebGalleryWriter.write([photo(wide, creator: "Ted"), photo(small)], settings: settings,
+                                                      sourceName: "Dunes", watermark: nil, to: folder) { reported.values.append($0) }
+        #expect(result.failures.isEmpty)
+        #expect(reported.values.last == 1)
+        for file in WebGalleryWriter.files(count: 2, pages: 1) {
+            #expect(FileManager.default.fileExists(atPath: folder.appending(path: file).path(percentEncoded: false)), "\(file)")
+        }
+        #expect(size(of: folder.appending(path: "images/large/001.jpg")) == CGSize(width: 2048, height: 1365))
+        #expect(size(of: folder.appending(path: "images/thumbs/001.jpg")) == CGSize(width: 800, height: 533))
+        #expect(size(of: folder.appending(path: "images/large/002.jpg")) == CGSize(width: 600, height: 900), "never enlarged")
+        #expect(size(of: folder.appending(path: "images/thumbs/002.jpg")) == CGSize(width: 533, height: 800))
+
+        // sRGB, with the creator but without the location, camera or contact details.
+        let source = try #require(CGImageSourceCreateWithURL(folder.appending(path: "images/large/001.jpg") as CFURL, nil))
+        let properties = try #require(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
+        #expect((properties[kCGImagePropertyProfileName] as? String)?.contains("sRGB") == true)
+        #expect(properties[kCGImagePropertyGPSDictionary] == nil)
+        #expect((properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any])?[kCGImagePropertyTIFFMake] == nil)
+        let metadata = try #require(CGImageSourceCopyMetadataAtIndex(source, 0, nil))
+        #expect(CGImageMetadataCopyTagWithPath(metadata, nil, "dc:creator" as CFString) != nil)
+        #expect(CGImageMetadataCopyTagWithPath(metadata, nil, "Iptc4xmpCore:CreatorContactInfo" as CFString) == nil)
+
+        let index = try String(contentsOf: folder.appending(path: "index.html"), encoding: .utf8)
+        #expect(index.contains("<title>Dunes</title>"))
+    }
+
+    @Test func theWatermarkGoesOnTheLargeImagesOnly() async throws {
+        let directory = try TemporaryDirectory()
+        let file = try Fixtures.writeJPEG(to: directory.url.appending(path: "IMG_1.jpg"), width: 2400, height: 1600)
+        let plain = directory.url.appending(path: "Plain"), marked = directory.url.appending(path: "Marked")
+        _ = try await WebGalleryWriter.write([photo(file)], settings: WebGallerySettings(), sourceName: "", watermark: nil, to: plain) { _ in }
+        var watermark = WatermarkSettings()
+        watermark.text = "© Test"
+        _ = try await WebGalleryWriter.write([photo(file)], settings: WebGallerySettings(), sourceName: "",
+                                             watermark: PhotoExporter.Watermark(settings: watermark, imageURL: nil), to: marked) { _ in }
+        func data(_ folder: URL, _ path: String) throws -> Data { try Data(contentsOf: folder.appending(path: path)) }
+        #expect(try data(plain, "images/thumbs/001.jpg") == data(marked, "images/thumbs/001.jpg"))
+        #expect(try data(plain, "images/large/001.jpg") != data(marked, "images/large/001.jpg"))
+    }
+
+    @Test func lowerQualityMeansSmallerFiles() async throws {
+        let directory = try TemporaryDirectory()
+        let file = try Fixtures.writeJPEG(to: directory.url.appending(path: "IMG_1.jpg"), width: 2400, height: 1600)
+        var settings = WebGallerySettings()
+        var sizes: [Int] = []
+        for quality in [100.0, 20.0] {
+            settings.jpegQuality = quality
+            let folder = directory.url.appending(path: "Q\(Int(quality))")
+            _ = try await WebGalleryWriter.write([photo(file)], settings: settings, sourceName: "", watermark: nil, to: folder) { _ in }
+            sizes.append(try Data(contentsOf: folder.appending(path: "images/large/001.jpg")).count)
+        }
+        #expect(sizes[1] < sizes[0])
+    }
+
+    @Test func anUnreadablePhotoFallsBackToItsThumbnailOrIsReported() async throws {
+        let directory = try TemporaryDirectory()
+        let thumbnail = try Fixtures.writeJPEG(to: directory.url.appending(path: "thumb.jpg"), width: 300, height: 200)
+        let missing = ContactSheetPhoto(source: PhotoSourceLocation(original: URL(filePath: "/missing/IMG_1.jpg")), fileName: "IMG_1.jpg")
+        let gone = ContactSheetPhoto(source: PhotoSourceLocation(original: URL(filePath: "/missing/IMG_2.jpg")), fileName: "IMG_2.jpg")
+        let folder = directory.url.appending(path: "Gallery")
+        let result = try await WebGalleryWriter.write(
+            [WebGalleryWriter.Photo(photo: missing, fallback: thumbnail), WebGalleryWriter.Photo(photo: gone)],
+            settings: WebGallerySettings(), sourceName: "", watermark: nil, to: folder
+        ) { _ in }
+        #expect(result.failures == ["IMG_2.jpg"])
+        #expect(try Data(contentsOf: folder.appending(path: "images/large/001.jpg")) == Data(contentsOf: thumbnail))
+        #expect(!FileManager.default.fileExists(atPath: folder.appending(path: "images/large/002.jpg").path(percentEncoded: false)))
+    }
+
+    @Test func cancelling() async throws {
+        let directory = try TemporaryDirectory()
+        let file = try Fixtures.writeJPEG(to: directory.url.appending(path: "IMG_1.jpg"), width: 2400, height: 1600)
+        let folder = directory.url.appending(path: "Gallery")
+        let photos = Array(repeating: photo(file), count: 200)
+        let task = Task {
+            try await WebGalleryWriter.write(photos, settings: WebGallerySettings(), sourceName: "", watermark: nil, to: folder) { _ in }
+        }
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+    }
+
+    @Test func installingReplacesOnlyTheGallerysFiles() async throws {
+        let directory = try TemporaryDirectory()
+        let fileManager = FileManager.default
+        let folder = directory.url.appending(path: "Site")
+        // An earlier, larger gallery, and a file of the user's.
+        try fileManager.createDirectory(at: folder.appending(path: "images/large"), withIntermediateDirectories: true)
+        for (path, text) in [("index.html", "old"), ("page-5.html", "old"), ("notes.txt", "mine"), ("images/large/099.jpg", "old"),
+                             ("images/large/cover.png", "mine")] {
+            try Data(text.utf8).write(to: folder.appending(path: path))
+        }
+        let file = try Fixtures.writeJPEG(to: directory.url.appending(path: "IMG_1.jpg"), width: 300, height: 200)
+        let temporary = directory.url.appending(path: "Temporary")
+        _ = try await WebGalleryWriter.write([photo(file)], settings: WebGallerySettings(), sourceName: "", watermark: nil, to: temporary) { _ in }
+        try await WebGalleryWriter.install(from: temporary, into: folder)
+
+        func exists(_ path: String) -> Bool { fileManager.fileExists(atPath: folder.appending(path: path).path(percentEncoded: false)) }
+        for path in WebGalleryWriter.files(count: 1, pages: 1) { #expect(exists(path), "\(path)") }
+        #expect(try String(contentsOf: folder.appending(path: "index.html"), encoding: .utf8) != "old")
+        #expect(!exists("page-5.html"), "the earlier gallery's extra page")
+        #expect(!exists("images/large/099.jpg"), "the earlier gallery's extra image")
+        #expect(exists("notes.txt"))
+        #expect(exists("images/large/cover.png"))
     }
 }
 
@@ -255,6 +428,48 @@ struct WebGalleryWindowTests {
         let deadline = Date.now.addingTimeInterval(10)
         repeat { try await Task.sleep(for: .milliseconds(50)) } while webView.isLoading && Date.now < deadline
         return try await webView.evaluateJavaScript(script)
+    }
+
+    @Test func generateWritesTheFolderInTheBackground() async throws {
+        let suite = "WebGalleryWindowTests.generate"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let directory = try TemporaryDirectory()
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "C.pixelloupe"))
+        let file = try Fixtures.writeJPEG(to: directory.url.appending(path: "IMG_1.jpg"), width: 300, height: 200)
+        let photo = ContactSheetPhoto(source: PhotoSourceLocation(original: file), fileName: "IMG_1.jpg")
+        let controller = WebGalleryWindowController(photos: [photo], thumbnails: store.thumbnails, sourceName: "Dunes", defaults: defaults)
+        let folder = directory.url.appending(path: "Site")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        controller.write(to: folder)
+        #expect(controller.model.progress != nil)
+        await controller.generateTask?.value
+        #expect(controller.model.progress == nil)
+        #expect(controller.generateTask == nil)
+        for path in WebGalleryWriter.files(count: 1, pages: 1) {
+            #expect(FileManager.default.fileExists(atPath: folder.appending(path: path).path(percentEncoded: false)), "\(path)")
+        }
+    }
+
+    @Test func outputSettingsDontReloadThePreview() async throws {
+        let suite = "WebGalleryWindowTests.output"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let directory = try TemporaryDirectory()
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url)
+        let photo = ContactSheetPhoto(source: PhotoSourceLocation(original: URL(filePath: "/missing/IMG_1.jpg")), fileName: "IMG_1.jpg")
+        let controller = WebGalleryWindowController(photos: [photo], thumbnails: store.thumbnails, sourceName: "", defaults: defaults)
+        controller.showWindow(nil)
+        defer { controller.close() }
+        _ = try await evaluate("window.marker = 1", in: controller.webView)
+        controller.model.jpegQuality = 40
+        #expect(try await evaluate("window.marker", in: controller.webView) as? Int == 1, "not reloaded")
+        controller.model.settings.showsBorder = true
+        var reloaded = false
+        for _ in 0..<100 where !reloaded {
+            reloaded = try await evaluate("typeof window.marker", in: controller.webView) as? String == "undefined"
+        }
+        #expect(reloaded)
     }
 
     @Test func thePreviewShowsTheGalleryAndFollowsTheSettings() async throws {

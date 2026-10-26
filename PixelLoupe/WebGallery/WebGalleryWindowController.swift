@@ -3,7 +3,7 @@ import SwiftUI
 import WebKit
 
 /// Window ▸ Web Gallery (⌃⌥⌘W): the gallery's pages as a browser shows them in the middle, the
-/// gallery's options on the right.
+/// gallery's options on the right. Generate writes it into a folder.
 ///
 /// The photos are fixed when the window opens; selecting others in the catalog doesn't change them.
 final class WebGalleryWindowController: NSWindowController, NSWindowDelegate, WKNavigationDelegate {
@@ -15,13 +15,23 @@ final class WebGalleryWindowController: NSWindowController, NSWindowDelegate, WK
     let sourceName: String
     let webView: WKWebView
     private let source: WebGalleryPreviewSource
+    /// What Export needs to render each photo, by the photo's ID (from the catalog when the window opens).
+    private let exportItems: [UUID: ExportItem]
+    private let thumbnails: ThumbnailStore
+    private(set) var generateTask: Task<Void, Never>?
+    /// The settings the preview last showed: Output changes don't reload it.
+    private var shownSettings: WebGallerySettings
     var onClose: (() -> Void)?
 
-    init(photos: [ContactSheetPhoto], thumbnails: ThumbnailStore, sourceName: String, defaults: UserDefaults = Defaults.store) {
+    init(photos: [ContactSheetPhoto], exportItems: [UUID: ExportItem] = [:], thumbnails: ThumbnailStore, sourceName: String,
+         defaults: UserDefaults = Defaults.store) {
         self.photos = photos
+        self.exportItems = exportItems
+        self.thumbnails = thumbnails
         self.sourceName = sourceName
         model = WebGalleryModel(photoCount: photos.count, defaults: defaults)
         source = WebGalleryPreviewSource(photos: photos, thumbnails: thumbnails, sourceName: sourceName, settings: model.settings)
+        shownSettings = Self.previewed(model.settings)
 
         let configuration = WKWebViewConfiguration()
         configuration.setURLSchemeHandler(source, forURLScheme: WebGalleryPreviewSource.scheme)
@@ -55,6 +65,8 @@ final class WebGalleryWindowController: NSWindowController, NSWindowDelegate, WK
         }
 
         model.onChange = { [weak self] in self?.settingsChanged() }
+        model.onGenerate = { [weak self] in self?.generate() }
+        model.onCancel = { [weak self] in self?.generateTask?.cancel() }
         webView.load(URLRequest(url: WebGalleryPreviewSource.url(ofPage: 0)))
     }
 
@@ -111,12 +123,111 @@ final class WebGalleryWindowController: NSWindowController, NSWindowDelegate, WK
     /// fewer photos per page leave it past the end, shows the last page instead.
     private func settingsChanged() {
         source.settings = model.settings
+        let previewed = Self.previewed(model.settings)
+        guard previewed != shownSettings else { return }
+        shownSettings = previewed
         let last = model.pages.count - 1
         if currentPage > last {
             webView.load(URLRequest(url: WebGalleryPreviewSource.url(ofPage: last)))
         } else {
             webView.reload()
         }
+    }
+
+    /// The settings without the ones the preview ignores (the generated images' quality and watermark).
+    private static func previewed(_ settings: WebGallerySettings) -> WebGallerySettings {
+        var settings = settings
+        settings.jpegQuality = WebGallerySettings().jpegQuality
+        settings.watermarkName = nil
+        return settings
+    }
+
+    // MARK: Generate
+
+    /// Asks for the folder to write the gallery into (checking before replacing a gallery already
+    /// there), then writes it.
+    func generate() {
+        guard generateTask == nil, let window, window.attachedSheet == nil else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Generate"
+        panel.message = "Choose a folder for the web gallery. Its pages and images go inside it."
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let folder = panel.url else { return }
+            self?.confirmReplacing(folder)
+        }
+    }
+
+    private func confirmReplacing(_ folder: URL) {
+        guard FileManager.default.fileExists(atPath: folder.appending(path: "index.html").path(percentEncoded: false)),
+              let window else { return write(to: folder) }
+        let alert = NSAlert()
+        alert.messageText = "“\(folder.lastPathComponent)” already has a web page. Replace it with this gallery?"
+        alert.informativeText = "Its index.html and the gallery’s pages and images are replaced. Other files in the folder are left alone."
+        alert.addButton(withTitle: "Replace")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            if response == .alertFirstButtonReturn { self?.write(to: folder) }
+        }
+    }
+
+    /// The photos with what's needed to write them: the catalog's export item (or one made from the
+    /// snapshot) and the cached thumbnail to fall back on.
+    var writerPhotos: [WebGalleryWriter.Photo] {
+        photos.map { WebGalleryWriter.Photo(photo: $0, item: exportItems[$0.id], fallback: thumbnails.url(for: $0.id)) }
+    }
+
+    /// Writes the gallery into a temporary folder next to `folder`, then moves it in, so a cancelled
+    /// or failed run leaves `folder` as it was. Shows it in the Finder when it's done.
+    func write(to folder: URL) {
+        let photos = writerPhotos, settings = model.settings, sourceName = sourceName
+        let watermark = settings.watermarkName.flatMap { WatermarkPresets.shared.preset(named: $0) }.map {
+            PhotoExporter.Watermark(settings: $0.settings, imageURL: $0.settings.imageName.map(WatermarkPresets.shared.imageURL(named:)))
+        }
+        model.progress = 0
+        generateTask = Task { [weak self] in
+            let fileManager = FileManager.default
+            var temporaryFolder: URL?
+            do {
+                let temporary = try fileManager.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: folder, create: true)
+                temporaryFolder = temporary
+                let result = try await WebGalleryWriter.write(photos, settings: settings, sourceName: sourceName, watermark: watermark,
+                                                              to: temporary) { done in
+                    self?.model.progress = done
+                }
+                try Task.checkCancellation()
+                try await WebGalleryWriter.install(from: temporary, into: folder)
+                if !AppDelegate.isRunningUnitTests {
+                    NSWorkspace.shared.activateFileViewerSelecting([folder.appending(path: "index.html")])
+                }
+                if !result.failures.isEmpty { self?.showUnreadable(result.failures) }
+            } catch is CancellationError {
+            } catch {
+                self?.showError(error)
+            }
+            if let temporaryFolder { try? fileManager.removeItem(at: temporaryFolder) }
+            self?.model.progress = nil
+            self?.generateTask = nil
+        }
+    }
+
+    private func showUnreadable(_ names: [String]) {
+        let alert = NSAlert()
+        alert.messageText = names.count == 1
+            ? "“\(names[0])” couldn’t be read, so the gallery has no image for it."
+            : "\(names.count) photos couldn’t be read, so the gallery has no images for them."
+        if names.count > 1 { alert.informativeText = names.prefix(10).joined(separator: "\n") + (names.count > 10 ? "\n…" : "") }
+        if let window { alert.beginSheetModal(for: window) } else { alert.runModal() }
+    }
+
+    private func showError(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "The web gallery couldn't be saved."
+        alert.informativeText = error.localizedDescription
+        if let window { alert.beginSheetModal(for: window) } else { alert.runModal() }
     }
 
     // MARK: WKNavigationDelegate
@@ -127,6 +238,7 @@ final class WebGalleryWindowController: NSWindowController, NSWindowDelegate, WK
     }
 
     func windowWillClose(_ notification: Notification) {
+        generateTask?.cancel()
         webView.stopLoading()
         onClose?()
     }

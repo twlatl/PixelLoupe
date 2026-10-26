@@ -13,14 +13,46 @@ final class WebGalleryModel {
         }
     }
     let photoCount: Int
+    /// The saved watermarks, for the Watermark pop-up.
+    private(set) var watermarkNames: [String]
+    /// While the gallery is written: how much is done (0…1).
+    var progress: Double?
 
     @ObservationIgnored var onChange: (() -> Void)?
+    @ObservationIgnored var onGenerate: (() -> Void)?
+    @ObservationIgnored var onCancel: (() -> Void)?
     @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private var watermarkObserver: NSObjectProtocol?
 
-    init(photoCount: Int, defaults: UserDefaults = Defaults.store) {
+    init(photoCount: Int, defaults: UserDefaults = Defaults.store, watermarks: WatermarkPresets = .shared) {
         self.photoCount = photoCount
         self.defaults = defaults
-        settings = WebGallerySettings.remembered(in: defaults)
+        let names = watermarks.all.map(\.name)
+        watermarkNames = names
+        var settings = WebGallerySettings.remembered(in: defaults)
+        // A watermark deleted since is no watermark.
+        if let name = settings.watermarkName, !names.contains(name) { settings.watermarkName = nil }
+        self.settings = settings
+        watermarkObserver = NotificationCenter.default.addObserver(
+            forName: WatermarkPresets.didChangeNotification, object: watermarks, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.watermarksChanged(watermarks) }
+        }
+    }
+
+    isolated deinit {
+        if let watermarkObserver { NotificationCenter.default.removeObserver(watermarkObserver) }
+    }
+
+    private func watermarksChanged(_ watermarks: WatermarkPresets) {
+        watermarkNames = watermarks.all.map(\.name)
+        if let name = settings.watermarkName, !watermarkNames.contains(name) { settings.watermarkName = nil }
+    }
+
+    /// The JPEG Quality slider, kept on its steps.
+    var jpegQuality: Double {
+        get { settings.jpegQuality }
+        set { settings.jpegQuality = WebGallerySettings.clampedQuality(newValue) }
     }
 
     var pages: WebGalleryPages {
@@ -37,7 +69,7 @@ final class WebGalleryModel {
     }
 }
 
-/// The web gallery window's right sidebar: the text, colors, pages and photos.
+/// The web gallery window's right sidebar: the text, colors, pages, photos and output, and Generate.
 struct WebGalleryPanel: View {
     @Bindable var model: WebGalleryModel
 
@@ -55,6 +87,16 @@ struct WebGalleryPanel: View {
     }
 
     var body: some View {
+        VStack(spacing: 0) {
+            form
+                .disabled(model.progress != nil)
+            Divider()
+            footer
+                .padding(16)
+        }
+    }
+
+    private var form: some View {
         Form {
             Section("Text") {
                 TextField("Headline", text: $model.settings.headline, prompt: Text("None"))
@@ -114,8 +156,56 @@ struct WebGalleryPanel: View {
                     .accessibilityIdentifier("webGalleryCaptionField")
                 }
             }
+            Section("Output") {
+                Picker("Watermark", selection: $model.settings.watermarkName) {
+                    Text("None").tag(String?.none)
+                    if !model.watermarkNames.isEmpty { Divider() }
+                    ForEach(model.watermarkNames, id: \.self) { Text($0).tag(String?.some($0)) }
+                }
+                .help("Drawn on the large images, not the thumbnails")
+                .accessibilityIdentifier("webGalleryWatermark")
+                LabeledContent("JPEG Quality") {
+                    HStack {
+                        Slider(value: $model.jpegQuality, in: WebGallerySettings.qualityRange, step: WebGallerySettings.qualityStep) {
+                            Text("JPEG Quality")
+                        }
+                        .labelsHidden()
+                        .accessibilityValue("\(Int(model.settings.jpegQuality)) percent")
+                        .accessibilityIdentifier("webGalleryQuality")
+                        Text("\(Int(model.settings.jpegQuality))%")
+                            .monospacedDigit()
+                            .frame(minWidth: 36, alignment: .trailing)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .help("The generated images' quality; the preview doesn't change with it")
+            }
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
+    }
+
+    @ViewBuilder
+    private var footer: some View {
+        if let progress = model.progress {
+            HStack {
+                ProgressView(value: progress)
+                    .accessibilityLabel("Generating web gallery")
+                    .accessibilityIdentifier("webGalleryProgress")
+                Button("Cancel") { model.onCancel?() }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("webGalleryCancel")
+            }
+        } else {
+            Button {
+                model.onGenerate?()
+            } label: {
+                Text("Generate…").frame(maxWidth: .infinity)
+            }
+            .controlSize(.large)
+            .buttonStyle(.borderedProminent)
+            .help("Saves the web gallery's pages and images into a folder")
+            .accessibilityIdentifier("webGalleryGenerate")
+        }
     }
 }

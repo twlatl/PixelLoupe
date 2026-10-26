@@ -111,7 +111,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `PixelLoupe/Develop/Panel` | Adjust panel and its controls |
 | `PixelLoupe/Merge` | Photo Merge: the HDR and panorama merges, their sheets, and the Linear DNG writer |
 | `PixelLoupe/ContactSheet` | Contact Sheet: its window, page layout, preview and PDF writer |
-| `PixelLoupe/WebGallery` | Web Gallery: its window, HTML pages and stylesheet, and preview |
+| `PixelLoupe/WebGallery` | Web Gallery: its window, HTML pages and stylesheet, preview and folder writer |
 | `PixelLoupe/Windows` | Welcome, About, new-catalog and catalog windows |
 
 ## Keyboard shortcuts
@@ -339,8 +339,17 @@ The sidebar on the right sets it up, and the preview follows as you change it, s
   two, and a very narrow screen one.
 - **Image Border** (white), **Shadow**, and **Image Caption**: one line under every photo with the field you choose,
   as on a contact sheet.
+- **Watermark** (None, or one of your watermarks), drawn on the large images only, and **JPEG Quality** for the
+  generated images. The preview doesn't change with these.
 
-The choices other than the headline and description are remembered for the next gallery.
+The choices other than the headline and description are remembered for the next gallery. **Generate…** asks for a
+folder and writes the gallery into it in the background: `index.html` (then `page-2.html`, …), `gallery.css`, and each
+photo twice, numbered in order (`images/thumbs/001.jpg`, about 800 pixels on the long edge, and `images/large/001.jpg`,
+2048), as sRGB JPEGs with their Develop edits, screen sharpening, and only the copyright and creator from their metadata.
+A photo that can't be read uses its thumbnail, or has no image (you're told which). If the folder already has an
+`index.html` you're asked before it's replaced; only the gallery's own files are replaced, and pages and images left
+from a larger gallery are removed. Cancel stops it without changing the folder. The folder is shown in the Finder when
+it's done.
 
 ## Library views
 

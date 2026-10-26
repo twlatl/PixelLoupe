@@ -11,6 +11,9 @@ nonisolated struct WebGallerySettings: Codable, Equatable, Sendable {
     static let photosPerPageChoices = [24, 48, 96, 192]
     /// The Image Size slider's range, in columns across a wide window (more columns, smaller photos).
     static let columnRange = ContactSheetSettings.columnRange
+    /// The JPEG Quality slider's range and step, in percent.
+    static let qualityRange = 10.0...100.0
+    static let qualityStep = 5.0
 
     // Not remembered (see CodingKeys).
     var headline = ""
@@ -25,12 +28,16 @@ nonisolated struct WebGallerySettings: Codable, Equatable, Sendable {
     var captionField = CaptionField.fileName
     var showsPageNumbers = true
     var photosPerPage = 48
+    /// The generated images' JPEG quality, in percent (both sizes; the preview ignores it).
+    var jpegQuality = 85.0
+    /// The watermark preset drawn on the large images; nil for none. The preview ignores it.
+    var watermarkName: String?
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
         case textColor, backgroundColor, columns, showsBorder, showsShadow, showsCaption, captionField
-        case showsPageNumbers, photosPerPage
+        case showsPageNumbers, photosPerPage, jpegQuality, watermarkName
     }
 
     // Tolerant decoding: missing or unknown values keep their defaults, so saved settings survive new options.
@@ -50,6 +57,14 @@ nonisolated struct WebGallerySettings: Codable, Equatable, Sendable {
         showsPageNumbers = value(.showsPageNumbers, defaults.showsPageNumbers)
         let perPage = value(.photosPerPage, defaults.photosPerPage)
         photosPerPage = Self.photosPerPageChoices.contains(perPage) ? perPage : defaults.photosPerPage
+        jpegQuality = Self.clampedQuality(value(.jpegQuality, defaults.jpegQuality))
+        watermarkName = value(.watermarkName, defaults.watermarkName)
+    }
+
+    /// `quality` in the slider's range, on its steps.
+    static func clampedQuality(_ quality: Double) -> Double {
+        let stepped = (quality / qualityStep).rounded() * qualityStep
+        return min(max(stepped, qualityRange.lowerBound), qualityRange.upperBound)
     }
 
     private static let defaultsKey = "WebGallerySettings"
