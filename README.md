@@ -343,7 +343,9 @@ The sidebar on the right sets it up, and the preview follows as you change it, s
   as on a contact sheet.
 - **Head** and **Body**: HTML added, exactly as you type it, at the end of every page's `<head>` and `<body>` (after
   the gallery's scripts), for analytics, fonts or a footer. Smart quotes and spelling are off in these fields. The
-  preview leaves them out, so a tracking script doesn't run as you work.
+  preview leaves them out, so a tracking script doesn't run as you work. A warning shows under a field that opens a
+  `<style>`, `<script>`, `<title>`, `<textarea>` or `<!--` comment without closing it, since a browser would treat the
+  rest of the page as part of it and show none of it.
 - **Watermark** (None, or one of your watermarks), drawn on the large images only, and **JPEG Quality** for the
   generated images. The preview doesn't change with these.
 

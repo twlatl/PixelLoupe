@@ -236,6 +236,28 @@ struct WebGalleryHTMLTests {
         #expect(WebGalleryHTML.page(0, photos: photos(1), settings: settings, sourceName: "").contains("gallery.css\">\n</head>\n<body>"))
     }
 
+    @Test func codeThatOpensAndDoesntCloseIsFound() {
+        #expect(WebGalleryHTML.unclosed(in: "") == nil)
+        #expect(WebGalleryHTML.unclosed(in: "<meta name=\"robots\" content=\"noindex\">") == nil)
+        #expect(WebGalleryHTML.unclosed(in: "<style>\np { color: red }\n</style>") == nil)
+        #expect(WebGalleryHTML.unclosed(in: "<STYLE media=\"print\">p {}</Style >") == nil, "any case, with attributes")
+        #expect(WebGalleryHTML.unclosed(in: "<script async src=\"a.js\"></script><!-- note -->") == nil)
+        #expect(WebGalleryHTML.unclosed(in: "<div><p>© 2026 Me</p></div>") == nil, "only elements that swallow text")
+        #expect(WebGalleryHTML.unclosed(in: "<stylesheet>") == nil, "not <style>")
+
+        let style = WebGalleryHTML.unclosed(in: "<style>\np { color: red }\n")
+        #expect(style == .init(opening: "<style>", closing: "</style>"))
+        #expect(style?.warning.contains("isn't closed with </style>") == true)
+        #expect(WebGalleryHTML.unclosed(in: "<script>var a = 1") == .init(opening: "<script>", closing: "</script>"))
+        #expect(WebGalleryHTML.unclosed(in: "<title>Hi") == .init(opening: "<title>", closing: "</title>"))
+        #expect(WebGalleryHTML.unclosed(in: "<textarea rows=2>") == .init(opening: "<textarea>", closing: "</textarea>"))
+        #expect(WebGalleryHTML.unclosed(in: "<p>Hi</p><!-- to do") == .init(opening: "<!--", closing: "-->"))
+        #expect(WebGalleryHTML.unclosed(in: "<style></style><script>") == .init(opening: "<script>", closing: "</script>"),
+                "the first one left open")
+        #expect(WebGalleryHTML.unclosed(in: "<!-- <style> -->") == nil, "inside a comment it opens nothing")
+        #expect(WebGalleryHTML.unclosed(in: "<script>if (a <!-- b) {}</script>") == nil, "inside a script it's script")
+    }
+
     @Test func borderAndShadowAreClassesOnTheGrid() {
         var settings = WebGallerySettings()
         #expect(WebGalleryHTML.page(0, photos: photos(1), settings: settings, sourceName: "").contains("<main class=\"grid\">"))
@@ -556,8 +578,15 @@ struct WebGalleryWindowTests {
         let editors = textViews(in: try #require(controller.window?.contentView)).filter { !$0.isFieldEditor }
         let head = try #require(editors.first { $0.accessibilityLabel() == "Head" })
         let body = try #require(editors.first { $0.accessibilityLabel() == "Body" })
-        controller.window?.makeFirstResponder(head)
-        head.insertText("<meta name=\"robots\" content=\"noindex\">", replacementRange: NSRange(location: 0, length: 0))
+        let window = try #require(controller.window)
+        window.makeFirstResponder(head)
+        for character in "<meta name=\"robots\" content=\"noindex\">" {
+            let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                                      windowNumber: window.windowNumber, context: nil, characters: String(character),
+                                                      charactersIgnoringModifiers: String(character), isARepeat: false, keyCode: 0))
+            window.sendEvent(event)
+        }
+        #expect(head.string == "<meta name=\"robots\" content=\"noindex\">", "typed")
         controller.window?.makeFirstResponder(body)
         body.insertText("<footer>Hi</footer>", replacementRange: NSRange(location: 0, length: 0))
         #expect(controller.model.settings.headHTML == "<meta name=\"robots\" content=\"noindex\">")

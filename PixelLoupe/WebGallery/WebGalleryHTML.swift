@@ -122,6 +122,54 @@ nonisolated enum WebGalleryHTML {
         return code.hasSuffix("\n") ? code : code + "\n"
     }
 
+    /// Something opened in Head or Body text and never closed, which would swallow the rest of the
+    /// page: a browser reads everything after `<style>`, `<script>`, `<title>` or `<textarea>` as that
+    /// element's text until its end tag, and everything after `<!--` as a comment until `-->`.
+    struct Unclosed: Equatable {
+        /// How it opens and how it should close: "<style>" and "</style>", or "<!--" and "-->".
+        let opening: String
+        let closing: String
+
+        var warning: String {
+            "The \(opening) isn't closed with \(closing), so a browser would treat the rest of every page as part of it "
+                + "and show none of it."
+        }
+    }
+
+    private static let rawTextElements = ["style", "script", "title", "textarea"]
+
+    /// The first thing `code` opens and doesn't close, or nil when everything is closed.
+    static func unclosed(in code: String) -> Unclosed? {
+        let text = code.lowercased()
+        var position = text.startIndex
+        while position < text.endIndex {
+            guard let open = text[position...].firstIndex(of: "<") else { return nil }
+            let rest = text[open...]
+            if rest.hasPrefix("<!--") {
+                guard let end = text.range(of: "-->", range: text.index(open, offsetBy: 4)..<text.endIndex) else {
+                    return Unclosed(opening: "<!--", closing: "-->")
+                }
+                position = end.upperBound
+                continue
+            }
+            let name = rawTextElements.first { element in
+                guard rest.hasPrefix("<" + element) else { return false }
+                let after = rest.dropFirst(element.count + 1).first
+                return after == nil || after == ">" || after == "/" || after!.isWhitespace
+            }
+            guard let name else {
+                position = text.index(after: open)
+                continue
+            }
+            // Its end tag, after the start tag's ">".
+            guard let startEnd = text[open...].firstIndex(of: ">"),
+                  let end = text.range(of: "</" + name, range: text.index(after: startEnd)..<text.endIndex)
+            else { return Unclosed(opening: "<\(name)>", closing: "</\(name)>") }
+            position = end.upperBound
+        }
+        return nil
+    }
+
     /// A `mailto:` link to `address`, every character of it written as a numeric character
     /// reference: a browser reads it as usual (a click opens the mail app), but an address harvester
     /// looking for "@" in the page source doesn't.

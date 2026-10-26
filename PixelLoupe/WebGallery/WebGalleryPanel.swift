@@ -168,8 +168,8 @@ struct WebGalleryPanel: View {
             } header: {
                 Text("Head")
             } footer: {
-                Text("Added at the end of every page's <head>, as typed. Not in the preview.")
-                    .foregroundStyle(.secondary)
+                codeFooter(model.settings.headHTML, note: "Added at the end of every page's <head>, as typed. Not in the preview.",
+                           identifier: "webGalleryHeadWarning")
             }
             Section {
                 CodeTextView(text: $model.settings.bodyHTML, accessibilityLabel: "Body")
@@ -178,8 +178,8 @@ struct WebGalleryPanel: View {
             } header: {
                 Text("Body")
             } footer: {
-                Text("Added at the end of every page's <body>, as typed. Not in the preview.")
-                    .foregroundStyle(.secondary)
+                codeFooter(model.settings.bodyHTML, note: "Added at the end of every page's <body>, as typed. Not in the preview.",
+                           identifier: "webGalleryBodyWarning")
             }
             Section("Output") {
                 Picker("Watermark", selection: $model.settings.watermarkName) {
@@ -208,6 +208,19 @@ struct WebGalleryPanel: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
+    }
+
+    /// What the Head or Body text is for, or a warning when it opens something it doesn't close.
+    @ViewBuilder
+    private func codeFooter(_ code: String, note: String, identifier: String) -> some View {
+        if let unclosed = WebGalleryHTML.unclosed(in: code) {
+            Label(unclosed.warning, systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .accessibilityIdentifier(identifier)
+        } else {
+            Text(note)
+                .foregroundStyle(.secondary)
+        }
     }
 
     @ViewBuilder
