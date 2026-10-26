@@ -584,7 +584,9 @@ at the end of its row in the mask list deletes it; all of it is undoable, one st
 brush strokes, not bitmaps, in the photo's coordinates before cropping, so they stay on the subject if the crop changes and are as
 sharp in an export as on screen. Delete All Empty Masks also removes brushes that were never painted. **Subject** and
 **Background** (the picker, or View ▸ Select Subject / Select Background) select what Vision finds as the photo's subject, or
-everything else; Feather softens the edge and Edge shrinks or grows the selection. The subject is found once per photo (it takes
+everything else; Feather softens the edge and Edge shrinks or grows the selection. The brush refines either one: drag on the photo
+to add to the selection and ⌥-drag to take away (the latest stroke wins where strokes cross, and Invert flips what was found, not
+the strokes). The subject is found once per photo (it takes
 a moment the first time, and the panel says "Finding the subject…") and kept in the app's caches, not the catalog; it's found
 again only when Lens Corrections, Rotate/Flip or Transform change, and pasted settings find each photo's own subject (see
 `docs/adr/0003-subject-matte-cache.md`). Range, sky and people masks aren't available yet; a Lightroom import brings in linear and radial gradients (the old graduated and radial filters and the newer

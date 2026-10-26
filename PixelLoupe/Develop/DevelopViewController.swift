@@ -999,10 +999,11 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         refreshSubjectStatus()
     }
 
-    /// Whether a brush mask is selected in the Masking tool, so [ ] ⇧[ ⇧] size and soften the brush.
+    /// Whether a brush mask, or a Subject or Background mask the brush refines, is selected in the Masking tool,
+    /// so [ ] ⇧[ ⇧] size and soften the brush.
     var isBrushing: Bool {
         guard state.developTool == .mask, let selected = adjustments.masks.first(where: { $0.id == maskPanel.selectedID }) else { return false }
-        return selected.components.contains { if case .brush = $0.shape { true } else { false } }
+        return selected.usesSubject || selected.components.contains(where: \.shape.isBrush)
     }
 
     /// [ and ]: a smaller or larger brush.

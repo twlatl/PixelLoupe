@@ -64,6 +64,78 @@ struct SubjectMaskTests {
         #expect(soft > 0.1 && soft < 0.9, "\(soft)")
     }
 
+    // MARK: Refining with the brush
+
+    private func refining(_ x: Double, erasing: Bool = false) -> PhotoAdjustments.BrushStroke {
+        .init(points: [.init(x: x, y: 0.5)], size: 0.05, feather: 0, flow: 1, density: 1, isErasing: erasing)
+    }
+
+    @Test("The brush refines a Subject mask: painting adds, erasing takes away, and the latest stroke wins")
+    func brushRefines() throws {
+        // At the frame's size, so the subject's edge is crisp: the left half.
+        let bytes = (0..<100).flatMap { _ in [UInt8](repeating: 255, count: 100) + [UInt8](repeating: 0, count: 100) }
+        let matte = try #require(Matte(width: 200, height: 100, bytes: Data(bytes)).image)
+        var refined = mask(.subject(.init(feather: 0, edge: 0)))
+        func at(_ x: Int) throws -> Float {
+            value(try #require(LocalAdjustmentRenderer.mask(for: refined, extent: extent, subject: matte)), x, 50)
+        }
+
+        refined.beginRefinement(refining(0.75))
+        #expect(refined.components.map(\.mode) == [.add, .add, .subtract])
+        #expect(try at(150) > 0.99, "added beyond the subject")
+        refined.beginRefinement(refining(0.25, erasing: true))
+        #expect(try at(50) < 0.01, "taken out of the subject")
+        #expect(try at(150) > 0.99, "the rest stays")
+        #expect(try at(20) > 0.99)
+        refined.beginRefinement(refining(0.25))
+        #expect(try at(50) > 0.99, "painted back")
+        refined.extendRefinement(to: .init(x: 0.3, y: 0.5))
+        for index in [1, 2] {
+            guard case .brush(let brush) = refined.components[index].shape else { Issue.record("not a brush"); continue }
+            #expect(brush.strokes.count == 3 && brush.strokes.last?.points.count == 2)
+        }
+
+        // Invert flips what was found, not the brush refining it.
+        refined.setInverted(true)
+        #expect(refined.components.map(\.isInverted) == [true, false, false])
+        #expect(try at(20) < 0.01, "the background now")
+        #expect(try at(180) > 0.99)
+        #expect(try at(50) > 0.99, "the stroke painted back still adds")
+        #expect(!refined.isEmpty && refined.isRefinement(1) && !refined.isRefinement(0))
+    }
+
+    @MainActor
+    @Test("Dragging over a Subject mask paints a refining stroke; ⌥ takes away")
+    func overlayRefines() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 220), styleMask: [.borderless], backing: .buffered, defer: false)
+        let overlay = MaskOverlayView(frame: NSRect(x: 0, y: 0, width: 420, height: 220))
+        window.contentView?.addSubview(overlay)
+        overlay.frameRect = CGRect(x: 10, y: 10, width: 400, height: 200)
+        overlay.adjustment = mask(.background(.init()))
+        var steps: [(PhotoAdjustments.LocalAdjustment, Bool, String)] = []
+        overlay.onChange = { steps.append(($0, $1, $2)) }
+        func event(_ type: NSEvent.EventType, _ x: Double, _ flags: NSEvent.ModifierFlags = []) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: NSPoint(x: x, y: 110), modifierFlags: flags, timestamp: 0, windowNumber: window.windowNumber,
+                               context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+        }
+        overlay.mouseDown(with: event(.leftMouseDown, 110))
+        overlay.mouseDragged(with: event(.leftMouseDragged, 150))
+        overlay.mouseUp(with: event(.leftMouseUp, 150))
+        let painted = steps.last?.0
+        #expect(steps.last?.1 == true && steps.last?.2 == "Brush Stroke")
+        #expect(painted?.components.count == 3)
+        if case .brush(let adding)? = painted?.components[1].shape {
+            #expect(adding.strokes.count == 1 && adding.strokes[0].points.count == 2 && !adding.strokes[0].isErasing)
+        } else { Issue.record("no adding brush") }
+
+        overlay.mouseDown(with: event(.leftMouseDown, 200, .option))
+        overlay.mouseUp(with: event(.leftMouseUp, 200, .option))
+        #expect(steps.last?.2 == "Erase")
+        if case .brush(let subtracting)? = steps.last?.0.components[2].shape {
+            #expect(subtracting.strokes.last?.isErasing == false, "⌥ paints what's taken away")
+        } else { Issue.record("no subtracting brush") }
+    }
+
     // MARK: Finding and keeping
 
     /// A store in its own folder, with a detector that counts its calls.
@@ -237,10 +309,15 @@ struct SubjectMaskTests {
         #expect(sent?.0.components.first?.shape == .subject(.init(feather: 0.6, edge: 0)))
         #expect(sent?.1 == "Mask Feather")
 
+        // The brush that refines it shows too, with how to use it.
+        let brush = try #require(subview("brushControls", of: NSStackView.self, in: panel.view))
+        let hint = try #require(subview("refineHint", of: NSTextField.self, in: brush))
+        #expect(!brush.isHidden && !hint.isHidden)
+
         var radial = PhotoAdjustments.LocalAdjustment()
         radial.components = [.init(shape: .radial(MaskGeometry.defaultRadial()))]
         panel.display(masks: [radial])
-        #expect(controls.isHidden)
+        #expect(controls.isHidden && brush.isHidden)
     }
 
     @MainActor

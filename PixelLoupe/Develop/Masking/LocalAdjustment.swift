@@ -60,6 +60,10 @@ nonisolated extension PhotoAdjustments {
             if case .brush(let brush) = self { brush.strokes.isEmpty } else { false }
         }
 
+        var isBrush: Bool {
+            if case .brush = self { true } else { false }
+        }
+
         var usesSubject: Bool {
             switch self {
             case .subject, .background: true
@@ -148,6 +152,57 @@ nonisolated extension PhotoAdjustments {
 }
 
 nonisolated extension PhotoAdjustments.LocalAdjustment {
+    // MARK: Refining a Subject or Background mask
+
+    /// Whether the component at `index` refines the mask rather than shaping it: on a Subject or Background
+    /// mask, the brush only adds to or takes away from what was found.
+    func isRefinement(_ index: Int) -> Bool {
+        usesSubject && components[index].shape.isBrush
+    }
+
+    /// Starts a brush stroke refining a Subject or Background mask: painting adds to the selection, erasing
+    /// (`stroke.isErasing`) takes away. The stroke goes into an adding brush and, erasing, into a subtracting
+    /// one (or the other way round), so wherever strokes cross, the latest wins.
+    mutating func beginRefinement(_ stroke: PhotoAdjustments.BrushStroke) {
+        let adding = refinementIndex(.add), subtracting = refinementIndex(.subtract)
+        var paint = stroke, erase = stroke
+        paint.isErasing = false
+        erase.isErasing = true
+        append(stroke.isErasing ? erase : paint, to: adding)
+        append(stroke.isErasing ? paint : erase, to: subtracting)
+    }
+
+    /// Continues the refining stroke begun last.
+    mutating func extendRefinement(to point: PhotoAdjustments.UnitPoint) {
+        for index in components.indices where isRefinement(index) {
+            guard case .brush(var brush) = components[index].shape, !brush.strokes.isEmpty else { continue }
+            brush.strokes[brush.strokes.count - 1].points.append(point)
+            components[index].shape = .brush(brush)
+        }
+    }
+
+    /// Inverts the mask's shapes (Invert). A Subject or Background mask's refining brush isn't inverted: it
+    /// still adds to and takes away from the inverted selection.
+    mutating func setInverted(_ isInverted: Bool) {
+        for index in components.indices where !isRefinement(index) { components[index].isInverted = isInverted }
+    }
+
+    /// The refining brush that adds (or subtracts), made the first time it's needed.
+    private mutating func refinementIndex(_ mode: PhotoAdjustments.MaskComponent.Mode) -> Int {
+        if let index = components.indices.first(where: { isRefinement($0) && components[$0].mode == mode }) { return index }
+        components.append(.init(shape: .brush(.init()), mode: mode))
+        return components.count - 1
+    }
+
+    private mutating func append(_ stroke: PhotoAdjustments.BrushStroke, to index: Int) {
+        guard case .brush(var brush) = components[index].shape else { return }
+        brush.strokes.append(stroke)
+        components[index].shape = .brush(brush)
+    }
+
+    // MARK: Decoding
+
+
     private enum CodingKeys: String, CodingKey { case id, name, isEnabled, amount, components, settings }
 
     init(from decoder: Decoder) throws {
