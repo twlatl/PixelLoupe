@@ -6,12 +6,14 @@ import CoreImage.CIFilterBuiltins
 /// (`BrushRasterizer`), so a mask costs one blend and the adjustments it asks for; spatial ones (clarity,
 /// texture, dehaze) run only when used.
 nonisolated enum LocalAdjustmentRenderer {
-    static func apply(_ masks: [PhotoAdjustments.LocalAdjustment], to image: CIImage) -> CIImage {
+    /// `subject` is the photo's subject matte (``SubjectMatteStore``), when a mask needs it and it's been
+    /// found; a Subject or Background shape adds nothing without it.
+    static func apply(_ masks: [PhotoAdjustments.LocalAdjustment], to image: CIImage, subject: CIImage? = nil) -> CIImage {
         var result = image
         let extent = image.extent
         guard !extent.isEmpty, !extent.isInfinite else { return image }
         for mask in masks where mask.isActive {
-            guard let selection = self.mask(for: mask, extent: extent) else { continue }
+            guard let selection = self.mask(for: mask, extent: extent, subject: subject) else { continue }
             let adjusted = adjust(result, with: mask.settings)
             let blend = CIFilter.blendWithMask()
             blend.inputImage = adjusted
@@ -25,10 +27,10 @@ nonisolated enum LocalAdjustmentRenderer {
     // MARK: - Masks
 
     /// The mask as a gray image over `extent` (white where the adjustment applies in full), scaled by the amount.
-    static func mask(for adjustment: PhotoAdjustments.LocalAdjustment, extent: CGRect) -> CIImage? {
+    static func mask(for adjustment: PhotoAdjustments.LocalAdjustment, extent: CGRect, subject: CIImage? = nil) -> CIImage? {
         var selection: CIImage?
         for component in adjustment.components {
-            guard var shape = shape(component.shape, extent: extent) else { continue }
+            guard var shape = shape(component.shape, extent: extent, subject: subject) else { continue }
             if component.isInverted { shape = invert(shape) }
             guard let current = selection else {
                 // The first shape starts the mask (subtracting from nothing leaves nothing).
@@ -65,7 +67,7 @@ nonisolated enum LocalAdjustmentRenderer {
         image.applyingFilter("CIColorInvert").cropped(to: image.extent)
     }
 
-    private static func shape(_ shape: PhotoAdjustments.MaskShape, extent: CGRect) -> CIImage? {
+    private static func shape(_ shape: PhotoAdjustments.MaskShape, extent: CGRect, subject: CIImage?) -> CIImage? {
         func point(_ p: PhotoAdjustments.UnitPoint) -> CGPoint {
             CGPoint(x: extent.minX + CGFloat(p.x) * extent.width, y: extent.minY + CGFloat(p.y) * extent.height)
         }
@@ -99,7 +101,41 @@ nonisolated enum LocalAdjustmentRenderer {
         case .brush(let brush):
             // Black when nothing is painted, so an inverted empty brush selects everything.
             return BrushRasterizer.image(for: brush, extent: extent)
+        case .subject(let selection):
+            return subject.map { refine(placed($0, in: extent), selection, extent: extent) }
+        case .background(let selection):
+            return subject.map { refine(invert(placed($0, in: extent)), selection, extent: extent) }
         }
+    }
+
+    /// The subject matte stretched over the frame (it was found on the same frame, smaller).
+    private static func placed(_ matte: CIImage, in extent: CGRect) -> CIImage {
+        let size = matte.extent
+        guard size.width > 0, size.height > 0 else { return black(extent) }
+        return matte
+            .transformed(by: CGAffineTransform(translationX: -size.minX, y: -size.minY))
+            .transformed(by: CGAffineTransform(scaleX: extent.width / size.width, y: extent.height / size.height))
+            .transformed(by: CGAffineTransform(translationX: extent.minX, y: extent.minY))
+            .cropped(to: extent)
+    }
+
+    /// Edge grows (or shrinks) the selection by up to 3% of the long edge; Feather then softens it by up
+    /// to 3%.
+    static func refine(_ selection: CIImage, _ settings: PhotoAdjustments.SubjectSelection, extent: CGRect) -> CIImage {
+        let longEdge = max(extent.width, extent.height)
+        var result = selection
+        let edge = settings.edge.clamped(to: -1...1)
+        let reach = abs(edge) * 0.03 * longEdge
+        if reach >= 0.5 {
+            result = result.clampedToExtent()
+                .applyingFilter(edge > 0 ? "CIMorphologyMaximum" : "CIMorphologyMinimum", parameters: [kCIInputRadiusKey: reach])
+                .cropped(to: extent)
+        }
+        let softness = settings.feather.clamped(to: 0...1) * 0.03 * longEdge
+        if softness >= 0.5 {
+            result = result.clampedToExtent().applyingGaussianBlur(sigma: softness / 2).cropped(to: extent)
+        }
+        return result
     }
 
     // MARK: - Adjusting

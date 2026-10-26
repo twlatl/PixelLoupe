@@ -43,6 +43,8 @@ nonisolated final class DevelopSource {
     private let baseImage: CIImage?
     private var scaledBase: (scale: CGFloat, image: CIImage)?
     private var redEyeFilters: (scale: CGFloat, filters: [CIFilter])?
+    /// Where Subject and Background masks find the photo's subject.
+    var subjectMattes = SubjectMatteStore.shared
 
     private struct RawDefaults {
         var neutralTemperature: Float
@@ -381,7 +383,12 @@ nonisolated enum AdjustmentPipeline {
         image = SharpenRenderer.apply(adjustments.sharpen, to: image, scale: scale)
 
         // Masks work on the whole frame, so before the crop moves it.
-        image = LocalAdjustmentRenderer.apply(adjustments.masks, to: image)
+        // Subject and Background masks need the photo's subject: off the main thread (thumbnails, exports)
+        // wait for it to be found; Develop's preview draws without it until it's ready.
+        let subject = adjustments.masks.contains(where: \.usesSubject)
+            ? source.subjectMattes.matte(for: source, adjustments: adjustments, waiting: !Thread.isMainThread)?.image
+            : nil
+        image = LocalAdjustmentRenderer.apply(adjustments.masks, to: image, subject: subject)
 
         // Straighten and crop before the vignette and grain, so they follow the crop (Lightroom's
         // post-crop vignette).

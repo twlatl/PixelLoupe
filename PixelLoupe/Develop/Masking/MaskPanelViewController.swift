@@ -1,7 +1,7 @@
 import AppKit
 
-/// The Masking panel: the photo's masks, buttons to add a linear or radial gradient or a brush, and the
-/// selected mask's sliders (and the brush's, for a brush mask). Every edit calls `onChange` (final ones
+/// The Masking panel: the photo's masks, a picker to add a linear or radial gradient, a brush, or the
+/// subject or background, and the selected mask's sliders (and the brush's, or the subject's edge). Every edit calls `onChange` (final ones
 /// are saved and undoable).
 final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
     private(set) var masks: [PhotoAdjustments.LocalAdjustment] = []
@@ -13,7 +13,46 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
     var onOverlayChange: ((Bool) -> Void)?
     var onBrushChange: ((MaskGeometry.BrushSettings) -> Void)?
 
-    enum MaskKind: Sendable { case linear, radial, brush }
+    enum MaskKind: CaseIterable, Sendable {
+        case linear, radial, brush, subject, background
+
+        var title: String {
+            switch self {
+            case .linear: "Linear"
+            case .radial: "Radial"
+            case .brush: "Brush"
+            case .subject: "Subject"
+            case .background: "Background"
+            }
+        }
+
+        var toolTip: String {
+            switch self {
+            case .linear: "Add a Linear Gradient (M)"
+            case .radial: "Add a Radial Gradient (⇧M)"
+            case .brush: "Add a Brush (K)"
+            case .subject: "Select Subject"
+            case .background: "Select Background"
+            }
+        }
+
+        /// The kind a mask was added as (its first shape's).
+        init?(_ mask: PhotoAdjustments.LocalAdjustment) {
+            switch mask.components.first?.shape {
+            case .linear?: self = .linear
+            case .radial?: self = .radial
+            case .brush?: self = .brush
+            case .subject?: self = .subject
+            case .background?: self = .background
+            case nil: return nil
+            }
+        }
+    }
+
+    /// Whether the photo's subject has been found, for a Subject or Background mask.
+    var subjectStatus = SubjectMatteStore.Status.finding {
+        didSet { if subjectStatus != oldValue { refreshers.forEach { $0() } } }
+    }
 
     /// What the next brush stroke is painted with (the Brush sliders, and [ ] ⇧[ ⇧] on the photo).
     var brush = MaskGeometry.BrushSettings() {
@@ -28,6 +67,7 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         didSet { setControlsEnabled(isEditingEnabled, in: view) }
     }
 
+    private let kindPicker = AccentSegmentedControl()
     private let table = NSTableView()
     private let overlayCheckbox = NSButton(checkboxWithTitle: "Show Overlay (O)", target: nil, action: nil)
     private let kindLabel = NSTextField(labelWithString: "")
@@ -37,11 +77,13 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
     private var refreshers: [() -> Void] = []
     private var brushRefreshers: [() -> Void] = []
     private let brushControls = NSStackView()
+    private let subjectControls = NSStackView()
+    private let refineHint = NSTextField(wrappingLabelWithString: "Refine with the brush: drag on the photo to add to the selection, ⌥-drag to take away.")
     private var actionTargets: [ActionTarget] = []
     /// The targets for each row's checkbox and delete button (replaced whenever the rows are rebuilt).
     private var rowTargets: [UUID: ActionTarget] = [:]
     private var rowDeleteTargets: [UUID: ActionTarget] = [:]
-    private let emptyLabel = NSTextField(wrappingLabelWithString: "Add a linear (M) or radial (⇧M) gradient, or a brush (K), to adjust part of the photo.")
+    private let emptyLabel = NSTextField(wrappingLabelWithString: "Add a linear (M) or radial (⇧M) gradient, a brush (K), or the subject or background, to adjust part of the photo.")
 
     private var selected: PhotoAdjustments.LocalAdjustment? { masks.first { $0.id == selectedID } }
 
@@ -50,24 +92,28 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         title.font = .systemFont(ofSize: 13, weight: .semibold)
         title.textColor = .secondaryLabelColor
 
-        let linear = NSButton(title: "Linear", target: nil, action: nil)
-        let radial = NSButton(title: "Radial", target: nil, action: nil)
-        let brush = NSButton(title: "Brush", target: nil, action: nil)
-        for (button, kind, identifier, tip) in [
-            (linear, MaskKind.linear, "addLinearMask", "Linear Gradient (M)"), (radial, .radial, "addRadialMask", "Radial Gradient (⇧M)"),
-            (brush, .brush, "addBrushMask", "Brush (K)"),
-        ] {
-            button.controlSize = .small
-            button.bezelStyle = .rounded
-            button.toolTip = tip
-            button.setAccessibilityIdentifier(identifier)
-            let target = ActionTarget { [weak self] _ in self?.onAdd?(kind) }
-            button.target = target
-            button.action = #selector(ActionTarget.fire(_:))
-            actionTargets.append(target)
+        // One segment per kind of mask: clicking one adds that kind, and the selected mask's kind is the one
+        // highlighted (in the accent color, or Monochrome Mode's).
+        let kinds = MaskKind.allCases
+        kindPicker.segmentCount = kinds.count
+        for (index, kind) in kinds.enumerated() {
+            kindPicker.setLabel(kind.title, forSegment: index)
+            kindPicker.setToolTip(kind.toolTip, forSegment: index)
         }
-        let buttons = NSStackView(views: [linear, radial, brush])
-        buttons.spacing = 8
+        kindPicker.trackingMode = .selectOne
+        kindPicker.controlSize = .small
+        kindPicker.segmentDistribution = .fillProportionally
+        kindPicker.setAccessibilityIdentifier("addMask")
+        kindPicker.setAccessibilityLabel("Add Mask")
+        let pickTarget = ActionTarget { [weak self] control in
+            let index = (control as! NSSegmentedControl).selectedSegment
+            guard kinds.indices.contains(index) else { return }
+            self?.onAdd?(kinds[index])
+        }
+        kindPicker.target = pickTarget
+        kindPicker.action = #selector(ActionTarget.fire(_:))
+        actionTargets.append(pickTarget)
+        Accent.apply(in: kindPicker)
 
         overlayCheckbox.controlSize = .small
         overlayCheckbox.setAccessibilityIdentifier("maskOverlayCheckbox")
@@ -101,13 +147,13 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         detail.spacing = 8
         buildDetail()
 
-        let stack = NSStackView(views: [title, buttons, overlayCheckbox, scroll, emptyLabel, detail])
+        let stack = NSStackView(views: [title, kindPicker, overlayCheckbox, scroll, emptyLabel, detail])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
         stack.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 20, right: 14)
         stack.translatesAutoresizingMaskIntoConstraints = false
-        for view in [scroll, detail] { view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -28).isActive = true }
+        for view in [kindPicker, scroll, detail] { view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -28).isActive = true }
 
         let document = FlippedView()
         document.addSubview(stack)
@@ -156,6 +202,8 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         refreshers.append { [weak self, weak amount] in amount?.value = self?.selected?.amount ?? 1 }
         detail.addArrangedSubview(amount)
         sliderRows.append(amount)
+        // A Subject or Background mask shows its edge, then the brush that refines it.
+        buildSubjectControls()
         buildBrushControls()
 
         for (name, range, path, format) in sliders {
@@ -187,6 +235,11 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         brushControls.alignment = .leading
         brushControls.spacing = 8
         brushControls.setAccessibilityIdentifier("brushControls")
+        refineHint.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        refineHint.textColor = .secondaryLabelColor
+        refineHint.setAccessibilityIdentifier("refineHint")
+        brushControls.addArrangedSubview(refineHint)
+        refineHint.widthAnchor.constraint(equalTo: brushControls.widthAnchor).isActive = true
         for (name, range, path, format) in rows {
             let row = SliderRow(title: name, range: range, defaultValue: defaults[keyPath: path], format: format)
             row.setAccessibilityIdentifier("slider.Brush.\(name)")
@@ -207,11 +260,84 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         brushRefreshers.forEach { $0() }
         refreshers.append { [weak self] in
             guard let self else { return }
-            brushControls.isHidden = !(selected?.components.contains { if case .brush = $0.shape { true } else { false } } ?? false)
+            let refines = selected?.usesSubject ?? false
+            brushControls.isHidden = !(refines || (selected?.components.contains(where: \.shape.isBrush) ?? false))
+            refineHint.isHidden = !refines
         }
         detail.addArrangedSubview(brushControls)
         detail.setCustomSpacing(12, after: brushControls)
         brushControls.widthAnchor.constraint(equalTo: detail.widthAnchor).isActive = true
+    }
+
+    /// Feather and Edge for a Subject or Background mask, and whether its subject has been found.
+    private func buildSubjectControls() {
+        subjectControls.orientation = .vertical
+        subjectControls.alignment = .leading
+        subjectControls.spacing = 8
+        subjectControls.setAccessibilityIdentifier("subjectControls")
+
+        let status = NSTextField(wrappingLabelWithString: "")
+        status.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        status.textColor = .secondaryLabelColor
+        status.setAccessibilityIdentifier("subjectStatus")
+        subjectControls.addArrangedSubview(status)
+
+        let rows: [(String, ClosedRange<Double>, WritableKeyPath<PhotoAdjustments.SubjectSelection, Double>, Double, (Double) -> String)] = [
+            ("Feather", 0...1, \.feather, PhotoAdjustments.SubjectSelection().feather, { String(format: "%.0f", $0 * 100) }),
+            ("Edge", -1...1, \.edge, 0, MaskPanelViewController.signedPercent),
+        ]
+        var sliders: [SliderRow] = []
+        for (name, range, path, defaultValue, format) in rows {
+            let row = SliderRow(title: name, range: range, defaultValue: defaultValue, format: format)
+            row.setAccessibilityIdentifier("slider.Subject.\(name)")
+            row.slider.setAccessibilityIdentifier("slider.Subject.\(name)")
+            row.onChange = { [weak self] value, isFinal in
+                self?.edit("Mask \(name)", isFinal: isFinal) { mask in
+                    for index in mask.components.indices {
+                        switch mask.components[index].shape {
+                        case .subject(var selection):
+                            selection[keyPath: path] = value
+                            mask.components[index].shape = .subject(selection)
+                        case .background(var selection):
+                            selection[keyPath: path] = value
+                            mask.components[index].shape = .background(selection)
+                        case .linear, .radial, .brush:
+                            break
+                        }
+                    }
+                }
+            }
+            refreshers.append { [weak self, weak row] in
+                let selection = self?.selected?.components.lazy.compactMap(\.shape.subjectSelection).first
+                row?.value = selection?[keyPath: path] ?? defaultValue
+            }
+            subjectControls.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: subjectControls.widthAnchor).isActive = true
+            sliders.append(row)
+        }
+        let separator = NSBox()
+        separator.boxType = .separator
+        subjectControls.setCustomSpacing(12, after: sliders.last!)
+        subjectControls.addArrangedSubview(separator)
+        separator.widthAnchor.constraint(equalTo: subjectControls.widthAnchor).isActive = true
+        status.widthAnchor.constraint(equalTo: subjectControls.widthAnchor).isActive = true
+
+        refreshers.append { [weak self] in
+            guard let self else { return }
+            let usesSubject = selected?.usesSubject ?? false
+            subjectControls.isHidden = !usesSubject
+            // Found: just the sliders. Not yet, or nothing found: say so (the sliders have nothing to work on).
+            status.stringValue = switch subjectStatus {
+            case .finding: "Finding the subject…"
+            case .noSubject: "No subject found"
+            case .found: ""
+            }
+            status.isHidden = subjectStatus == .found
+            for slider in sliders { slider.isHidden = subjectStatus == .noSubject }
+        }
+        detail.addArrangedSubview(subjectControls)
+        detail.setCustomSpacing(12, after: subjectControls)
+        subjectControls.widthAnchor.constraint(equalTo: detail.widthAnchor).isActive = true
     }
 
     /// The mask's type on the left and the Invert switch on the right, above every mask's controls.
@@ -231,9 +357,7 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         invertSwitch.setAccessibilityIdentifier("maskInvert")
         let invertTarget = ActionTarget { [weak self] control in
             let on = (control as! NSSwitch).state == .on
-            self?.edit("Invert Mask", isFinal: true) { mask in
-                for index in mask.components.indices { mask.components[index].isInverted = on }
-            }
+            self?.edit("Invert Mask", isFinal: true) { $0.setInverted(on) }
         }
         invertSwitch.target = invertTarget
         invertSwitch.action = #selector(ActionTarget.fire(_:))
@@ -303,9 +427,16 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
             table.deselectAll(nil)
         }
         refreshers.forEach { $0() }
+        showSelectedKind()
         detail.isHidden = selected == nil
         emptyLabel.isHidden = !masks.isEmpty
         setControlsEnabled(isEditingEnabled, in: view)
+    }
+
+    /// Highlights the selected mask's kind in the picker (none without a selection).
+    private func showSelectedKind() {
+        let index = selected.flatMap(MaskKind.init).flatMap(MaskKind.allCases.firstIndex(of:)) ?? -1
+        kindPicker.selectedSegment = index
     }
 
     private func reloadRowOnly(_ index: Int) {
@@ -369,6 +500,7 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         guard id != selectedID else { return }
         selectedID = id
         refreshers.forEach { $0() }
+        showSelectedKind()
         detail.isHidden = false
         onSelectionChange?(id)
     }
