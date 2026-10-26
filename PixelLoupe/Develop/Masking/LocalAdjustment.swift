@@ -17,6 +17,9 @@ nonisolated extension PhotoAdjustments {
         var settings = LocalSettings()
 
         var isActive: Bool { isEnabled && amount > 0 && !components.isEmpty && settings.isActive }
+
+        /// Nothing in it: no shapes, or only brushes that haven't been painted (Delete All Empty Masks).
+        var isEmpty: Bool { components.allSatisfy(\.shape.isEmpty) }
     }
 
     /// One shape of a mask, and how it combines with the shapes before it.
@@ -34,12 +37,18 @@ nonisolated extension PhotoAdjustments {
     enum MaskShape: Codable, Equatable, Sendable {
         case linear(LinearGradient)
         case radial(RadialGradient)
+        case brush(BrushMask)
 
         var title: String {
             switch self {
             case .linear: "Linear Gradient"
             case .radial: "Radial Gradient"
+            case .brush: "Brush"
             }
+        }
+
+        var isEmpty: Bool {
+            if case .brush(let brush) = self { brush.strokes.isEmpty } else { false }
         }
     }
 
@@ -61,7 +70,27 @@ nonisolated extension PhotoAdjustments {
         var feather = 0.5
     }
 
-    struct UnitPoint: Codable, Equatable, Sendable {
+    /// Painted strokes, in order; an erasing stroke takes away what the strokes before it painted.
+    struct BrushMask: Codable, Hashable, Sendable {
+        var strokes: [BrushStroke] = []
+    }
+
+    /// One drag of the brush: the dabs follow `points`, each a soft disc with this stroke's settings.
+    struct BrushStroke: Codable, Hashable, Sendable {
+        var points: [UnitPoint]
+        /// The brush's radius as a fraction of the frame's long edge, so it covers the same part of the
+        /// photo at any size.
+        var size: Double
+        /// 0…1: how far in from the edge the softening reaches.
+        var feather: Double
+        /// 0…1: how much each dab adds, so going back over a spot builds it up.
+        var flow: Double
+        /// 0…1: the most the stroke reaches, however often it goes over a spot.
+        var density: Double
+        var isErasing = false
+    }
+
+    struct UnitPoint: Codable, Hashable, Sendable {
         var x: Double
         var y: Double
     }

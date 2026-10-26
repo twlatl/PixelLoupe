@@ -137,11 +137,12 @@ nonisolated enum DevelopSetting: String, CaseIterable, Codable, Sendable {
 }
 
 nonisolated extension PhotoAdjustments {
-    /// Lightroom's Delete All Empty Masks: masks with nothing in them (every component removed).
-    var hasEmptyMasks: Bool { masks.contains { $0.components.isEmpty } }
+    /// Lightroom's Delete All Empty Masks: masks with nothing in them (every component removed, or a
+    /// brush never painted).
+    var hasEmptyMasks: Bool { masks.contains(where: \.isEmpty) }
 
     mutating func deleteEmptyMasks() {
-        masks.removeAll { $0.components.isEmpty }
+        masks.removeAll(where: \.isEmpty)
     }
 
     /// Convert to Black & White: the Black & White section's Auto, as in the panel.

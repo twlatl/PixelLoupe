@@ -50,7 +50,8 @@ struct KeyCommandTests {
         #expect(KeyCommand(event: event("d", modifiers: .option)) == nil)
         #expect(KeyCommand(event: event("m")) == .linearMask, "M adds a linear gradient mask")
         #expect(KeyCommand(event: event("z")) == .toggleZoom, "Z toggles zoom, as in Lightroom")
-        #expect(KeyCommand(event: event("k")) == nil)
+        #expect(KeyCommand(event: event("k")) == .brushMask, "K adds a brush mask, as in Lightroom")
+        #expect(KeyCommand(event: event("l")) == nil)
         #expect(KeyCommand(event: event("a")) == nil)
     }
 }
@@ -92,6 +93,11 @@ struct MainMenuTests {
     @Test func cropIsInTheViewMenuWithR() throws {
         let crop = try item(#selector(PixelLoupeActions.cropTool(_:)), in: "View")
         #expect(crop.keyEquivalent == "r" && crop.keyEquivalentModifierMask.isEmpty)
+    }
+
+    @Test func brushMaskIsInTheViewMenuWithK() throws {
+        let brush = try item(#selector(PixelLoupeActions.addBrushMask(_:)), in: "View")
+        #expect(brush.title == "Brush Mask" && brush.keyEquivalent == "k" && brush.keyEquivalentModifierMask.isEmpty)
     }
 
     @Test func addKeywordsIsCommandKAfterShowInFinder() throws {

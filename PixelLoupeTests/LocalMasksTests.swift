@@ -323,7 +323,10 @@ struct MaskHandleTests {
         mask.settings.exposure = 1
         overlay.adjustment = mask
         var steps: [(PhotoAdjustments.LocalAdjustment, Bool)] = []
-        overlay.onChange = { steps.append(($0, $1)) }
+        overlay.onChange = { adjustment, isFinal, action in
+            steps.append((adjustment, isFinal))
+            #expect(action == "Move Mask")
+        }
         func event(_ type: NSEvent.EventType, _ x: Double, _ y: Double) -> NSEvent {
             NSEvent.mouseEvent(with: type, location: NSPoint(x: x, y: y), modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
                                context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!

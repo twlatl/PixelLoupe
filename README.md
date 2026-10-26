@@ -120,7 +120,9 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `G` / `D` | Library / Develop (also `⌘1` / `⌘2` and Lightroom's `⌥⌘1` / `⌥⌘2`) |
 | `⌘3` | Map (also Lightroom's `⌥⌘3`; Lightroom has no single key for it) |
 | `0`–`5` | Set rating; Photo ▸ Set Rating and the grid's right-click menu show the keys (a pill over the photos confirms each rating, flag and label applied: "Rating ★★★", "Flag Rejected", "Label ●") |
-| `[` / `]` | Decrease / increase rating (each photo one star down or up) |
+| `[` / `]` | Decrease / increase rating (each photo one star down or up); with a brush mask selected in Masking, a smaller / larger brush |
+| `⇧[` / `⇧]` | With a brush mask selected in Masking: a harder / softer brush (Feather) |
+| `M` / `⇧M` / `K` | Develop Masking: add a linear gradient / radial gradient / brush mask (`O` shows the selected mask in red) |
 | `P` / `U` / `X` | Flagged / Unflagged / Rejected |
 | `6` / `7` / `8` / `9` | Color label red / yellow / green / blue; press the same key again to clear it (purple has no key, as in Lightroom: Photo ▸ Set Color Label) |
 | Shift-click | Select every photo between the last one clicked and this one (grid and filmstrip); `⌘⇧`-click adds the range |
@@ -571,12 +573,16 @@ clone) and red eyes; generative or AI removals can't be imported and are reporte
 ## Masking (Develop)
 
 The **Masking** tool (⇧W, or its button in the Develop sidebar) adjusts part of a photo. **M** adds a linear gradient, **⇧M** a
-radial one, and **O** shows the selected mask in red. On the photo, drag a linear gradient's lines (or its middle to move it),
-or a radial gradient's handles (edge, feather ring, center, and the outer handle to turn it). Each mask has Amount, Exposure,
-Contrast, Highlights, Shadows, Whites, Blacks, Temp, Tint, Saturation, Clarity, Texture and Dehaze sliders and an Invert
-checkbox, and the red ⊗ button at the end of its row in the mask list deletes it; all of it is undoable. Masks are stored as shapes, not bitmaps, in the photo's coordinates before
-cropping, so they stay on the subject if the crop changes. Brush, range and AI (subject, sky, people) masks aren't
-available yet; a Lightroom import brings in linear and radial gradients (the old graduated and radial filters and the newer
+radial one, **K** a brush, and **O** shows the selected mask in red. On the photo, drag a linear gradient's lines (or its middle to move it),
+or a radial gradient's handles (edge, feather ring, center, and the outer handle to turn it). On a brush mask, drag to paint and
+⌥-drag to erase; the pointer shows the brush's edge and where its feather starts. The brush's Size (a share of the photo's long
+edge), Feather, Flow (how much each pass adds) and Density (the most a stroke reaches) apply to the next stroke, and `[` `]` and
+`⇧[` `⇧]` change its size and feather. Each mask has its type and an Invert switch at the top, then Amount, Exposure,
+Contrast, Highlights, Shadows, Whites, Blacks, Temp, Tint, Saturation, Clarity, Texture and Dehaze sliders, and the red ⊗ button
+at the end of its row in the mask list deletes it; all of it is undoable, one step per brush stroke. Masks are stored as shapes and
+brush strokes, not bitmaps, in the photo's coordinates before cropping, so they stay on the subject if the crop changes and are as
+sharp in an export as on screen. Delete All Empty Masks also removes brushes that were never painted. Range and AI (subject, sky,
+people) masks aren't available yet; a Lightroom import brings in linear and radial gradients (the old graduated and radial filters and the newer
 masks) and reports the rest.
 
 ## Crop import

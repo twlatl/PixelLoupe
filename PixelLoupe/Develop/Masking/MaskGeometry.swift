@@ -123,4 +123,44 @@ nonisolated enum MaskGeometry {
         }
         return result
     }
+
+    // MARK: Brush
+
+    /// What the next brush stroke is painted with (the Brush sliders). A stroke keeps the settings it was
+    /// painted with, so changing them doesn't touch what is already painted.
+    struct BrushSettings: Equatable, Sendable {
+        /// The radius as a fraction of the frame's long edge.
+        var size = 0.04
+        var feather = 0.5
+        var flow = 1.0
+        var density = 1.0
+
+        static let sizeRange = 0.002...0.25
+
+        /// [ and ] (Lightroom's brush size keys): a step smaller or larger.
+        mutating func stepSize(_ steps: Int) {
+            size = (size * pow(1.2, Double(steps))).clamped(to: Self.sizeRange)
+        }
+
+        /// ⇧[ and ⇧]: a tenth less or more feather.
+        mutating func stepFeather(_ steps: Int) {
+            feather = ((feather + 0.1 * Double(steps)) * 10).rounded() / 10
+            feather = feather.clamped(to: 0...1)
+        }
+
+        func stroke(at point: PhotoAdjustments.UnitPoint, erasing: Bool) -> PhotoAdjustments.BrushStroke {
+            .init(points: [point], size: size, feather: feather, flow: flow, density: density, isErasing: erasing)
+        }
+    }
+
+    /// A point on the frame (pixels) as a unit point, rounded to keep painted strokes small in the catalog.
+    static func unitPoint(_ point: CGPoint, frame: CGSize) -> PhotoAdjustments.UnitPoint {
+        func rounded(_ value: Double) -> Double { (value * 100_000).rounded() / 100_000 }
+        return .init(x: rounded(Double(point.x / max(frame.width, 1))), y: rounded(Double(point.y / max(frame.height, 1))))
+    }
+
+    /// The brush's radius in frame pixels.
+    static func brushRadius(_ size: Double, frame: CGSize) -> CGFloat {
+        CGFloat(size) * max(frame.width, frame.height)
+    }
 }

@@ -2,8 +2,9 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 
 /// Applies masks' local adjustments: each is the photo adjusted by its sliders, blended in through
-/// its mask. Gradients are analytic Core Image gradients, so a mask costs one blend and the adjustments
-/// it asks for; spatial ones (clarity, texture, dehaze) run only when used.
+/// its mask. Gradients are analytic Core Image gradients and brushes are painted at the render's size
+/// (`BrushRasterizer`), so a mask costs one blend and the adjustments it asks for; spatial ones (clarity,
+/// texture, dehaze) run only when used.
 nonisolated enum LocalAdjustmentRenderer {
     static func apply(_ masks: [PhotoAdjustments.LocalAdjustment], to image: CIImage) -> CIImage {
         var result = image
@@ -95,6 +96,9 @@ nonisolated enum LocalAdjustmentRenderer {
                 .transformed(by: CGAffineTransform(rotationAngle: CGFloat(ellipse.angle) * .pi / 180))
                 .transformed(by: CGAffineTransform(translationX: center.x, y: center.y))
                 .cropped(to: extent)
+        case .brush(let brush):
+            // Black when nothing is painted, so an inverted empty brush selects everything.
+            return BrushRasterizer.image(for: brush, extent: extent)
         }
     }
 
