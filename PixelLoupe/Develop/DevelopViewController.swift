@@ -928,6 +928,24 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             masksChanged(masks, isFinal: isFinal, actionName: actionName)
         }
         maskOverlay.onClickEmpty = { }
+        // The subject a Subject or Background mask needs, found in the background: draw it now.
+        subjectObserver = NotificationCenter.default.addObserver(forName: SubjectMatteStore.didFind, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.refreshSubjectStatus()
+                self?.metalView.needsDisplay = true
+            }
+        }
+    }
+
+    private var subjectObserver: NSObjectProtocol?
+
+    /// Tells the Masking panel whether the photo's subject has been found, and starts finding it if a mask
+    /// needs it.
+    private func refreshSubjectStatus() {
+        guard let source, adjustments.masks.contains(where: \.usesSubject) else { return }
+        let status = source.subjectMattes.status(for: source, adjustments: adjustments)
+        if status == .finding { _ = source.subjectMattes.matte(for: source, adjustments: adjustments, waiting: false) }
+        maskPanel.subjectStatus = status
     }
 
     /// Shows the photo's masks in the Masking panel and on the preview.
@@ -935,6 +953,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         maskPanel.isEditingEnabled = source != nil
         maskPanel.display(masks: adjustments.masks)
         maskOverlay.adjustment = adjustments.masks.first { $0.id == maskPanel.selectedID }
+        refreshSubjectStatus()
     }
 
     private func masksChanged(_ masks: [PhotoAdjustments.LocalAdjustment], isFinal: Bool, actionName: String) {
@@ -948,7 +967,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         maskOverlay.adjustment = masks.first { $0.id == maskPanel.selectedID }
     }
 
-    /// M, ⇧M and K: adds a gradient or brush mask (and opens the Masking tool).
+    /// M, ⇧M and K, and Select Subject and Select Background: adds a mask (and opens the Masking tool).
     func addMask(_ kind: MaskPanelViewController.MaskKind) {
         guard source != nil else { return }
         var mask = PhotoAdjustments.LocalAdjustment()
@@ -963,6 +982,12 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         case .brush:
             mask.components = [.init(shape: .brush(.init()))]
             mask.name = "Brush \(number)"
+        case .subject:
+            mask.components = [.init(shape: .subject(.init()))]
+            mask.name = "Subject \(number)"
+        case .background:
+            mask.components = [.init(shape: .background(.init()))]
+            mask.name = "Background \(number)"
         }
         mask.settings.exposure = -0.5
         if state.developTool != .mask { state.developTool = .mask }
@@ -971,6 +996,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         masksChanged(masks, isFinal: true, actionName: "Add Mask")
         maskPanel.display(masks: masks, selecting: mask.id)
         maskOverlay.adjustment = mask
+        refreshSubjectStatus()
     }
 
     /// Whether a brush mask is selected in the Masking tool, so [ ] ⇧[ ⇧] size and soften the brush.
@@ -1648,7 +1674,10 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
                         ? SharpenRenderer.maskPreview(for: image, masking: adjustments.sharpen.masking, scale: scale)
                         : ClippingOverlay.apply(to: image, shadows: clippingDisplay.shadows, highlights: clippingDisplay.highlights)
                     if masking, showsMaskOverlay, let selected = adjustments.masks.first(where: { $0.id == maskPanel.selectedID }),
-                       let mask = LocalAdjustmentRenderer.mask(for: selected, extent: image.extent) {
+                       let mask = LocalAdjustmentRenderer.mask(
+                           for: selected, extent: image.extent,
+                           subject: selected.usesSubject ? source.subjectMattes.matte(for: source, adjustments: adjustments, waiting: false)?.image : nil
+                       ) {
                         // The selected mask in red, half strength.
                         let half = mask.applyingFilter("CIColorMatrix", parameters: [
                             "inputRVector": CIVector(x: 0.5, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0.5, y: 0, z: 0, w: 0),

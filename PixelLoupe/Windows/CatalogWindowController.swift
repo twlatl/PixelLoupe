@@ -567,6 +567,16 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
     @objc func addLinearMask(_ sender: Any?) { _ = perform(.linearMask) }
     @objc func addRadialMask(_ sender: Any?) { _ = perform(.radialMask) }
     @objc func addBrushMask(_ sender: Any?) { _ = perform(.brushMask) }
+
+    @objc func addSubjectMask(_ sender: Any?) {
+        guard state.mode == .develop else { return }
+        rootViewController.main.develop.addMask(.subject)
+    }
+
+    @objc func addBackgroundMask(_ sender: Any?) {
+        guard state.mode == .develop else { return }
+        rootViewController.main.develop.addMask(.background)
+    }
     @objc func showMaskOverlay(_ sender: Any?) { _ = perform(.maskOverlay) }
 
     /// View ▸ Before/After: the item's tag is its ``BeforeAfterView``.
@@ -1209,7 +1219,8 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
             let typing = (window?.firstResponder as? NSText)?.isEditable ?? false
             (item as? NSMenuItem)?.state = state.mode == .develop && state.developTool == .retouch ? .on : .off
             return !typing && (state.mode == .develop || !state.selectedPhotoIDs.isEmpty)
-        case #selector(addLinearMask(_:)), #selector(addRadialMask(_:)), #selector(addBrushMask(_:)):
+        case #selector(addLinearMask(_:)), #selector(addRadialMask(_:)), #selector(addBrushMask(_:)), #selector(addSubjectMask(_:)),
+             #selector(addBackgroundMask(_:)):
             let typing = (window?.firstResponder as? NSText)?.isEditable ?? false
             return !typing && state.mode == .develop
         case #selector(showMaskOverlay(_:)):

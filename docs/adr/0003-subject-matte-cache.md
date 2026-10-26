@@ -1,0 +1,39 @@
+# Keep the subject Vision finds in a disk cache, keyed by file and geometry, not in the catalog
+
+Subject and Background masks (RAW-192) need the photo's subject, which Vision's
+`VNGenerateForegroundInstanceMaskRequest` finds in about a third of a second on a 1536-pixel image. That's too slow
+to do on every render, so `SubjectMatteStore` finds it once and keeps the matte (8-bit gray, 1536 px on the long
+edge):
+
+- in memory, for the last couple of dozen photos, and
+- on disk in the app's caches (`~/Library/Caches/<bundle id>/SubjectMattes`), compressed (LZFSE), one file per key.
+
+The key is a SHA-256 of the decoded file's path, whether it's the Smart Preview, and the settings that move pixels
+around the frame masks are placed on: Lens Corrections, Rotate/Flip and Transform. Nothing else is in the key, so
+tone and color edits never find the subject again. A photo's mask only ever stores its own Feather and Edge.
+
+Rendering off the main thread (thumbnails, exports, the Navigator, Compare) waits for the subject, finding it then
+if it must, so what's written always has the mask. Develop's preview draws on the main thread, so it doesn't wait:
+it draws without the mask, the subject is found in the background, and `SubjectMatteStore.didFind` makes it draw
+again (and the Masking panel says "Finding the subject…" meanwhile, or "No subject found").
+
+## Why
+
+- **The catalog stays small and portable.** A matte is about as big as a thumbnail. Stored in `adjustmentsData`
+  it would make every photo with a subject mask a megabyte bigger, travel with copied settings and presets to
+  photos it doesn't belong to, and go stale when the geometry changed.
+- **It can always be found again.** The matte follows from the file and the geometry, so losing the cache (it's
+  in Caches, which macOS may clear) only costs the time to find it again. Pasting settings onto another photo
+  finds that photo's subject without anything to invalidate.
+- **Found on the frame masks use, before tone.** Masks are placed on the frame after Lens Corrections and
+  Transform and before the crop, so that's what Vision looks at; a brighter or warmer edit doesn't change what
+  the subject is.
+
+## Costs
+
+- A photo whose original is offline finds its subject again from its Smart Preview (a different key), and the
+  two mattes can differ slightly.
+- An export of a photo whose subject hasn't been found yet waits about a third of a second per photo for it.
+- The matte is found at 1536 px and scaled, so a full-resolution export's subject edge is a little soft; Feather's
+  default softens it more anyway.
+- The `version` in the key has to change if the way the subject is found changes, or old mattes would be kept.

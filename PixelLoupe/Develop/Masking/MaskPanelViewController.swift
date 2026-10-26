@@ -1,7 +1,7 @@
 import AppKit
 
-/// The Masking panel: the photo's masks, buttons to add a linear or radial gradient or a brush, and the
-/// selected mask's sliders (and the brush's, for a brush mask). Every edit calls `onChange` (final ones
+/// The Masking panel: the photo's masks, buttons to add a linear or radial gradient, a brush, or the
+/// subject or background, and the selected mask's sliders (and the brush's, or the subject's edge). Every edit calls `onChange` (final ones
 /// are saved and undoable).
 final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
     private(set) var masks: [PhotoAdjustments.LocalAdjustment] = []
@@ -13,7 +13,12 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
     var onOverlayChange: ((Bool) -> Void)?
     var onBrushChange: ((MaskGeometry.BrushSettings) -> Void)?
 
-    enum MaskKind: Sendable { case linear, radial, brush }
+    enum MaskKind: Sendable { case linear, radial, brush, subject, background }
+
+    /// Whether the photo's subject has been found, for a Subject or Background mask.
+    var subjectStatus = SubjectMatteStore.Status.finding {
+        didSet { if subjectStatus != oldValue { refreshers.forEach { $0() } } }
+    }
 
     /// What the next brush stroke is painted with (the Brush sliders, and [ ] ⇧[ ⇧] on the photo).
     var brush = MaskGeometry.BrushSettings() {
@@ -37,11 +42,12 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
     private var refreshers: [() -> Void] = []
     private var brushRefreshers: [() -> Void] = []
     private let brushControls = NSStackView()
+    private let subjectControls = NSStackView()
     private var actionTargets: [ActionTarget] = []
     /// The targets for each row's checkbox and delete button (replaced whenever the rows are rebuilt).
     private var rowTargets: [UUID: ActionTarget] = [:]
     private var rowDeleteTargets: [UUID: ActionTarget] = [:]
-    private let emptyLabel = NSTextField(wrappingLabelWithString: "Add a linear (M) or radial (⇧M) gradient, or a brush (K), to adjust part of the photo.")
+    private let emptyLabel = NSTextField(wrappingLabelWithString: "Add a linear (M) or radial (⇧M) gradient, a brush (K), or the subject or background, to adjust part of the photo.")
 
     private var selected: PhotoAdjustments.LocalAdjustment? { masks.first { $0.id == selectedID } }
 
@@ -53,9 +59,12 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         let linear = NSButton(title: "Linear", target: nil, action: nil)
         let radial = NSButton(title: "Radial", target: nil, action: nil)
         let brush = NSButton(title: "Brush", target: nil, action: nil)
+        let subject = NSButton(title: "Subject", target: nil, action: nil)
+        let background = NSButton(title: "Background", target: nil, action: nil)
         for (button, kind, identifier, tip) in [
             (linear, MaskKind.linear, "addLinearMask", "Linear Gradient (M)"), (radial, .radial, "addRadialMask", "Radial Gradient (⇧M)"),
-            (brush, .brush, "addBrushMask", "Brush (K)"),
+            (brush, .brush, "addBrushMask", "Brush (K)"), (subject, .subject, "addSubjectMask", "Select Subject"),
+            (background, .background, "addBackgroundMask", "Select Background"),
         ] {
             button.controlSize = .small
             button.bezelStyle = .rounded
@@ -66,8 +75,15 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
             button.action = #selector(ActionTarget.fire(_:))
             actionTargets.append(target)
         }
-        let buttons = NSStackView(views: [linear, radial, brush])
-        buttons.spacing = 8
+        // Two rows, so they fit the sidebar.
+        let shapeButtons = NSStackView(views: [linear, radial, brush])
+        shapeButtons.spacing = 8
+        let subjectButtons = NSStackView(views: [subject, background])
+        subjectButtons.spacing = 8
+        let buttons = NSStackView(views: [shapeButtons, subjectButtons])
+        buttons.orientation = .vertical
+        buttons.alignment = .leading
+        buttons.spacing = 6
 
         overlayCheckbox.controlSize = .small
         overlayCheckbox.setAccessibilityIdentifier("maskOverlayCheckbox")
@@ -157,6 +173,7 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         detail.addArrangedSubview(amount)
         sliderRows.append(amount)
         buildBrushControls()
+        buildSubjectControls()
 
         for (name, range, path, format) in sliders {
             let row = SliderRow(title: name, range: range, defaultValue: 0, format: format)
@@ -212,6 +229,77 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         detail.addArrangedSubview(brushControls)
         detail.setCustomSpacing(12, after: brushControls)
         brushControls.widthAnchor.constraint(equalTo: detail.widthAnchor).isActive = true
+    }
+
+    /// Feather and Edge for a Subject or Background mask, and whether its subject has been found.
+    private func buildSubjectControls() {
+        subjectControls.orientation = .vertical
+        subjectControls.alignment = .leading
+        subjectControls.spacing = 8
+        subjectControls.setAccessibilityIdentifier("subjectControls")
+
+        let status = NSTextField(wrappingLabelWithString: "")
+        status.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        status.textColor = .secondaryLabelColor
+        status.setAccessibilityIdentifier("subjectStatus")
+        subjectControls.addArrangedSubview(status)
+
+        let rows: [(String, ClosedRange<Double>, WritableKeyPath<PhotoAdjustments.SubjectSelection, Double>, Double, (Double) -> String)] = [
+            ("Feather", 0...1, \.feather, PhotoAdjustments.SubjectSelection().feather, { String(format: "%.0f", $0 * 100) }),
+            ("Edge", -1...1, \.edge, 0, MaskPanelViewController.signedPercent),
+        ]
+        var sliders: [SliderRow] = []
+        for (name, range, path, defaultValue, format) in rows {
+            let row = SliderRow(title: name, range: range, defaultValue: defaultValue, format: format)
+            row.setAccessibilityIdentifier("slider.Subject.\(name)")
+            row.slider.setAccessibilityIdentifier("slider.Subject.\(name)")
+            row.onChange = { [weak self] value, isFinal in
+                self?.edit("Mask \(name)", isFinal: isFinal) { mask in
+                    for index in mask.components.indices {
+                        switch mask.components[index].shape {
+                        case .subject(var selection):
+                            selection[keyPath: path] = value
+                            mask.components[index].shape = .subject(selection)
+                        case .background(var selection):
+                            selection[keyPath: path] = value
+                            mask.components[index].shape = .background(selection)
+                        case .linear, .radial, .brush:
+                            break
+                        }
+                    }
+                }
+            }
+            refreshers.append { [weak self, weak row] in
+                let selection = self?.selected?.components.lazy.compactMap(\.shape.subjectSelection).first
+                row?.value = selection?[keyPath: path] ?? defaultValue
+            }
+            subjectControls.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: subjectControls.widthAnchor).isActive = true
+            sliders.append(row)
+        }
+        let separator = NSBox()
+        separator.boxType = .separator
+        subjectControls.setCustomSpacing(12, after: sliders.last!)
+        subjectControls.addArrangedSubview(separator)
+        separator.widthAnchor.constraint(equalTo: subjectControls.widthAnchor).isActive = true
+        status.widthAnchor.constraint(equalTo: subjectControls.widthAnchor).isActive = true
+
+        refreshers.append { [weak self] in
+            guard let self else { return }
+            let usesSubject = selected?.usesSubject ?? false
+            subjectControls.isHidden = !usesSubject
+            // Found: just the sliders. Not yet, or nothing found: say so (the sliders have nothing to work on).
+            status.stringValue = switch subjectStatus {
+            case .finding: "Finding the subject…"
+            case .noSubject: "No subject found"
+            case .found: ""
+            }
+            status.isHidden = subjectStatus == .found
+            for slider in sliders { slider.isHidden = subjectStatus == .noSubject }
+        }
+        detail.addArrangedSubview(subjectControls)
+        detail.setCustomSpacing(12, after: subjectControls)
+        subjectControls.widthAnchor.constraint(equalTo: detail.widthAnchor).isActive = true
     }
 
     /// The mask's type on the left and the Invert switch on the right, above every mask's controls.

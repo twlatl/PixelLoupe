@@ -20,6 +20,9 @@ nonisolated extension PhotoAdjustments {
 
         /// Nothing in it: no shapes, or only brushes that haven't been painted (Delete All Empty Masks).
         var isEmpty: Bool { components.allSatisfy(\.shape.isEmpty) }
+
+        /// Whether it needs the photo's subject found (a Subject or Background shape).
+        var usesSubject: Bool { components.contains(where: \.shape.usesSubject) }
     }
 
     /// One shape of a mask, and how it combines with the shapes before it.
@@ -38,17 +41,38 @@ nonisolated extension PhotoAdjustments {
         case linear(LinearGradient)
         case radial(RadialGradient)
         case brush(BrushMask)
+        /// What Vision finds as the photo's subject (every subject it finds).
+        case subject(SubjectSelection)
+        /// Everything but the subject.
+        case background(SubjectSelection)
 
         var title: String {
             switch self {
             case .linear: "Linear Gradient"
             case .radial: "Radial Gradient"
             case .brush: "Brush"
+            case .subject: "Subject"
+            case .background: "Background"
             }
         }
 
         var isEmpty: Bool {
             if case .brush(let brush) = self { brush.strokes.isEmpty } else { false }
+        }
+
+        var usesSubject: Bool {
+            switch self {
+            case .subject, .background: true
+            case .linear, .radial, .brush: false
+            }
+        }
+
+        /// A Subject or Background shape's edge settings.
+        var subjectSelection: SubjectSelection? {
+            switch self {
+            case .subject(let selection), .background(let selection): selection
+            case .linear, .radial, .brush: nil
+            }
         }
     }
 
@@ -68,6 +92,14 @@ nonisolated extension PhotoAdjustments {
         var angle = 0.0
         /// 0…1: how far inward from the edge the fade reaches.
         var feather = 0.5
+    }
+
+    /// How a Subject or Background mask's edge follows what Vision found.
+    struct SubjectSelection: Codable, Hashable, Sendable {
+        /// 0…1: how soft the edge is.
+        var feather = 0.25
+        /// -1…1: shrinks (negative) or grows the selection before it is feathered.
+        var edge = 0.0
     }
 
     /// Painted strokes, in order; an erasing stroke takes away what the strokes before it painted.

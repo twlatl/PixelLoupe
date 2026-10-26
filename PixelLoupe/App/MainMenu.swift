@@ -127,6 +127,8 @@ import AppKit
     @objc optional func addLinearMask(_ sender: Any?)
     @objc optional func addRadialMask(_ sender: Any?)
     @objc optional func addBrushMask(_ sender: Any?)
+    @objc optional func addSubjectMask(_ sender: Any?)
+    @objc optional func addBackgroundMask(_ sender: Any?)
     @objc optional func showMaskOverlay(_ sender: Any?)
     @objc optional func showBeforeAfter(_ sender: NSMenuItem)
     @objc optional func removePhoto(_ sender: Any?)
@@ -384,6 +386,9 @@ enum MainMenu {
         menu.addItem(item("Linear Gradient Mask", #selector(PixelLoupeActions.addLinearMask(_:)), "m", modifiers: []))
         menu.addItem(item("Radial Gradient Mask", #selector(PixelLoupeActions.addRadialMask(_:)), "m", modifiers: [.shift]))
         menu.addItem(item("Brush Mask", #selector(PixelLoupeActions.addBrushMask(_:)), "k", modifiers: []))
+        // Lightroom has no keys for these.
+        menu.addItem(item("Select Subject", #selector(PixelLoupeActions.addSubjectMask(_:))))
+        menu.addItem(item("Select Background", #selector(PixelLoupeActions.addBackgroundMask(_:))))
         menu.addItem(item("Show Mask Overlay", #selector(PixelLoupeActions.showMaskOverlay(_:)), "o", modifiers: []))
         menu.addItem(submenuItem(beforeAfterMenu()))
         menu.addItem(.separator())

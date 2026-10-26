@@ -61,7 +61,7 @@ final class MaskOverlayView: NSView {
                 switch component.shape {
                 case .linear(let gradient): drawLinear(gradient)
                 case .radial(let ellipse): drawRadial(ellipse)
-                case .brush: break   // Shown by the red overlay (O).
+                case .brush, .subject, .background: break   // Shown by the red overlay (O).
                 }
             }
         }
@@ -192,7 +192,7 @@ final class MaskOverlayView: NSView {
                     drag = .radial(component: index, handle: handle, start: point, original: ellipse)
                     return
                 }
-            case .brush:
+            case .brush, .subject, .background:
                 break
             }
         }
