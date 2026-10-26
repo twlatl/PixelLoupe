@@ -342,8 +342,14 @@ The sidebar on the right sets it up, and the preview follows as you change it, s
 - **Watermark** (None, or one of your watermarks), drawn on the large images only, and **JPEG Quality** for the
   generated images. The preview doesn't change with these.
 
+Clicking a photo shows it large in a lightbox, in the preview too (there with its thumbnail). Previous and Next (the
+arrows, `←` and `→`, or a swipe) step through every photo in the gallery, not just the page's; `Esc`, the close button
+or a click beside the photo closes it, on the page of the photo it was showing. The address follows the photo
+(`page-2.html#30`), so a link to it opens it. Without JavaScript, a photo is a link to its large image.
+
 The choices other than the headline and description are remembered for the next gallery. **Generate…** asks for a
-folder and writes the gallery into it in the background: `index.html` (then `page-2.html`, …), `gallery.css`, and each
+folder and writes the gallery into it in the background: `index.html` (then `page-2.html`, …), `gallery.css`,
+`gallery.js` (the lightbox, with no libraries, so it works offline and opened from the disk), `photos.js`, and each
 photo twice, numbered in order (`images/thumbs/001.jpg`, about 800 pixels on the long edge, and `images/large/001.jpg`,
 2048), as sRGB JPEGs with their Develop edits, screen sharpening, and only the copyright and creator from their metadata.
 A photo that can't be read uses its thumbnail, or has no image (you're told which). If the folder already has an

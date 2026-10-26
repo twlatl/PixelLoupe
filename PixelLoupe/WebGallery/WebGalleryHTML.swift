@@ -1,13 +1,18 @@
 import Foundation
 
-/// The web gallery's HTML pages and stylesheet. The preview and the generated folder are written from
-/// the same strings, so what the window shows is what the folder holds.
+/// The web gallery's HTML pages, stylesheet and scripts. The preview and the generated folder are
+/// written from the same strings, so what the window shows is what the folder holds.
 ///
 /// Each photo gets a square cell, fitted inside it at its own aspect ratio, with its caption
 /// underneath, in a grid of up to `columns` across (fewer on a narrow screen).
 nonisolated enum WebGalleryHTML {
     static let stylesheetName = "gallery.css"
     static let thumbnailFolder = "images/thumbs"
+    static let largeFolder = "images/large"
+    /// Every photo's large image and caption, for the lightbox to step through the whole gallery.
+    static let photosScriptName = "photos.js"
+    /// The lightbox.
+    static let scriptName = "gallery.js"
 
     /// Narrower than this (in CSS pixels), the grid shows at most two columns; narrower than
     /// `singleColumnWidth`, one.
@@ -68,30 +73,37 @@ nonisolated enum WebGalleryHTML {
         }
         html += "</main>\n"
         html += navigation(page, pages: pages, showsNumbers: settings.showsPageNumbers)
+        html += "<script src=\"\(photosScriptName)\"></script>\n<script src=\"\(scriptName)\"></script>\n"
         html += "</body>\n</html>\n"
         return html
     }
 
     private static func cell(_ index: Int, photo: ContactSheetPhoto, count: Int, settings: WebGallerySettings) -> String {
-        let source = "\(thumbnailFolder)/\(imageName(index: index, count: count))"
+        let name = imageName(index: index, count: count)
         let caption = settings.showsCaption ? photo.caption(settings.captionField) : ""
-        // The alt text describes the photo even when the caption shows something else; the file name
-        // is published only when it's the caption.
-        let alt = photo.title ?? photo.caption ?? "Photo \(index + 1)"
+        let alt = alt(index, photo: photo)
         // The size attributes give the browser the photo's shape before the image arrives, so the
         // grid doesn't jump as thumbnails load. Width / height of 0 means unknown: drawn landscape.
         let aspect = photo.aspect > 0 ? photo.aspect : 1.5
         let width = aspect >= 1 ? 800 : Int((800 * aspect).rounded())
         let height = aspect >= 1 ? Int((800 / aspect).rounded()) : 800
         var html = "<figure id=\"\(index + 1)\">\n"
-        html += "<div class=\"cell\"><img class=\"\(aspect >= 1 ? "landscape" : "portrait")\" src=\"\(source)\" "
-        html += "width=\"\(width)\" height=\"\(height)\" alt=\"\(escape(alt))\" loading=\"lazy\" decoding=\"async\"></div>\n"
+        // A plain link to the large image, which the lightbox takes over (it still works without JavaScript).
+        html += "<div class=\"cell\"><a href=\"\(largeFolder)/\(name)\" data-photo=\"\(index)\">"
+        html += "<img class=\"\(aspect >= 1 ? "landscape" : "portrait")\" src=\"\(thumbnailFolder)/\(name)\" "
+        html += "width=\"\(width)\" height=\"\(height)\" alt=\"\(escape(alt))\" loading=\"lazy\" decoding=\"async\"></a></div>\n"
         if settings.showsCaption {
             // An empty caption still takes its line, so the rows stay even.
             html += "<figcaption>\(caption.isEmpty ? "&nbsp;" : escape(caption))</figcaption>\n"
         }
         html += "</figure>\n"
         return html
+    }
+
+    /// The alt text describes the photo even when the caption shows something else; the file name is
+    /// published only when it's the caption.
+    private static func alt(_ index: Int, photo: ContactSheetPhoto) -> String {
+        photo.title ?? photo.caption ?? "Photo \(index + 1)"
     }
 
     /// "‹ Previous · 1 2 3 · Next ›" under the grid; nothing for a single page.
@@ -161,6 +173,13 @@ nonisolated enum WebGalleryHTML {
           align-items: center;
           justify-content: center;
         }
+        .cell a {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 100%;
+          height: 100%;
+        }
         .cell img { display: block; object-fit: contain; }
         .cell img.landscape { width: 100%; height: auto; }
         .cell img.portrait { height: 100%; width: auto; }
@@ -187,8 +206,239 @@ nonisolated enum WebGalleryHTML {
         .pages [aria-current] { font-weight: 700; }
         .pages .disabled { opacity: 0.4; }
 
+        html.lightbox-open { overflow: hidden; }
+        .lightbox {
+          position: fixed;
+          inset: 0;
+          z-index: 10;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: rgba(0, 0, 0, 0.92);
+          color: #fff;
+        }
+        .lightbox[hidden], .lightbox [hidden] { display: none; }
+        .lightbox figure {
+          margin: 0;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+        }
+        .lightbox img {
+          display: block;
+          max-width: calc(100vw - 128px);
+          max-height: calc(100vh - 96px);
+          object-fit: contain;
+        }
+        .lightbox figcaption { margin-top: 8px; font-size: 0.9em; text-align: center; }
+        .lightbox button {
+          position: absolute;
+          padding: 8px 16px;
+          border: 0;
+          background: none;
+          color: inherit;
+          font: 40px/1 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+          opacity: 0.7;
+          cursor: pointer;
+        }
+        .lightbox button:hover, .lightbox button:focus-visible { opacity: 1; }
+        .lightbox .close { top: 8px; right: 8px; }
+        .lightbox .previous, .lightbox .next { top: 50%; transform: translateY(-50%); }
+        .lightbox .previous { left: 8px; }
+        .lightbox .next { right: 8px; }
+        @media (max-width: \(narrowWidth)px) {
+          .lightbox img { max-width: 100vw; max-height: calc(100vh - 64px); }
+          .lightbox .previous, .lightbox .next { top: auto; bottom: 8px; transform: none; }
+        }
+
         """
     }
+
+    // MARK: Scripts
+
+    /// One photo in `photos.js`.
+    private struct ScriptPhoto: Encodable {
+        let large: String
+        let alt: String
+        let caption: String
+        /// The page it's on.
+        let page: String
+    }
+
+    /// `photos.js`: every photo's large image, alt text, caption (when captions show) and page.
+    static func photosScript(photos: [ContactSheetPhoto], settings: WebGallerySettings) -> String {
+        let pages = WebGalleryPages(photoCount: photos.count, photosPerPage: settings.photosPerPage)
+        let entries = photos.indices.map { index in
+            ScriptPhoto(large: "\(largeFolder)/\(imageName(index: index, count: photos.count))",
+                        alt: alt(index, photo: photos[index]),
+                        caption: settings.showsCaption ? photos[index].caption(settings.captionField) : "",
+                        page: WebGalleryPages.fileName(ofPage: index / pages.photosPerPage))
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let json = (try? encoder.encode(entries)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        return "window.galleryPhotos = \(json);\n"
+    }
+
+    /// `gallery.js`, the lightbox. Clicking a photo shows its large image over the page; Previous and
+    /// Next (the arrows, ← and →, or a swipe) step through every photo in the gallery, not just the
+    /// page's; Esc, the close button or a click beside the photo closes it. The address follows the
+    /// photo (`#7`), so a photo can be linked to, and closing on another page's photo goes to that page.
+    static let script = #"""
+    (function () {
+      "use strict";
+      var photos = window.galleryPhotos || [];
+      if (!photos.length) return;
+      var CLOSED = "pixelloupe-gallery-closed";
+      var box, image, caption, previous, next, closeButton;
+      var current = -1, opener = null, touchX = null;
+
+      function page() {
+        return decodeURIComponent(location.pathname.split("/").pop() || "index.html");
+      }
+
+      function remember(key, value) {
+        try { value === null ? sessionStorage.removeItem(key) : sessionStorage.setItem(key, value); } catch (error) {}
+      }
+
+      function recalled(key) {
+        try { return sessionStorage.getItem(key); } catch (error) { return null; }
+      }
+
+      function button(className, label, text, action) {
+        var element = document.createElement("button");
+        element.type = "button";
+        element.className = className;
+        element.setAttribute("aria-label", label);
+        element.textContent = text;
+        element.addEventListener("click", function (event) {
+          event.stopPropagation();
+          action();
+        });
+        box.appendChild(element);
+        return element;
+      }
+
+      function build() {
+        box = document.createElement("div");
+        box.className = "lightbox";
+        box.hidden = true;
+        box.setAttribute("role", "dialog");
+        box.setAttribute("aria-modal", "true");
+        box.setAttribute("aria-label", "Photo");
+        var figure = document.createElement("figure");
+        image = document.createElement("img");
+        caption = document.createElement("figcaption");
+        figure.appendChild(image);
+        figure.appendChild(caption);
+        box.appendChild(figure);
+        closeButton = button("close", "Close", "\u00D7", close);
+        previous = button("previous", "Previous photo", "\u2039", function () { step(-1); });
+        next = button("next", "Next photo", "\u203A", function () { step(1); });
+        // A click beside the photo closes it; one on the photo doesn't.
+        box.addEventListener("click", function (event) {
+          if (event.target !== image && event.target !== caption) close();
+        });
+        box.addEventListener("touchstart", function (event) {
+          touchX = event.touches.length === 1 ? event.touches[0].clientX : null;
+        }, { passive: true });
+        box.addEventListener("touchend", function (event) {
+          if (touchX === null) return;
+          var distance = event.changedTouches[0].clientX - touchX;
+          touchX = null;
+          if (Math.abs(distance) > 50) step(distance < 0 ? 1 : -1);
+        });
+        document.body.appendChild(box);
+      }
+
+      function preload(index) {
+        if (index >= 0 && index < photos.length) new Image().src = photos[index].large;
+      }
+
+      function show(index) {
+        if (index < 0 || index >= photos.length) return;
+        if (!box) build();
+        if (current < 0) opener = document.activeElement;
+        current = index;
+        var photo = photos[index];
+        image.src = photo.large;
+        image.alt = photo.alt;
+        caption.textContent = photo.caption;
+        caption.hidden = !photo.caption;
+        previous.hidden = index === 0;
+        next.hidden = index === photos.length - 1;
+        preload(index + 1);
+        preload(index - 1);
+        history.replaceState(null, "", "#" + (index + 1));
+        document.documentElement.classList.add("lightbox-open");
+        if (box.hidden) {
+          box.hidden = false;
+          closeButton.focus();
+        }
+      }
+
+      function step(by) {
+        if (current >= 0) show(current + by);
+      }
+
+      function close() {
+        if (current < 0) return;
+        var index = current, photo = photos[index];
+        current = -1;
+        box.hidden = true;
+        document.documentElement.classList.remove("lightbox-open");
+        if (photo.page !== page()) {
+          // Its page, scrolled to it, without opening it again there.
+          remember(CLOSED, String(index + 1));
+          location.href = photo.page + "#" + (index + 1);
+          return;
+        }
+        history.replaceState(null, "", location.pathname + location.search);
+        var link = document.querySelector('a[data-photo="' + index + '"]');
+        if (link) {
+          link.scrollIntoView({ block: "nearest" });
+          link.focus();
+        } else if (opener && opener.focus) {
+          opener.focus();
+        }
+      }
+
+      document.addEventListener("click", function (event) {
+        var link = event.target.closest && event.target.closest("a[data-photo]");
+        if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        show(Number(link.getAttribute("data-photo")));
+      });
+
+      document.addEventListener("keydown", function (event) {
+        if (current < 0) return;
+        if (event.key === "Escape") close();
+        else if (event.key === "ArrowLeft") step(-1);
+        else if (event.key === "ArrowRight") step(1);
+        else return;
+        event.preventDefault();
+      });
+
+      // Keep focus in the lightbox while it's open.
+      document.addEventListener("focusin", function (event) {
+        if (current >= 0 && box && !box.contains(event.target)) closeButton.focus();
+      });
+
+      function openFromAddress() {
+        var match = /^#(\d+)$/.exec(location.hash);
+        if (!match) return;
+        if (recalled(CLOSED) === match[1]) {
+          remember(CLOSED, null);
+          return;
+        }
+        show(Number(match[1]) - 1);
+      }
+
+      window.addEventListener("hashchange", openFromAddress);
+      openFromAddress();
+    })();
+
+    """#
 
     // MARK: Helpers
 

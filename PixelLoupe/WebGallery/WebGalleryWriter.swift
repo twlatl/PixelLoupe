@@ -8,7 +8,7 @@ import ImageIO
 /// The folder is built in a temporary folder and then moved into place, so a cancelled or failed run
 /// leaves the destination as it was.
 nonisolated enum WebGalleryWriter {
-    static let largeFolder = "images/large"
+    static let largeFolder = WebGalleryHTML.largeFolder
     /// The large images' long edge, and the thumbnails' (enough for the widest cell at 2×).
     static let largeEdge: CGFloat = 2048
     static let thumbnailEdge: CGFloat = 800
@@ -39,7 +39,8 @@ nonisolated enum WebGalleryWriter {
 
     /// The files a gallery of `count` photos in `pages` pages writes, relative to its folder.
     static func files(count: Int, pages: Int) -> [String] {
-        (0..<pages).map(WebGalleryPages.fileName(ofPage:)) + [WebGalleryHTML.stylesheetName]
+        (0..<pages).map(WebGalleryPages.fileName(ofPage:))
+            + [WebGalleryHTML.stylesheetName, WebGalleryHTML.photosScriptName, WebGalleryHTML.scriptName]
             + (0..<count).flatMap { index in
                 let name = WebGalleryHTML.imageName(index: index, count: count)
                 return ["\(WebGalleryHTML.thumbnailFolder)/\(name)", "\(largeFolder)/\(name)"]
@@ -59,6 +60,9 @@ nonisolated enum WebGalleryWriter {
         let snapshots = photos.map(\.photo)
         let pages = WebGalleryPages(photoCount: photos.count, photosPerPage: settings.photosPerPage)
         try Data(WebGalleryHTML.stylesheet(settings: settings).utf8).write(to: folder.appending(path: WebGalleryHTML.stylesheetName))
+        try Data(WebGalleryHTML.photosScript(photos: snapshots, settings: settings).utf8)
+            .write(to: folder.appending(path: WebGalleryHTML.photosScriptName))
+        try Data(WebGalleryHTML.script.utf8).write(to: folder.appending(path: WebGalleryHTML.scriptName))
         for page in 0..<pages.count {
             let html = WebGalleryHTML.page(page, photos: snapshots, settings: settings, sourceName: sourceName)
             try Data(html.utf8).write(to: folder.appending(path: WebGalleryPages.fileName(ofPage: page)))

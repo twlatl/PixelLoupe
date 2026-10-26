@@ -153,6 +153,48 @@ struct WebGalleryHTMLTests {
         #expect(WebGalleryHTML.stylesheet(settings: settings).contains("@media (max-width: 700px) { :root { --columns: 1; } }"))
     }
 
+    @Test func eachPhotoLinksToItsLargeImageAndThePageLoadsTheLightbox() {
+        let html = WebGalleryHTML.page(0, photos: photos(2), settings: WebGallerySettings(), sourceName: "")
+        #expect(html.contains("<a href=\"images/large/002.jpg\" data-photo=\"1\"><img class=\"portrait\" src=\"images/thumbs/002.jpg\""),
+                "a plain link, so it works without JavaScript")
+        #expect(html.contains("<script src=\"photos.js\"></script>\n<script src=\"gallery.js\"></script>\n</body>"))
+    }
+
+    private struct ScriptPhoto: Decodable, Equatable {
+        let large: String, alt: String, caption: String, page: String
+    }
+
+    private func decode(_ script: String) throws -> [ScriptPhoto] {
+        let prefix = "window.galleryPhotos = "
+        #expect(script.hasPrefix(prefix))
+        #expect(script.hasSuffix(";\n"))
+        let json = script.dropFirst(prefix.count).dropLast(2)
+        return try JSONDecoder().decode([ScriptPhoto].self, from: Data(json.utf8))
+    }
+
+    @Test func thePhotosScriptListsTheWholeGallery() throws {
+        var settings = WebGallerySettings()
+        settings.photosPerPage = 24
+        let all = try decode(WebGalleryHTML.photosScript(photos: photos(30), settings: settings))
+        #expect(all.count == 30)
+        #expect(all[0] == ScriptPhoto(large: "images/large/001.jpg", alt: "Photo 1", caption: "", page: "index.html"))
+        #expect(all[1].alt == "Dune <at> dusk", "JSON, not HTML: the script sets it as text")
+        #expect(all[24].page == "page-2.html")
+        #expect(all.allSatisfy { $0.caption.isEmpty }, "no captions unless they show")
+
+        settings.showsCaption = true
+        let captioned = try decode(WebGalleryHTML.photosScript(photos: photos(2), settings: settings))
+        #expect(captioned.map(\.caption) == ["IMG_0.jpg", "IMG_1.jpg"])
+        #expect(WebGalleryHTML.photosScript(photos: [], settings: settings) == "window.galleryPhotos = [];\n")
+    }
+
+    @Test func theScriptStandsAlone() {
+        // No libraries or network: it has to work offline and from file://.
+        #expect(!WebGalleryHTML.script.contains("http"))
+        #expect(!WebGalleryHTML.script.contains("fetch("))
+        #expect(!WebGalleryHTML.script.contains("import "))
+    }
+
     @Test func borderAndShadowAreClassesOnTheGrid() {
         var settings = WebGallerySettings()
         #expect(WebGalleryHTML.page(0, photos: photos(1), settings: settings, sourceName: "").contains("<main class=\"grid\">"))
@@ -253,7 +295,7 @@ struct WebGalleryWriterTests {
 
     @Test func listsEveryFileItWrites() {
         #expect(WebGalleryWriter.files(count: 2, pages: 1) == [
-            "index.html", "gallery.css",
+            "index.html", "gallery.css", "photos.js", "gallery.js",
             "images/thumbs/001.jpg", "images/large/001.jpg", "images/thumbs/002.jpg", "images/large/002.jpg",
         ])
     }
@@ -470,6 +512,60 @@ struct WebGalleryWindowTests {
             reloaded = try await evaluate("typeof window.marker", in: controller.webView) as? String == "undefined"
         }
         #expect(reloaded)
+    }
+
+    /// Polls `script` in the preview until it returns `expected` (pages load and scripts run after a moment).
+    private func waitFor(_ script: String, toBe expected: String, in webView: WKWebView) async throws -> Bool {
+        for _ in 0..<100 {
+            if (try? await evaluate(script, in: webView)).map({ "\($0)" }) == expected { return true }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        return false
+    }
+
+    @Test func theLightboxStepsThroughTheWholeGallery() async throws {
+        let suite = "WebGalleryWindowTests.lightbox"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let directory = try TemporaryDirectory()
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url)
+        let photos = (0..<30).map {
+            ContactSheetPhoto(source: PhotoSourceLocation(original: URL(filePath: "/missing/IMG_\($0).jpg")), fileName: "IMG_\($0).jpg")
+        }
+        let controller = WebGalleryWindowController(photos: photos, thumbnails: store.thumbnails, sourceName: "", defaults: defaults)
+        controller.model.settings.photosPerPage = 24
+        controller.showWindow(nil)
+        defer { controller.close() }
+        let webView = controller.webView
+        let state = "[document.querySelector('.lightbox') ? !document.querySelector('.lightbox').hidden : false, location.hash].join(' ')"
+        #expect(try await waitFor("typeof window.galleryPhotos", toBe: "object", in: webView))
+
+        // A click opens it on that photo.
+        _ = try await evaluate("document.querySelector('a[data-photo=\"2\"]').click()", in: webView)
+        #expect(try await waitFor(state, toBe: "true #3", in: webView))
+        #expect(try await evaluate("document.querySelector('.lightbox img').getAttribute('src')", in: webView) as? String
+                == "images/large/003.jpg")
+        #expect(try await evaluate("document.querySelector('.lightbox .previous').hidden", in: webView) as? Bool == false)
+
+        // → steps on, past the end of the page.
+        _ = try await evaluate("location.hash = '#24'", in: webView)
+        #expect(try await waitFor(state, toBe: "true #24", in: webView))
+        _ = try await evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }))", in: webView)
+        #expect(try await waitFor(state, toBe: "true #25", in: webView))
+        #expect(controller.currentPage == 0)
+
+        // Esc on another page's photo goes to that page, without opening it again there.
+        _ = try await evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))", in: webView)
+        #expect(try await waitFor("location.pathname + location.hash", toBe: "/page-2.html#25", in: webView))
+        #expect(try await waitFor("typeof window.galleryPhotos", toBe: "object", in: webView))
+        #expect(try await waitFor("document.querySelector('.lightbox') === null", toBe: "1", in: webView))
+
+        // A link to a photo opens it; the last photo has no Next.
+        webView.load(URLRequest(url: try #require(URL(string: "#30", relativeTo: WebGalleryPreviewSource.url(ofPage: 1)))))
+        #expect(try await waitFor(state, toBe: "true #30", in: webView))
+        #expect(try await evaluate("document.querySelector('.lightbox .next').hidden", in: webView) as? Bool == true)
+        _ = try await evaluate("document.querySelector('.lightbox .close').click()", in: webView)
+        #expect(try await waitFor(state, toBe: "false ", in: webView))
     }
 
     @Test func thePreviewShowsTheGalleryAndFollowsTheSettings() async throws {

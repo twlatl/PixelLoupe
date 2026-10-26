@@ -2,9 +2,10 @@ import Foundation
 import WebKit
 
 /// Serves the web gallery to the window's preview from memory, under `pixelloupe-gallery://gallery/`:
-/// the pages and stylesheet as ``WebGalleryHTML`` writes them for the current settings, and each
-/// photo's cached thumbnail (edits applied) as its image. Nothing is written to disk, and a thumbnail
-/// is read only when the page shows it (the images load lazily).
+/// the pages, stylesheet and scripts as ``WebGalleryHTML`` writes them for the current settings, and
+/// each photo's cached thumbnail (edits applied) as both its images (so the lightbox shows the
+/// thumbnail). Nothing is written to disk, and a thumbnail is read only when the page shows it (the
+/// images load lazily).
 final class WebGalleryPreviewSource: NSObject, WKURLSchemeHandler {
     static let scheme = "pixelloupe-gallery"
     static let baseURL = URL(string: "\(scheme)://gallery/")!
@@ -35,10 +36,14 @@ final class WebGalleryPreviewSource: NSObject, WKURLSchemeHandler {
 
         if path == "/\(WebGalleryHTML.stylesheetName)" {
             respond(to: task, data: Data(WebGalleryHTML.stylesheet(settings: settings).utf8), type: "text/css")
+        } else if path == "/\(WebGalleryHTML.photosScriptName)" {
+            respond(to: task, data: Data(WebGalleryHTML.photosScript(photos: photos, settings: settings).utf8), type: "text/javascript")
+        } else if path == "/\(WebGalleryHTML.scriptName)" {
+            respond(to: task, data: Data(WebGalleryHTML.script.utf8), type: "text/javascript")
         } else if (path as NSString).deletingLastPathComponent == "/", let page = WebGalleryPages.page(named: name), page < pages.count {
             let html = WebGalleryHTML.page(page, photos: photos, settings: settings, sourceName: sourceName)
             respond(to: task, data: Data(html.utf8), type: "text/html")
-        } else if (path as NSString).deletingLastPathComponent == "/\(WebGalleryHTML.thumbnailFolder)",
+        } else if ["/\(WebGalleryHTML.thumbnailFolder)", "/\(WebGalleryHTML.largeFolder)"].contains((path as NSString).deletingLastPathComponent),
                   let index = WebGalleryHTML.index(ofImageNamed: name), photos.indices.contains(index) {
             let id = ObjectIdentifier(task)
             running.insert(id)
