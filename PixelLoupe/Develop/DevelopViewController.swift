@@ -915,15 +915,17 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         maskPanel.onChange = { [weak self] masks, isFinal, actionName in self?.masksChanged(masks, isFinal: isFinal, actionName: actionName) }
         maskPanel.onSelectionChange = { [weak self] id in self?.maskOverlay.adjustment = self?.adjustments.masks.first { $0.id == id } }
         maskPanel.onAdd = { [weak self] kind in self?.addMask(kind) }
+        maskPanel.onBrushChange = { [weak self] brush in self?.maskOverlay.brush = brush }
+        maskOverlay.brush = maskPanel.brush
         maskPanel.onOverlayChange = { [weak self] on in
             self?.showsMaskOverlay = on
             self?.metalView.needsDisplay = true
         }
-        maskOverlay.onChange = { [weak self] adjustment, isFinal in
+        maskOverlay.onChange = { [weak self] adjustment, isFinal, actionName in
             guard let self, let index = adjustments.masks.firstIndex(where: { $0.id == adjustment.id }) else { return }
             var masks = adjustments.masks
             masks[index] = adjustment
-            masksChanged(masks, isFinal: isFinal, actionName: "Move Mask")
+            masksChanged(masks, isFinal: isFinal, actionName: actionName)
         }
         maskOverlay.onClickEmpty = { }
     }
@@ -946,7 +948,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         maskOverlay.adjustment = masks.first { $0.id == maskPanel.selectedID }
     }
 
-    /// M and ⇧M: adds a gradient mask (and opens the Masking tool).
+    /// M, ⇧M and K: adds a gradient or brush mask (and opens the Masking tool).
     func addMask(_ kind: MaskPanelViewController.MaskKind) {
         guard source != nil else { return }
         var mask = PhotoAdjustments.LocalAdjustment()
@@ -958,6 +960,9 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         case .radial:
             mask.components = [.init(shape: .radial(MaskGeometry.defaultRadial()))]
             mask.name = "Radial Gradient \(number)"
+        case .brush:
+            mask.components = [.init(shape: .brush(.init()))]
+            mask.name = "Brush \(number)"
         }
         mask.settings.exposure = -0.5
         if state.developTool != .mask { state.developTool = .mask }
@@ -967,6 +972,18 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         maskPanel.display(masks: masks, selecting: mask.id)
         maskOverlay.adjustment = mask
     }
+
+    /// Whether a brush mask is selected in the Masking tool, so [ ] ⇧[ ⇧] size and soften the brush.
+    var isBrushing: Bool {
+        guard state.developTool == .mask, let selected = adjustments.masks.first(where: { $0.id == maskPanel.selectedID }) else { return false }
+        return selected.components.contains { if case .brush = $0.shape { true } else { false } }
+    }
+
+    /// [ and ]: a smaller or larger brush.
+    func stepBrushSize(_ steps: Int) { maskPanel.brush.stepSize(steps) }
+
+    /// ⇧[ and ⇧]: a harder or softer brush.
+    func stepBrushFeather(_ steps: Int) { maskPanel.brush.stepFeather(steps) }
 
     /// O: paints the selected mask red over the preview.
     func toggleMaskOverlay() {

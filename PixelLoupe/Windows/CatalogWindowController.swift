@@ -296,6 +296,9 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         case .rating(let rating):
             guard !selection.isEmpty else { return false }
             editing.setRating(rating, for: ratingTargets)
+        case .adjustRating(let step) where state.mode == .develop && develop.isBrushing:
+            // Lightroom's brush keys: [ and ] size the brush while one is painting.
+            develop.stepBrushSize(step)
         case .adjustRating(let step):
             guard !selection.isEmpty else { return false }
             editing.adjustRating(by: step, for: ratingTargets)
@@ -403,6 +406,12 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         case .radialMask:
             guard state.mode == .develop else { return false }
             develop.addMask(.radial)
+        case .brushMask:
+            guard state.mode == .develop else { return false }
+            develop.addMask(.brush)
+        case .brushFeather(let step):
+            guard state.mode == .develop, develop.isBrushing else { return false }
+            develop.stepBrushFeather(step)
         case .maskOverlay:
             guard state.mode == .develop, state.developTool == .mask else { return false }
             develop.toggleMaskOverlay()
@@ -557,6 +566,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
     @objc func spotRemovalTool(_ sender: Any?) { _ = perform(.spotRemovalTool) }
     @objc func addLinearMask(_ sender: Any?) { _ = perform(.linearMask) }
     @objc func addRadialMask(_ sender: Any?) { _ = perform(.radialMask) }
+    @objc func addBrushMask(_ sender: Any?) { _ = perform(.brushMask) }
     @objc func showMaskOverlay(_ sender: Any?) { _ = perform(.maskOverlay) }
 
     /// View ▸ Before/After: the item's tag is its ``BeforeAfterView``.
@@ -1199,7 +1209,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
             let typing = (window?.firstResponder as? NSText)?.isEditable ?? false
             (item as? NSMenuItem)?.state = state.mode == .develop && state.developTool == .retouch ? .on : .off
             return !typing && (state.mode == .develop || !state.selectedPhotoIDs.isEmpty)
-        case #selector(addLinearMask(_:)), #selector(addRadialMask(_:)):
+        case #selector(addLinearMask(_:)), #selector(addRadialMask(_:)), #selector(addBrushMask(_:)):
             let typing = (window?.firstResponder as? NSText)?.isEditable ?? false
             return !typing && state.mode == .develop
         case #selector(showMaskOverlay(_:)):

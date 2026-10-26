@@ -126,6 +126,7 @@ import AppKit
     @objc optional func spotRemovalTool(_ sender: Any?)
     @objc optional func addLinearMask(_ sender: Any?)
     @objc optional func addRadialMask(_ sender: Any?)
+    @objc optional func addBrushMask(_ sender: Any?)
     @objc optional func showMaskOverlay(_ sender: Any?)
     @objc optional func showBeforeAfter(_ sender: NSMenuItem)
     @objc optional func removePhoto(_ sender: Any?)
@@ -377,11 +378,12 @@ enum MainMenu {
         menu.addItem(item("Show Clipping", #selector(PixelLoupeActions.showClipping(_:)), "j", modifiers: []))
         // W, as in Lightroom: the White Balance Selector eyedropper in the Adjust panel.
         menu.addItem(item("White Balance Selector", #selector(PixelLoupeActions.whiteBalanceSelector(_:)), "w", modifiers: []))
-        // Lightroom's masking keys: ⇧W opens Masking, M and ⇧M add a linear or radial gradient, O shows the overlay.
+        // Lightroom's masking keys: ⇧W opens Masking, M and ⇧M add a linear or radial gradient, K a brush, O shows the overlay.
         menu.addItem(item("Masking", #selector(PixelLoupeActions.maskingTool(_:)), "w", modifiers: [.shift]))
         menu.addItem(item("Spot Removal", #selector(PixelLoupeActions.spotRemovalTool(_:)), "q", modifiers: []))
         menu.addItem(item("Linear Gradient Mask", #selector(PixelLoupeActions.addLinearMask(_:)), "m", modifiers: []))
         menu.addItem(item("Radial Gradient Mask", #selector(PixelLoupeActions.addRadialMask(_:)), "m", modifiers: [.shift]))
+        menu.addItem(item("Brush Mask", #selector(PixelLoupeActions.addBrushMask(_:)), "k", modifiers: []))
         menu.addItem(item("Show Mask Overlay", #selector(PixelLoupeActions.showMaskOverlay(_:)), "o", modifiers: []))
         menu.addItem(submenuItem(beforeAfterMenu()))
         menu.addItem(.separator())

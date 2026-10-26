@@ -1,7 +1,8 @@
 import AppKit
 
-/// The Masking panel: the photo's masks, buttons to add a linear or radial gradient, and the
-/// selected mask's sliders. Every edit calls `onChange` (final ones are saved and undoable).
+/// The Masking panel: the photo's masks, buttons to add a linear or radial gradient or a brush, and the
+/// selected mask's sliders (and the brush's, for a brush mask). Every edit calls `onChange` (final ones
+/// are saved and undoable).
 final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
     private(set) var masks: [PhotoAdjustments.LocalAdjustment] = []
     private(set) var selectedID: UUID?
@@ -10,8 +11,18 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
     var onSelectionChange: ((UUID?) -> Void)?
     var onAdd: ((MaskKind) -> Void)?
     var onOverlayChange: ((Bool) -> Void)?
+    var onBrushChange: ((MaskGeometry.BrushSettings) -> Void)?
 
-    enum MaskKind: Sendable { case linear, radial }
+    enum MaskKind: Sendable { case linear, radial, brush }
+
+    /// What the next brush stroke is painted with (the Brush sliders, and [ ] ⇧[ ⇧] on the photo).
+    var brush = MaskGeometry.BrushSettings() {
+        didSet {
+            guard brush != oldValue else { return }
+            brushRefreshers.forEach { $0() }
+            onBrushChange?(brush)
+        }
+    }
 
     var isEditingEnabled = true {
         didSet { setControlsEnabled(isEditingEnabled, in: view) }
@@ -24,11 +35,13 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
     private var sliderRows: [SliderRow] = []
     private let detail = NSStackView()
     private var refreshers: [() -> Void] = []
+    private var brushRefreshers: [() -> Void] = []
+    private let brushControls = NSStackView()
     private var actionTargets: [ActionTarget] = []
     /// The targets for each row's checkbox and delete button (replaced whenever the rows are rebuilt).
     private var rowTargets: [UUID: ActionTarget] = [:]
     private var rowDeleteTargets: [UUID: ActionTarget] = [:]
-    private let emptyLabel = NSTextField(wrappingLabelWithString: "Add a linear (M) or radial (⇧M) gradient to adjust part of the photo.")
+    private let emptyLabel = NSTextField(wrappingLabelWithString: "Add a linear (M) or radial (⇧M) gradient, or a brush (K), to adjust part of the photo.")
 
     private var selected: PhotoAdjustments.LocalAdjustment? { masks.first { $0.id == selectedID } }
 
@@ -39,7 +52,11 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
 
         let linear = NSButton(title: "Linear", target: nil, action: nil)
         let radial = NSButton(title: "Radial", target: nil, action: nil)
-        for (button, kind, identifier, tip) in [(linear, MaskKind.linear, "addLinearMask", "Linear Gradient (M)"), (radial, .radial, "addRadialMask", "Radial Gradient (⇧M)")] {
+        let brush = NSButton(title: "Brush", target: nil, action: nil)
+        for (button, kind, identifier, tip) in [
+            (linear, MaskKind.linear, "addLinearMask", "Linear Gradient (M)"), (radial, .radial, "addRadialMask", "Radial Gradient (⇧M)"),
+            (brush, .brush, "addBrushMask", "Brush (K)"),
+        ] {
             button.controlSize = .small
             button.bezelStyle = .rounded
             button.toolTip = tip
@@ -49,7 +66,7 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
             button.action = #selector(ActionTarget.fire(_:))
             actionTargets.append(target)
         }
-        let buttons = NSStackView(views: [linear, radial])
+        let buttons = NSStackView(views: [linear, radial, brush])
         buttons.spacing = 8
 
         overlayCheckbox.controlSize = .small
@@ -139,6 +156,7 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         refreshers.append { [weak self, weak amount] in amount?.value = self?.selected?.amount ?? 1 }
         detail.addArrangedSubview(amount)
         sliderRows.append(amount)
+        buildBrushControls()
 
         for (name, range, path, format) in sliders {
             let row = SliderRow(title: name, range: range, defaultValue: 0, format: format)
@@ -153,6 +171,39 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         }
 
         for row in sliderRows { row.widthAnchor.constraint(equalTo: detail.widthAnchor).isActive = true }
+    }
+
+    /// Size, Feather, Flow and Density for the next stroke, shown while a brush mask is selected.
+    private func buildBrushControls() {
+        let percent: (Double) -> String = { String(format: "%.0f", $0 * 100) }
+        let defaults = MaskGeometry.BrushSettings()
+        let rows: [(String, ClosedRange<Double>, WritableKeyPath<MaskGeometry.BrushSettings, Double>, (Double) -> String)] = [
+            ("Size", MaskGeometry.BrushSettings.sizeRange, \.size, { String(format: "%.1f", $0 * 100) }),
+            ("Feather", 0...1, \.feather, percent),
+            ("Flow", 0...1, \.flow, percent),
+            ("Density", 0...1, \.density, percent),
+        ]
+        brushControls.orientation = .vertical
+        brushControls.alignment = .leading
+        brushControls.spacing = 8
+        brushControls.setAccessibilityIdentifier("brushControls")
+        for (name, range, path, format) in rows {
+            let row = SliderRow(title: name, range: range, defaultValue: defaults[keyPath: path], format: format)
+            row.setAccessibilityIdentifier("slider.Brush.\(name)")
+            row.slider.setAccessibilityIdentifier("slider.Brush.\(name)")
+            // Only the next stroke changes, so there is nothing to undo.
+            row.onChange = { [weak self] value, _ in self?.brush[keyPath: path] = value }
+            brushRefreshers.append { [weak self, weak row] in row?.value = self?.brush[keyPath: path] ?? 0 }
+            brushControls.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: brushControls.widthAnchor).isActive = true
+        }
+        brushRefreshers.forEach { $0() }
+        refreshers.append { [weak self] in
+            guard let self else { return }
+            brushControls.isHidden = !(selected?.components.contains { if case .brush = $0.shape { true } else { false } } ?? false)
+        }
+        detail.addArrangedSubview(brushControls)
+        brushControls.widthAnchor.constraint(equalTo: detail.widthAnchor).isActive = true
     }
 
     /// The mask's type on the left and the Invert switch on the right, above every mask's controls.
