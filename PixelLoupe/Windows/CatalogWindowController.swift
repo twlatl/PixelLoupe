@@ -57,11 +57,14 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         window.isReleasedWhenClosed = false
         super.init(window: window)
 
+        // The delegate first: setting the window up (its content, size and saved frame) asks it for its undo
+        // manager, and with no delegate to ask, the window makes and keeps its own, so ⌘Z never reached the
+        // catalog's edits.
+        window.delegate = self
         window.contentViewController = rootViewController
         window.setContentSize(NSSize(width: 1400, height: 900))
         window.center()
         window.setFrameAutosaveName("CatalogWindow")
-        window.delegate = self
         window.registerForDraggedTypes([.fileURL])
 
         let toolbar = NSToolbar(identifier: "CatalogToolbar")

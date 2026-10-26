@@ -237,3 +237,115 @@ struct MaskUndoTests {
         #expect(develop.shownMasks.count == 1, "redo brings it back")
     }
 }
+
+@MainActor
+@Suite("⌘Z in the catalog window (RAW-189)", .serialized)
+struct CatalogWindowUndoTests {
+    private func find<View: NSView>(_ id: String, _ type: View.Type, in view: NSView) -> View? {
+        if let view = view as? View, view.accessibilityIdentifier() == id { return view }
+        return view.subviews.lazy.compactMap { self.find(id, type, in: $0) }.first
+    }
+
+    @Test("The window undoes with the catalog's undo manager, from the start")
+    func windowUsesTheCatalogsUndoManager() throws {
+        let directory = try TemporaryDirectory()
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "C.pixelloupe"))
+        let controller = CatalogWindowController(store: store)
+        defer { controller.close() }
+        let window = try #require(controller.window)
+        #expect(window.undoManager === store.viewContext.undoManager)
+        #expect(window.firstResponder?.undoManager === store.viewContext.undoManager)
+    }
+
+    @Test("In Masking, ⌘Z undoes a new mask, a brush stroke, and a slider under the mask, each on its own")
+    func undoesMaskEdits() async throws {
+        let directory = try TemporaryDirectory()
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "C.pixelloupe"))
+        let photo = Photo(context: store.viewContext)
+        photo.id = UUID()
+        photo.fileName = "IMG.jpg"
+        let url = directory.url.appending(path: photo.fileName)
+        try Fixtures.writeJPEG(to: url, width: 600, height: 400)
+        photo.filePath = url.path(percentEncoded: false)
+        photo.fileType = "JPG"
+        photo.pixelWidth = 600
+        photo.pixelHeight = 400
+        photo.orientation = 1
+        photo.captureDate = Date()
+        photo.importDate = Date()
+        photo.editDate = Date()
+        try store.viewContext.save()
+        let undo = try #require(store.viewContext.undoManager)
+        undo.removeAllActions()
+        undo.groupsByEvent = false
+        defer { undo.groupsByEvent = true }
+
+        let controller = CatalogWindowController(store: store)
+        controller.showWindow(nil)
+        defer { controller.close() }
+        let window = try #require(controller.window)
+        controller.state.selectedPhotoIDs = [try #require(controller.state.photoOrder.first)]
+        controller.state.mode = .develop
+        controller.state.developTool = .mask
+        let develop = controller.rootViewController.main.develop
+        let start = Date()
+        while !develop.hasDrawnPhoto, Date().timeIntervalSince(start) < 30 { try await Task.sleep(for: .milliseconds(50)) }
+        let content = try #require(window.contentView)
+        /// A turn of the run loop, which ends the undo group as an event does.
+        func settle() async throws { try await Task.sleep(for: .milliseconds(150)) }
+        /// ⌘Z: the menu's Undo, up the responder chain from the window's first responder.
+        func commandZ() async throws {
+            #expect(window.firstResponder?.tryToPerform(Selector(("undo:")), with: nil) == true)
+            try await settle()
+        }
+        /// One user action as one undo group, as AppKit closes a group at the end of each event (the test has no
+        /// real events to do it).
+        func action(_ body: () -> Void) {
+            undo.beginUndoGrouping()
+            body()
+            undo.endUndoGrouping()
+        }
+
+        // A new Background mask.
+        let picker = try #require(find("addMask", NSSegmentedControl.self, in: content))
+        picker.selectedSegment = 4
+        action { picker.sendAction(picker.action, to: picker.target) }
+        try await settle()
+        #expect(photo.adjustments.masks.count == 1)
+        try await commandZ()
+        #expect(photo.adjustments.masks.isEmpty && develop.shownMasks.isEmpty, "the new mask is undone")
+
+        // A brush stroke, then Exposure under the mask.
+        picker.selectedSegment = 2
+        action { picker.sendAction(picker.action, to: picker.target) }
+        try await settle()
+        let overlay = try #require(find("maskOverlay", MaskOverlayView.self, in: content))
+        let frame = overlay.frameRect
+        #expect(frame.width > 0, "the photo is drawn under the overlay")
+        func mouse(_ type: NSEvent.EventType, _ x: CGFloat) -> NSEvent {
+            let point = overlay.convert(NSPoint(x: frame.minX + x, y: frame.midY), to: nil)
+            return NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                                      context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+        }
+        overlay.mouseDown(with: mouse(.leftMouseDown, frame.width * 0.3))
+        overlay.mouseDragged(with: mouse(.leftMouseDragged, frame.width * 0.5))
+        action { overlay.mouseUp(with: mouse(.leftMouseUp, frame.width * 0.6)) }
+        try await settle()
+        func strokes() -> Int {
+            guard case .brush(let brush)? = photo.adjustments.masks.first?.components.first?.shape else { return -1 }
+            return brush.strokes.count
+        }
+        #expect(strokes() == 1)
+        let exposure = try #require(find("slider.Mask.Light.Exposure", SliderRow.self, in: content))
+        action { exposure.onChange?(1.2, true) }
+        try await settle()
+        #expect(photo.adjustments.masks.first?.settings.exposure == 1.2)
+
+        try await commandZ()
+        #expect(photo.adjustments.masks.first?.settings.exposure == -0.5, "Exposure is undone first")
+        #expect(strokes() == 1, "the stroke stays")
+        try await commandZ()
+        #expect(strokes() == 0, "then the stroke")
+        #expect(develop.shownMasks.first.map { $0.isEmpty } == true)
+    }
+}
