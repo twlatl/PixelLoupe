@@ -2,7 +2,8 @@ import AppKit
 
 /// The selected mask's shapes drawn over the Develop preview, with handles to drag: a linear
 /// gradient's zero and full lines (and the band between), a radial gradient's edge, feather and
-/// rotation handle. On a brush mask, dragging paints (⌥-dragging erases) and the pointer shows the brush.
+/// rotation handle. On a brush mask, dragging paints (⌥-dragging erases) and the pointer shows the brush; on a
+/// Subject or Background mask, the brush refines it (adds, or with ⌥ takes away).
 final class MaskOverlayView: NSView {
     /// The photo's frame in view points.
     var frameRect = CGRect.zero { didSet { needsDisplay = true } }
@@ -18,6 +19,8 @@ final class MaskOverlayView: NSView {
         case linear(component: Int, handle: MaskGeometry.LinearHandle, start: CGPoint, original: PhotoAdjustments.LinearGradient)
         case radial(component: Int, handle: MaskGeometry.RadialHandle, start: CGPoint, original: PhotoAdjustments.RadialGradient)
         case brush(component: Int)
+        /// Refining a Subject or Background mask; `last` is the stroke's last point.
+        case refine(last: PhotoAdjustments.UnitPoint, isErasing: Bool)
     }
 
     private var drag: Drag?
@@ -47,10 +50,15 @@ final class MaskOverlayView: NSView {
     private func framePoint(_ point: CGPoint) -> CGPoint { CGPoint(x: point.x - frameRect.minX, y: point.y - frameRect.minY) }
     private func viewPoint(_ point: CGPoint) -> CGPoint { CGPoint(x: point.x + frameRect.minX, y: point.y + frameRect.minY) }
 
-    /// The brush the selected mask paints into: its last brush shape.
+    /// The brush the selected mask paints into: its last brush shape (not on a Subject or Background mask,
+    /// which the brush refines instead).
     private var brushComponent: Int? {
-        adjustment?.components.lastIndex { if case .brush = $0.shape { true } else { false } }
+        guard let adjustment, !adjustment.usesSubject else { return nil }
+        return adjustment.components.lastIndex(where: \.shape.isBrush)
     }
+
+    /// Whether dragging paints: on a brush mask, or a Subject or Background mask the brush refines.
+    private var paints: Bool { brushComponent != nil || adjustment?.usesSubject == true }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let adjustment, frameRect.width > 0 else { return }
@@ -65,7 +73,7 @@ final class MaskOverlayView: NSView {
                 }
             }
         }
-        if brushComponent != nil, let pointer, frameRect.contains(pointer) { drawBrush(at: pointer) }
+        if paints, let pointer, frameRect.contains(pointer) { drawBrush(at: pointer) }
         NSGraphicsContext.restoreGraphicsState()
     }
 
@@ -146,19 +154,19 @@ final class MaskOverlayView: NSView {
         // ⌥ switches the brush between painting and erasing; redraw its mark.
         flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             MainActor.assumeIsolated {
-                if let self, self.brushComponent != nil, self.pointer != nil { self.needsDisplay = true }
+                if let self, self.paints, self.pointer != nil { self.needsDisplay = true }
             }
             return event
         }
     }
 
     override func cursorUpdate(with event: NSEvent) {
-        if brushComponent != nil { NSCursor.crosshair.set() } else { super.cursorUpdate(with: event) }
+        if paints { NSCursor.crosshair.set() } else { super.cursorUpdate(with: event) }
     }
 
     override func mouseMoved(with event: NSEvent) {
         pointer = convert(event.locationInWindow, from: nil)
-        if brushComponent != nil { needsDisplay = true }
+        if paints { needsDisplay = true }
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -171,6 +179,15 @@ final class MaskOverlayView: NSView {
     override func mouseDown(with event: NSEvent) {
         let point = framePoint(convert(event.locationInWindow, from: nil))
         guard var adjustment else { onClickEmpty?(); return }
+        if adjustment.usesSubject {
+            let erasing = event.modifierFlags.contains(.option)
+            let start = MaskGeometry.unitPoint(point, frame: frameRect.size)
+            adjustment.beginRefinement(brush.stroke(at: start, erasing: erasing))
+            drag = .refine(last: start, isErasing: erasing)
+            self.adjustment = adjustment
+            onChange?(adjustment, false, erasing ? "Erase" : "Brush Stroke")
+            return
+        }
         if let index = brushComponent, case .brush(var brush) = adjustment.components[index].shape {
             brush.strokes.append(self.brush.stroke(at: MaskGeometry.unitPoint(point, frame: frameRect.size), erasing: event.modifierFlags.contains(.option)))
             adjustment.components[index].shape = .brush(brush)
@@ -230,6 +247,15 @@ final class MaskOverlayView: NSView {
             adjustment.components[component].shape = .brush(brush)
             self.adjustment = adjustment
             onChange?(adjustment, isFinal, strokeActionName(brush))
+            return
+        case .refine(let last, let isErasing):
+            let next = MaskGeometry.unitPoint(point, frame: frameRect.size)
+            if hypot((next.x - last.x) * frameRect.width, (next.y - last.y) * frameRect.height) >= 2 {
+                adjustment.extendRefinement(to: next)
+                self.drag = .refine(last: next, isErasing: isErasing)
+            }
+            self.adjustment = adjustment
+            onChange?(adjustment, isFinal, isErasing ? "Erase" : "Brush Stroke")
             return
         }
         self.adjustment = adjustment

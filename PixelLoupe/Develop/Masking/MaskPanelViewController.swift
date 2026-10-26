@@ -78,6 +78,7 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
     private var brushRefreshers: [() -> Void] = []
     private let brushControls = NSStackView()
     private let subjectControls = NSStackView()
+    private let refineHint = NSTextField(wrappingLabelWithString: "Refine with the brush: drag on the photo to add to the selection, ⌥-drag to take away.")
     private var actionTargets: [ActionTarget] = []
     /// The targets for each row's checkbox and delete button (replaced whenever the rows are rebuilt).
     private var rowTargets: [UUID: ActionTarget] = [:]
@@ -187,8 +188,9 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         refreshers.append { [weak self, weak amount] in amount?.value = self?.selected?.amount ?? 1 }
         detail.addArrangedSubview(amount)
         amount.widthAnchor.constraint(equalTo: detail.widthAnchor).isActive = true
-        buildBrushControls()
+        // A Subject or Background mask shows its edge, then the brush that refines it.
         buildSubjectControls()
+        buildBrushControls()
 
         // The mask's own Develop sections (RAW-193), the Adjust panel's controls bound to the mask's settings.
         addChild(sections)
@@ -217,6 +219,11 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         brushControls.alignment = .leading
         brushControls.spacing = 8
         brushControls.setAccessibilityIdentifier("brushControls")
+        refineHint.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        refineHint.textColor = .secondaryLabelColor
+        refineHint.setAccessibilityIdentifier("refineHint")
+        brushControls.addArrangedSubview(refineHint)
+        refineHint.widthAnchor.constraint(equalTo: brushControls.widthAnchor).isActive = true
         for (name, range, path, format) in rows {
             let row = SliderRow(title: name, range: range, defaultValue: defaults[keyPath: path], format: format)
             row.setAccessibilityIdentifier("slider.Brush.\(name)")
@@ -237,7 +244,9 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         brushRefreshers.forEach { $0() }
         refreshers.append { [weak self] in
             guard let self else { return }
-            brushControls.isHidden = !(selected?.components.contains { if case .brush = $0.shape { true } else { false } } ?? false)
+            let refines = selected?.usesSubject ?? false
+            brushControls.isHidden = !(refines || (selected?.components.contains(where: \.shape.isBrush) ?? false))
+            refineHint.isHidden = !refines
         }
         detail.addArrangedSubview(brushControls)
         detail.setCustomSpacing(12, after: brushControls)
@@ -332,9 +341,7 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         invertSwitch.setAccessibilityIdentifier("maskInvert")
         let invertTarget = ActionTarget { [weak self] control in
             let on = (control as! NSSwitch).state == .on
-            self?.edit("Invert Mask", isFinal: true) { mask in
-                for index in mask.components.indices { mask.components[index].isInverted = on }
-            }
+            self?.edit("Invert Mask", isFinal: true) { $0.setInverted(on) }
         }
         invertSwitch.target = invertTarget
         invertSwitch.action = #selector(ActionTarget.fire(_:))
