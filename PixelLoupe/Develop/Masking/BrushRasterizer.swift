@@ -59,8 +59,7 @@ nonisolated enum BrushRasterizer {
     static func paint(_ stroke: PhotoAdjustments.BrushStroke, into matte: inout [Float], width: Int, height: Int) {
         guard !stroke.points.isEmpty else { return }
         let radius = max(stroke.size * Double(max(width, height)), 0.5)
-        let hard = radius * (1 - stroke.feather.clamped(to: 0...1))
-        let flow = Float(stroke.flow.clamped(to: 0...1)), density = Float(stroke.density.clamped(to: 0...1))
+        let density = Float(stroke.density.clamped(to: 0...1))
         let dabs = dabCenters(stroke.points.map { CGPoint(x: $0.x * Double(width), y: $0.y * Double(height)) }, spacing: max(radius * 0.15, 0.5))
 
         // The pixels the stroke can touch.
@@ -69,44 +68,73 @@ nonisolated enum BrushRasterizer {
         let minY = max(0, Int((dabs.map(\.y).min()! - radius).rounded(.down)))
         let maxY = min(height - 1, Int((dabs.map(\.y).max()! + radius).rounded(.up)))
         guard minX <= maxX, minY <= maxY else { return }
-        let boxWidth = maxX - minX + 1
-        var coverage = [Float](repeating: 0, count: boxWidth * (maxY - minY + 1))
+        let boxWidth = maxX - minX + 1, boxHeight = maxY - minY + 1
+        var coverage = [Float](repeating: 0, count: boxWidth * boxHeight)
 
-        coverage.withUnsafeMutableBufferPointer { coverage in
+        // The dabs, drawn by Core Graphics (optimized even in a debug build) into a linear float gray
+        // bitmap: drawing white at the flow's opacity over what is there is `c + flow × (1 − c)`, so dabs
+        // build up as they overlap.
+        let space = CGColorSpace(name: CGColorSpace.linearGray)!
+        guard let gradient = dabGradient(feather: stroke.feather, flow: stroke.flow, space: space) else { return }
+        coverage.withUnsafeMutableBytes { bytes in
+            let info = CGImageAlphaInfo.none.rawValue | CGBitmapInfo.floatComponents.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+            guard let context = CGContext(data: bytes.baseAddress, width: boxWidth, height: boxHeight, bitsPerComponent: 32,
+                                          bytesPerRow: boxWidth * 4, space: space, bitmapInfo: info) else { return }
             for dab in dabs {
-                let x0 = max(minX, Int((dab.x - radius).rounded(.down))), x1 = min(maxX, Int((dab.x + radius).rounded(.up)))
-                let y0 = max(minY, Int((dab.y - radius).rounded(.down))), y1 = min(maxY, Int((dab.y + radius).rounded(.up)))
-                guard x0 <= x1, y0 <= y1 else { continue }
-                for y in y0...y1 {
-                    let dy = Double(y) + 0.5 - dab.y
-                    let row = (y - minY) * boxWidth - minX
-                    for x in x0...x1 {
-                        let distance = (pow(Double(x) + 0.5 - dab.x, 2) + dy * dy).squareRoot()
-                        guard distance < radius else { continue }
-                        let falloff = distance <= hard ? 1 : smoothstep(1 - (distance - hard) / (radius - hard))
-                        let added = flow * Float(falloff)
-                        coverage[row + x] += added * (1 - coverage[row + x])
-                    }
-                }
+                let center = CGPoint(x: dab.x - Double(minX), y: dab.y - Double(minY))
+                context.drawRadialGradient(gradient, startCenter: center, startRadius: 0, endCenter: center, endRadius: radius, options: [])
             }
         }
 
+        // Onto the matte, a row at a time with vDSP. The bitmap's row 0 is its top.
+        var amount = [Float](repeating: 0, count: boxWidth), scratch = [Float](repeating: 0, count: boxWidth)
+        var zero: Float = 0, ceiling = density
+        let n = vDSP_Length(boxWidth)
         matte.withUnsafeMutableBufferPointer { matte in
-            for y in minY...maxY {
-                let row = (y - minY) * boxWidth - minX
-                for x in minX...maxX {
-                    let amount = min(coverage[row + x], density)
-                    guard amount > 0 else { continue }
-                    let index = y * width + x
-                    if stroke.isErasing {
-                        matte[index] *= 1 - amount
-                    } else {
-                        // Builds on what is there, but a stroke never takes a spot past its own density.
-                        matte[index] = max(matte[index], min(matte[index] + amount * (1 - matte[index]), density))
+            coverage.withUnsafeBufferPointer { coverage in
+                amount.withUnsafeMutableBufferPointer { amount in
+                    scratch.withUnsafeMutableBufferPointer { scratch in
+                        let v = amount.baseAddress!, t = scratch.baseAddress!
+                        for row in 0..<boxHeight {
+                            let c = coverage.baseAddress! + row * boxWidth
+                            let m = matte.baseAddress! + (maxY - row) * width + minX
+                            // What the stroke puts here: its coverage, up to its density.
+                            vDSP_vclip(c, 1, &zero, &ceiling, v, 1, n)
+                            if stroke.isErasing {
+                                // m − m·v
+                                vDSP_vmul(m, 1, v, 1, t, 1, n)
+                                vDSP_vsub(t, 1, m, 1, m, 1, n)
+                            } else {
+                                // Builds on what is there, but a stroke never takes a spot past its own
+                                // density: max(m, min(m + v − m·v, density)).
+                                vDSP_vmul(v, 1, m, 1, t, 1, n)
+                                vDSP_vsub(t, 1, v, 1, t, 1, n)
+                                vDSP_vadd(m, 1, t, 1, t, 1, n)
+                                vDSP_vclip(t, 1, &zero, &ceiling, t, 1, n)
+                                vDSP_vmax(m, 1, t, 1, m, 1, n)
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+
+    /// A dab: white at the flow's opacity out to where the feather starts, then easing (smoothstep) to
+    /// nothing at the edge.
+    private static func dabGradient(feather: Double, flow: Double, space: CGColorSpace) -> CGGradient? {
+        let flow = flow.clamped(to: 0...1), core = 1 - feather.clamped(to: 0...1)
+        var locations: [CGFloat] = [0, core]
+        var components: [CGFloat] = [1, flow, 1, flow]
+        if core < 1 {
+            let steps = 16
+            for step in 1...steps {
+                let t = Double(step) / Double(steps)
+                locations.append(core + (1 - core) * t)
+                components += [1, flow * smoothstep(1 - t)]
+            }
+        }
+        return CGGradient(colorSpace: space, colorComponents: components, locations: locations, count: locations.count)
     }
 
     /// Dab centers every `spacing` along the polyline, starting at its first point.
@@ -150,11 +178,13 @@ nonisolated enum BrushRasterizer {
         var image: CIImage?
     }
 
-    /// A few mattes (and their images), most recently used last: the strokes before the one being painted
-    /// and all of them, at the size being rendered. Up to about a 36 MP photo at 1:1, so painting zoomed in
-    /// stays quick; an export of a larger photo paints from scratch, once.
+    /// Mattes (and their images), most recently used last. One edit renders the brush at several sizes (the
+    /// preview, the Navigator, the thumbnail), and painting needs the strokes before the one in progress as
+    /// well as all of them, so the cache holds a few of each, within a pixel budget (about 190 MB of mattes).
+    /// One matte can be up to a 36 MP photo at 1:1, so painting zoomed in stays quick; a larger export paints
+    /// from scratch, once.
     private static let cache = OSAllocatedUnfairLock<[Entry]>(initialState: [])
-    private static let cacheLimit = 3
+    private static let cachedPixelBudget = 48_000_000
     private static let cachedPixelLimit = 36_000_000
 
     private static func cached(_ key: Key) -> [Float]? {
@@ -167,7 +197,12 @@ nonisolated enum BrushRasterizer {
     }
 
     private static func cachedImage(_ key: Key) -> CIImage? {
-        cache.withLock { entries in entries.last { $0.key == key }?.image }
+        cache.withLock { entries in
+            guard let index = entries.firstIndex(where: { $0.key == key }), entries[index].image != nil else { return nil }
+            let entry = entries.remove(at: index)
+            entries.append(entry)
+            return entry.image
+        }
     }
 
     private static func store(_ matte: [Float], for key: Key) {
@@ -175,8 +210,18 @@ nonisolated enum BrushRasterizer {
         cache.withLock { entries in
             entries.removeAll { $0.key == key }
             entries.append(Entry(key: key, matte: matte))
-            if entries.count > cacheLimit { entries.removeFirst(entries.count - cacheLimit) }
+            var pixels = entries.reduce(0) { $0 + $1.key.width * $1.key.height }
+            while pixels > cachedPixelBudget, entries.count > 1 {
+                let evicted = entries.removeFirst()
+                pixels -= evicted.key.width * evicted.key.height
+            }
         }
+    }
+
+    /// Whether these strokes' image at this size is cached (for tests).
+    static func hasCachedImage(for brush: PhotoAdjustments.BrushMask, width: Int, height: Int) -> Bool {
+        let key = Key(strokes: brush.strokes, width: width, height: height)
+        return cache.withLock { entries in entries.contains { $0.key == key && $0.image != nil } }
     }
 
     private static func store(_ image: CIImage, for key: Key) {

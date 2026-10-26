@@ -107,6 +107,21 @@ struct BrushMaskTests {
         #expect(incremental == scratch)
     }
 
+    @Test("Rendering at other sizes (Navigator, thumbnail) keeps the preview's brush cached, so the next preview render doesn't repaint")
+    func cacheKeepsEachSize() {
+        // Sizes no other test uses. Painting a stroke after the edit renders also finds the strokes before it.
+        let strokes = (0..<15).map { stroke([(0.1, 0.05 + Double($0) * 0.06), (0.9, 0.1 + Double($0) * 0.06)], size: 0.03, feather: 0.5) }
+        let brush = Brush(strokes: strokes)
+        let preview = CGRect(x: 0, y: 0, width: 333, height: 222), navigator = CGRect(x: 0, y: 0, width: 417, height: 278)
+        let thumbnail = CGRect(x: 0, y: 0, width: 192, height: 128)
+        _ = BrushRasterizer.image(for: brush, extent: preview)
+        _ = BrushRasterizer.image(for: brush, extent: navigator)
+        _ = BrushRasterizer.image(for: brush, extent: thumbnail)
+        #expect(BrushRasterizer.hasCachedImage(for: brush, width: 333, height: 222))
+        #expect(BrushRasterizer.matte(for: Brush(strokes: Array(strokes.dropLast())), width: 333, height: 222).count == 333 * 222)
+        #expect(BrushRasterizer.hasCachedImage(for: brush, width: 333, height: 222), "still there after its strokes-before")
+    }
+
     @Test("The brush renders the right way up through the mask, and an unpainted inverted brush selects everything")
     func renderedMask() {
         // Painted near the bottom-left of the frame.
@@ -222,6 +237,9 @@ struct BrushMaskTests {
         #expect(controls.isHidden)
         panel.select(brush.id)
         #expect(!controls.isHidden)
+        // A line separates the brush's sliders from the Develop sliders (Exposure) below.
+        let separator = try #require(subview("brushSeparator", of: NSBox.self, in: controls))
+        #expect(separator.boxType == .separator && controls.arrangedSubviews.last === separator)
         #expect(try #require(subview("maskKind", of: NSTextField.self, in: panel.view)).stringValue == "Brush")
 
         var sent = false

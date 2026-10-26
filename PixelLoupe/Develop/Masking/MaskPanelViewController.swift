@@ -197,12 +197,20 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
             brushControls.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: brushControls.widthAnchor).isActive = true
         }
+        // A line between the brush and the mask's Develop sliders below it.
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.setAccessibilityIdentifier("brushSeparator")
+        brushControls.setCustomSpacing(12, after: brushControls.arrangedSubviews.last!)
+        brushControls.addArrangedSubview(separator)
+        separator.widthAnchor.constraint(equalTo: brushControls.widthAnchor).isActive = true
         brushRefreshers.forEach { $0() }
         refreshers.append { [weak self] in
             guard let self else { return }
             brushControls.isHidden = !(selected?.components.contains { if case .brush = $0.shape { true } else { false } } ?? false)
         }
         detail.addArrangedSubview(brushControls)
+        detail.setCustomSpacing(12, after: brushControls)
         brushControls.widthAnchor.constraint(equalTo: detail.widthAnchor).isActive = true
     }
 
