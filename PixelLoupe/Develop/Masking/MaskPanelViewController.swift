@@ -19,7 +19,8 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
 
     private let table = NSTableView()
     private let overlayCheckbox = NSButton(checkboxWithTitle: "Show Overlay (O)", target: nil, action: nil)
-    private let invertCheckbox = NSButton(checkboxWithTitle: "Invert", target: nil, action: nil)
+    private let kindLabel = NSTextField(labelWithString: "")
+    private let invertSwitch = NSSwitch()
     private var sliderRows: [SliderRow] = []
     private let detail = NSStackView()
     private var refreshers: [() -> Void] = []
@@ -115,6 +116,8 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
     // MARK: - Detail
 
     private func buildDetail() {
+        buildHeader()
+
         let sliders: [(String, ClosedRange<Double>, WritableKeyPath<PhotoAdjustments.LocalSettings, Double>, (Double) -> String)] = [
             ("Exposure", -5...5, \.exposure, { String(format: "%+.2f", $0) }),
             ("Contrast", -1...1, \.contrast, MaskPanelViewController.signedPercent),
@@ -149,23 +152,41 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
             sliderRows.append(row)
         }
 
-        invertCheckbox.controlSize = .small
-        invertCheckbox.setAccessibilityIdentifier("maskInvert")
-        let invertTarget = ActionTarget { [weak self] button in
-            let on = (button as! NSButton).state == .on
+        for row in sliderRows { row.widthAnchor.constraint(equalTo: detail.widthAnchor).isActive = true }
+    }
+
+    /// The mask's type on the left and the Invert switch on the right, above every mask's controls.
+    private func buildHeader() {
+        kindLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
+        kindLabel.setAccessibilityIdentifier("maskKind")
+        kindLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        refreshers.append { [weak self] in
+            // An imported Lightroom mask can mix shapes; it is named after its first.
+            self?.kindLabel.stringValue = self?.selected?.components.first?.shape.title ?? ""
+        }
+
+        let invertLabel = NSTextField(labelWithString: "Invert")
+        invertLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        invertSwitch.controlSize = .small
+        invertSwitch.setAccessibilityLabel("Invert")
+        invertSwitch.setAccessibilityIdentifier("maskInvert")
+        let invertTarget = ActionTarget { [weak self] control in
+            let on = (control as! NSSwitch).state == .on
             self?.edit("Invert Mask", isFinal: true) { mask in
                 for index in mask.components.indices { mask.components[index].isInverted = on }
             }
         }
-        invertCheckbox.target = invertTarget
-        invertCheckbox.action = #selector(ActionTarget.fire(_:))
+        invertSwitch.target = invertTarget
+        invertSwitch.action = #selector(ActionTarget.fire(_:))
         actionTargets.append(invertTarget)
         refreshers.append { [weak self] in
-            self?.invertCheckbox.state = (self?.selected?.components.first?.isInverted ?? false) ? .on : .off
+            self?.invertSwitch.state = (self?.selected?.components.first?.isInverted ?? false) ? .on : .off
         }
-        detail.addArrangedSubview(invertCheckbox)
 
-        for row in sliderRows { row.widthAnchor.constraint(equalTo: detail.widthAnchor).isActive = true }
+        let header = NSStackView(views: [kindLabel, NSView(), invertLabel, invertSwitch])
+        header.spacing = 6
+        detail.addArrangedSubview(header)
+        header.widthAnchor.constraint(equalTo: detail.widthAnchor).isActive = true
     }
 
     nonisolated private static func signedPercent(_ value: Double) -> String {

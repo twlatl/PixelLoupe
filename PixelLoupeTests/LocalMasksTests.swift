@@ -413,6 +413,45 @@ struct MaskHandleTests {
         #expect(subview("deleteMask", of: NSButton.self, in: panel.view) == nil)
     }
 
+    @MainActor
+    @Test("The selected mask's header names its type and has an Invert switch at the right, above Amount (RAW-190)")
+    func headerInvertSwitch() throws {
+        let panel = MaskPanelViewController()
+        let window = TestWindow(contentRect: NSRect(x: 0, y: 0, width: 340, height: 900), styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = panel.view
+        var mask = radialMask("Radial Gradient 1")
+        mask.components.append(.init(shape: .linear(MaskGeometry.defaultLinear()), mode: .subtract))
+        panel.display(masks: [mask])
+        window.layoutIfNeeded()
+
+        let kind = try #require(subview("maskKind", of: NSTextField.self, in: panel.view))
+        #expect(kind.stringValue == "Radial Gradient")
+        let invert = try #require(subview("maskInvert", of: NSSwitch.self, in: panel.view))
+        #expect(invert.state == .off)
+        #expect(invert.accessibilityLabel() == "Invert")
+
+        // On the header's right, level with the type, and above the sliders.
+        let amount = try #require(subview("slider.Mask.Amount", of: SliderRow.self, in: panel.view))
+        let switchFrame = invert.convert(invert.bounds, to: panel.view), kindFrame = kind.convert(kind.bounds, to: panel.view)
+        let amountFrame = amount.convert(amount.bounds, to: panel.view)
+        #expect(switchFrame.minX > kindFrame.maxX)
+        #expect(abs(switchFrame.midY - kindFrame.midY) < 6)
+        #expect(abs(switchFrame.maxX - amountFrame.maxX) < 2, "switch \(switchFrame) amount \(amountFrame)")
+        #expect(panel.view.isFlipped ? switchFrame.maxY <= amountFrame.minY : switchFrame.minY >= amountFrame.maxY)
+
+        var sent: [PhotoAdjustments.LocalAdjustment]?
+        panel.onChange = { masks, isFinal, action in
+            sent = masks
+            #expect(isFinal && action == "Invert Mask")
+        }
+        invert.performClick(nil)
+        #expect(sent?.first?.components.map(\.isInverted) == [true, true], "every shape flips")
+
+        // Showing an inverted mask turns the switch on.
+        panel.display(masks: try #require(sent))
+        #expect(invert.state == .on)
+    }
+
     @Test("M, ⇧M, O and ⇧W are masking shortcuts; plain W stays the white balance selector")
     func shortcuts() throws {
         func command(_ character: String, shift: Bool = false) -> KeyCommand? {
