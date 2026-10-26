@@ -8,13 +8,13 @@ import CoreImage.CIFilterBuiltins
 nonisolated enum LocalAdjustmentRenderer {
     /// `subject` is the photo's subject matte (``SubjectMatteStore``), when a mask needs it and it's been
     /// found; a Subject or Background shape adds nothing without it.
-    static func apply(_ masks: [PhotoAdjustments.LocalAdjustment], to image: CIImage, subject: CIImage? = nil) -> CIImage {
+    static func apply(_ masks: [PhotoAdjustments.LocalAdjustment], to image: CIImage, subject: CIImage? = nil, scale: CGFloat = 1) -> CIImage {
         var result = image
         let extent = image.extent
         guard !extent.isEmpty, !extent.isInfinite else { return image }
         for mask in masks where mask.isActive {
             guard let selection = self.mask(for: mask, extent: extent, subject: subject) else { continue }
-            let adjusted = adjust(result, with: mask.settings)
+            let adjusted = adjust(result, with: mask.settings, scale: scale)
             let blend = CIFilter.blendWithMask()
             blend.inputImage = adjusted
             blend.backgroundImage = result
@@ -140,16 +140,19 @@ nonisolated enum LocalAdjustmentRenderer {
 
     // MARK: - Adjusting
 
-    /// `image` with a mask's sliders applied everywhere (the mask decides where it shows).
-    static func adjust(_ image: CIImage, with settings: PhotoAdjustments.LocalSettings) -> CIImage {
+    /// `image` with a mask's sections applied everywhere (the mask decides where it shows): its exposure and
+    /// white balance shift, then the photo's own tone and color stage (``AdjustmentPipeline/applyTone``) and
+    /// grain, so a mask's sliders look just like the Develop panel's. `scale` is the render's (for grain size).
+    static func adjust(_ image: CIImage, with settings: PhotoAdjustments.LocalSettings, scale: CGFloat = 1) -> CIImage {
         var result = image
-        if settings.exposure != 0 {
+        let light = settings.light
+        if light.isEnabled, light.exposure != 0 {
             let filter = CIFilter.exposureAdjust()
             filter.inputImage = result
-            filter.ev = Float(settings.exposure.clamped(to: -5...5))
+            filter.ev = Float(light.exposure.clamped(to: -5...5))
             result = filter.outputImage ?? result
         }
-        if settings.temperature != 0 || settings.tint != 0 {
+        if settings.isWhiteBalanceEnabled, settings.temperature != 0 || settings.tint != 0 {
             let filter = CIFilter.temperatureAndTint()
             filter.inputImage = result
             // Warmer is a higher temperature, as in the white balance; positive tint is magenta.
@@ -158,34 +161,13 @@ nonisolated enum LocalAdjustmentRenderer {
             result = filter.outputImage ?? result
         }
 
-        // Tone and color through the same filters as the global sliders.
-        var global = PhotoAdjustments()
-        global.light.highlights = settings.highlights
-        global.light.shadows = settings.shadows
-        global.light.whites = settings.whites
-        global.light.contrast = settings.contrast
-        global.light.blackPoint = -settings.blacks
-        global.presence.saturation = settings.saturation
-        if global.light.highlights < 0 || global.light.shadows != 0 {
-            let filter = CIFilter.highlightShadowAdjust()
-            filter.inputImage = result
-            filter.shadowAmount = Float(global.light.shadows.clamped(to: -1...1))
-            filter.highlightAmount = Float((1 + min(global.light.highlights, 0)).clamped(to: 0...1))
-            result = filter.outputImage ?? result
-        }
-        if let key = ColorLUT.key(for: global) {
-            let filter = CIFilter.colorCubeWithColorSpace()
-            filter.inputImage = result
-            filter.cubeDimension = Float(ColorLUT.dimension)
-            filter.cubeData = ColorLUT.cubeData(for: key)
-            filter.colorSpace = CGColorSpace(name: CGColorSpace.sRGB)
-            result = filter.outputImage ?? result
-        }
+        let extent = image.extent
+        result = AdjustmentPipeline.applyTone(settings.adjustments, to: result, longEdge: max(extent.width, extent.height), reducesNoise: true)
 
-        var presence = PhotoAdjustments.Presence()
-        presence.clarity = settings.clarity
-        presence.texture = settings.texture
-        presence.dehaze = settings.dehaze
-        return PresenceRenderer.apply(presence, to: result, longEdge: max(image.extent.width, image.extent.height))
+        let effects = settings.effects
+        if effects.isActive, effects.grain > 0, !extent.isInfinite, let grain = AdjustmentPipeline.grainLayer(effects, extent: extent, scale: scale) {
+            result = grain.applyingFilter("CIOverlayBlendMode", parameters: [kCIInputBackgroundImageKey: result]).cropped(to: extent)
+        }
+        return result
     }
 }

@@ -50,13 +50,26 @@ nonisolated enum ColorLUT {
         return key == Key() ? nil : key
     }
 
-    private static let cache = OSAllocatedUnfairLock<(key: Key, data: Data)?>(initialState: nil)
+    /// The most recent tables, most recently used last: the photo's and each of its masks' (RAW-193), so a render
+    /// doesn't build them again for each other.
+    private static let cache = OSAllocatedUnfairLock<[(key: Key, data: Data)]>(initialState: [])
+    private static let cacheLimit = 6
 
-    /// RGBA float cube data for `CIColorCubeWithColorSpace`, cached for the most recent key.
+    /// RGBA float cube data for `CIColorCubeWithColorSpace`, cached for the most recent keys.
     static func cubeData(for key: Key) -> Data {
-        if let cached = cache.withLock({ $0 }), cached.key == key { return cached.data }
+        let cached = cache.withLock { entries -> Data? in
+            guard let index = entries.firstIndex(where: { $0.key == key }) else { return nil }
+            let entry = entries.remove(at: index)
+            entries.append(entry)
+            return entry.data
+        }
+        if let cached { return cached }
         let data = makeCubeData(for: key)
-        cache.withLock { $0 = (key, data) }
+        cache.withLock { entries in
+            entries.removeAll { $0.key == key }
+            entries.append((key, data))
+            if entries.count > cacheLimit { entries.removeFirst(entries.count - cacheLimit) }
+        }
         return data
     }
 

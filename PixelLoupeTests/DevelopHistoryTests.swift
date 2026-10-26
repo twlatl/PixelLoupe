@@ -78,7 +78,11 @@ struct DevelopHistoryTests {
         heavy.presence = .init(texture: 0.1, clarity: 0.2, dehaze: 0.1, vibrance: 0.3, saturation: 0.1)
         heavy.color.shadows = .init(hue: 0.6, amount: 0.3, luminance: 0)
         heavy.crop.rect = CGRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
-        heavy.masks = [.init(components: [.init(shape: .linear(MaskGeometry.defaultLinear()))], settings: .init(exposure: -1))]
+        heavy.masks = [.init(components: [.init(shape: .linear(MaskGeometry.defaultLinear()))], settings: {
+            var settings = PhotoAdjustments.LocalSettings()
+            settings.exposure = -1
+            return settings
+        }())]
         #expect(PhotoAdjustments(data: DevelopHistory.decompress(DevelopHistory.store(heavy))) == heavy)
         #expect(String(decoding: DevelopHistory.decompress(DevelopHistory.store(PhotoAdjustments())), as: UTF8.self) == "{}")
     }

@@ -326,10 +326,42 @@ nonisolated enum AdjustmentPipeline {
                 image = filter.outputImage ?? image
             }
         }
-        // On a Smart Preview of a RAW file the camera's default noise reduction is already in the
-        // pixels; this approximates the original's more.
+        // Noise reduction where the RAW engine doesn't do it (on a Smart Preview of a RAW file the camera's
+        // default is already in the pixels; this approximates the original's more), then tone and color.
+        image = applyTone(adjustments, to: image, longEdge: max(extent.width, extent.height), reducesNoise: source.reducesNoiseInPipeline)
+
+        image = SharpenRenderer.apply(adjustments.sharpen, to: image, scale: scale)
+
+        // Masks work on the whole frame, so before the crop moves it.
+        // Subject and Background masks need the photo's subject: off the main thread (thumbnails, exports)
+        // wait for it to be found; Develop's preview draws without it until it's ready.
+        let subject = adjustments.masks.contains(where: \.usesSubject)
+            ? source.subjectMattes.matte(for: source, adjustments: adjustments, waiting: !Thread.isMainThread)?.image
+            : nil
+        image = LocalAdjustmentRenderer.apply(adjustments.masks, to: image, subject: subject, scale: scale)
+
+        // Straighten and crop before the vignette and grain, so they follow the crop (Lightroom's
+        // post-crop vignette).
+        image = CropRenderer.apply(adjustments.crop, to: image, frame: extent, rendering: geometry)
+        extent = image.extent
+
+        image = VignetteRenderer.apply(adjustments.vignette, to: image)
+
+        let effects = adjustments.effects
+        if effects.isActive, effects.grain > 0, let grain = grainLayer(effects, extent: extent, scale: scale) {
+            image = grain.applyingFilter("CIOverlayBlendMode", parameters: [kCIInputBackgroundImageKey: image])
+        }
+
+        return image.cropped(to: extent)
+    }
+
+    /// The tone and color sections, from noise reduction through Definition, in the pipeline's order: for the
+    /// photo, and for a mask's own sections (``LocalAdjustmentRenderer``). Noise reduction runs here only when
+    /// the RAW engine hasn't done it (`reducesNoise`).
+    static func applyTone(_ adjustments: PhotoAdjustments, to input: CIImage, longEdge: CGFloat, reducesNoise: Bool) -> CIImage {
+        var image = input
         let noise = adjustments.noiseReduction
-        if source.reducesNoiseInPipeline, noise.isActive {
+        if reducesNoise, noise.isActive {
             let filter = CIFilter.noiseReduction()
             filter.inputImage = image
             filter.noiseLevel = Float(0.005 + max(noise.amount, noise.color) * 0.06)
@@ -368,8 +400,6 @@ nonisolated enum AdjustmentPipeline {
             image = filter.outputImage ?? image
         }
 
-        let longEdge = max(extent.width, extent.height)
-
         image = PresenceRenderer.apply(adjustments.presence, to: image, longEdge: longEdge)
 
         if adjustments.definition.isActive {
@@ -380,29 +410,7 @@ nonisolated enum AdjustmentPipeline {
             image = filter.outputImage ?? image
         }
 
-        image = SharpenRenderer.apply(adjustments.sharpen, to: image, scale: scale)
-
-        // Masks work on the whole frame, so before the crop moves it.
-        // Subject and Background masks need the photo's subject: off the main thread (thumbnails, exports)
-        // wait for it to be found; Develop's preview draws without it until it's ready.
-        let subject = adjustments.masks.contains(where: \.usesSubject)
-            ? source.subjectMattes.matte(for: source, adjustments: adjustments, waiting: !Thread.isMainThread)?.image
-            : nil
-        image = LocalAdjustmentRenderer.apply(adjustments.masks, to: image, subject: subject)
-
-        // Straighten and crop before the vignette and grain, so they follow the crop (Lightroom's
-        // post-crop vignette).
-        image = CropRenderer.apply(adjustments.crop, to: image, frame: extent, rendering: geometry)
-        extent = image.extent
-
-        image = VignetteRenderer.apply(adjustments.vignette, to: image)
-
-        let effects = adjustments.effects
-        if effects.isActive, effects.grain > 0, let grain = grainLayer(effects, extent: extent, scale: scale) {
-            image = grain.applyingFilter("CIOverlayBlendMode", parameters: [kCIInputBackgroundImageKey: image])
-        }
-
-        return image.cropped(to: extent)
+        return image
     }
 
     /// Film grain: neutral gray noise centered on 50% gray, for an Overlay blend (which leaves the

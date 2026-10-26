@@ -127,23 +127,113 @@ nonisolated extension PhotoAdjustments {
         var y: Double
     }
 
-    /// The sliders a mask applies (a subset of the global ones), -1…1 except exposure in stops.
+    /// What a mask applies: the Develop panel's own sections (RAW-193), less the ones that only make sense for
+    /// the whole photo (Profile, Calibration, Lens, Transform, Sharpen, Vignette, Crop), and a white balance
+    /// shift relative to the photo's.
     struct LocalSettings: Codable, Equatable, Sendable {
-        /// Stops, -5…5.
-        var exposure = 0.0
-        var contrast = 0.0
-        var highlights = 0.0
-        var shadows = 0.0
-        var whites = 0.0
-        var blacks = 0.0
+        /// Warmer (positive) or cooler, -1…1.
         var temperature = 0.0
+        /// Magenta (positive) or green, -1…1.
         var tint = 0.0
-        var saturation = 0.0
-        var clarity = 0.0
-        var texture = 0.0
-        var dehaze = 0.0
+        /// The White Balance section's switch: off leaves the shift set but unused.
+        var isWhiteBalanceEnabled = true
+        var light = Light()
+        var presence = Presence()
+        var color = ColorGrading()
+        var blackAndWhite = BlackAndWhite()
+        var curves = Curves()
+        var levels = Levels()
+        var definition = Definition()
+        var selectiveColor = SelectiveColor()
+        var noiseReduction = NoiseReduction()
+        var effects = Effects()
 
         var isActive: Bool { self != LocalSettings() }
+
+        // Lightroom's local correction sliders (and masks saved before RAW-193), by name.
+
+        /// Stops, -5…5.
+        var exposure: Double {
+            get { light.exposure }
+            set { light.exposure = newValue }
+        }
+        var contrast: Double {
+            get { light.contrast }
+            set { light.contrast = newValue }
+        }
+        var highlights: Double {
+            get { light.highlights }
+            set { light.highlights = newValue }
+        }
+        var shadows: Double {
+            get { light.shadows }
+            set { light.shadows = newValue }
+        }
+        var whites: Double {
+            get { light.whites }
+            set { light.whites = newValue }
+        }
+        /// Positive lifts the blacks: the Black Point slider the other way round.
+        var blacks: Double {
+            get { -light.blackPoint }
+            set { light.blackPoint = -newValue }
+        }
+        var saturation: Double {
+            get { presence.saturation }
+            set { presence.saturation = newValue }
+        }
+        var clarity: Double {
+            get { presence.clarity }
+            set { presence.clarity = newValue }
+        }
+        var texture: Double {
+            get { presence.texture }
+            set { presence.texture = newValue }
+        }
+        var dehaze: Double {
+            get { presence.dehaze }
+            set { presence.dehaze = newValue }
+        }
+
+        /// The sections as photo settings, for the Develop panel's controls and the pipeline's renderers.
+        /// The white balance shift travels in `whiteBalance.temperature` and `tint`, as -1…1, not kelvin.
+        var adjustments: PhotoAdjustments {
+            var adjustments = PhotoAdjustments()
+            adjustments.whiteBalance.isEnabled = isWhiteBalanceEnabled
+            adjustments.whiteBalance.temperature = temperature == 0 ? nil : temperature
+            adjustments.whiteBalance.tint = tint == 0 ? nil : tint
+            adjustments.light = light
+            adjustments.presence = presence
+            adjustments.color = color
+            adjustments.blackAndWhite = blackAndWhite
+            adjustments.curves = curves
+            adjustments.levels = levels
+            adjustments.definition = definition
+            adjustments.selectiveColor = selectiveColor
+            adjustments.noiseReduction = noiseReduction
+            adjustments.effects = effects
+            return adjustments
+        }
+
+        init() {}
+
+        /// The mask's sections from settings edited in the Develop panel's controls (see `adjustments`).
+        init(_ adjustments: PhotoAdjustments) {
+            let whiteBalance = adjustments.whiteBalance
+            isWhiteBalanceEnabled = whiteBalance.isEnabled
+            temperature = whiteBalance.temperature ?? 0
+            tint = whiteBalance.tint ?? 0
+            light = adjustments.light
+            presence = adjustments.presence
+            color = adjustments.color
+            blackAndWhite = adjustments.blackAndWhite
+            curves = adjustments.curves
+            levels = adjustments.levels
+            definition = adjustments.definition
+            selectiveColor = adjustments.selectiveColor
+            noiseReduction = adjustments.noiseReduction
+            effects = adjustments.effects
+        }
     }
 }
 
@@ -164,23 +254,61 @@ nonisolated extension PhotoAdjustments.LocalAdjustment {
 
 nonisolated extension PhotoAdjustments.LocalSettings {
     private enum CodingKeys: String, CodingKey {
-        case exposure, contrast, highlights, shadows, whites, blacks, temperature, tint, saturation, clarity, texture, dehaze
+        case temperature, tint, isWhiteBalanceEnabled = "whiteBalanceEnabled", light, presence, color, blackAndWhite, curves, levels, definition, selectiveColor, noiseReduction, effects
+    }
+
+    /// The flat sliders masks had before RAW-193.
+    private enum LegacyKeys: String, CodingKey {
+        case exposure, contrast, highlights, shadows, whites, blacks, saturation, clarity, texture, dehaze
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init()
-        exposure = try container.decodeIfPresent(Double.self, forKey: .exposure) ?? exposure
-        contrast = try container.decodeIfPresent(Double.self, forKey: .contrast) ?? contrast
-        highlights = try container.decodeIfPresent(Double.self, forKey: .highlights) ?? highlights
-        shadows = try container.decodeIfPresent(Double.self, forKey: .shadows) ?? shadows
-        whites = try container.decodeIfPresent(Double.self, forKey: .whites) ?? whites
-        blacks = try container.decodeIfPresent(Double.self, forKey: .blacks) ?? blacks
         temperature = try container.decodeIfPresent(Double.self, forKey: .temperature) ?? temperature
         tint = try container.decodeIfPresent(Double.self, forKey: .tint) ?? tint
-        saturation = try container.decodeIfPresent(Double.self, forKey: .saturation) ?? saturation
-        clarity = try container.decodeIfPresent(Double.self, forKey: .clarity) ?? clarity
-        texture = try container.decodeIfPresent(Double.self, forKey: .texture) ?? texture
-        dehaze = try container.decodeIfPresent(Double.self, forKey: .dehaze) ?? dehaze
+        isWhiteBalanceEnabled = try container.decodeIfPresent(Bool.self, forKey: .isWhiteBalanceEnabled) ?? isWhiteBalanceEnabled
+        light = try container.decodeIfPresent(PhotoAdjustments.Light.self, forKey: .light) ?? light
+        presence = try container.decodeIfPresent(PhotoAdjustments.Presence.self, forKey: .presence) ?? presence
+        color = try container.decodeIfPresent(PhotoAdjustments.ColorGrading.self, forKey: .color) ?? color
+        blackAndWhite = try container.decodeIfPresent(PhotoAdjustments.BlackAndWhite.self, forKey: .blackAndWhite) ?? blackAndWhite
+        curves = try container.decodeIfPresent(PhotoAdjustments.Curves.self, forKey: .curves) ?? curves
+        levels = try container.decodeIfPresent(PhotoAdjustments.Levels.self, forKey: .levels) ?? levels
+        definition = try container.decodeIfPresent(PhotoAdjustments.Definition.self, forKey: .definition) ?? definition
+        selectiveColor = try container.decodeIfPresent(PhotoAdjustments.SelectiveColor.self, forKey: .selectiveColor) ?? selectiveColor
+        noiseReduction = try container.decodeIfPresent(PhotoAdjustments.NoiseReduction.self, forKey: .noiseReduction) ?? noiseReduction
+        effects = try container.decodeIfPresent(PhotoAdjustments.Effects.self, forKey: .effects) ?? effects
+
+        // A mask saved before RAW-193: its sliders, into the sections they now belong to.
+        let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+        let paths: [(LegacyKeys, WritableKeyPath<Self, Double>)] = [
+            (.exposure, \.exposure), (.contrast, \.contrast), (.highlights, \.highlights), (.shadows, \.shadows), (.whites, \.whites),
+            (.blacks, \.blacks), (.saturation, \.saturation), (.clarity, \.clarity), (.texture, \.texture), (.dehaze, \.dehaze),
+        ]
+        for (key, path) in paths {
+            if let value = try legacy.decodeIfPresent(Double.self, forKey: key) { self[keyPath: path] = value }
+        }
+    }
+
+    /// Only what differs from the defaults, so an untouched section adds nothing to the catalog.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        let defaults = Self()
+        func encode<Value: Encodable & Equatable>(_ path: KeyPath<Self, Value>, _ key: CodingKeys) throws {
+            if self[keyPath: path] != defaults[keyPath: path] { try container.encode(self[keyPath: path], forKey: key) }
+        }
+        try encode(\.temperature, .temperature)
+        try encode(\.tint, .tint)
+        try encode(\.isWhiteBalanceEnabled, .isWhiteBalanceEnabled)
+        try encode(\.light, .light)
+        try encode(\.presence, .presence)
+        try encode(\.color, .color)
+        try encode(\.blackAndWhite, .blackAndWhite)
+        try encode(\.curves, .curves)
+        try encode(\.levels, .levels)
+        try encode(\.definition, .definition)
+        try encode(\.selectiveColor, .selectiveColor)
+        try encode(\.noiseReduction, .noiseReduction)
+        try encode(\.effects, .effects)
     }
 }

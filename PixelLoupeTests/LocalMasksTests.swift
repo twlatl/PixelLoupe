@@ -366,7 +366,7 @@ struct MaskHandleTests {
 
         var sent: [PhotoAdjustments.LocalAdjustment] = []
         panel.onChange = { masks, _, _ in sent = masks }
-        let exposure = try #require(subview("slider.Mask.Exposure", of: SliderRow.self, in: panel.view))
+        let exposure = try #require(subview("slider.Mask.Light.Exposure", of: SliderRow.self, in: panel.view))
         exposure.onChange?(2, true)
         #expect(sent.first?.components == moved.components)
         #expect(sent.first?.settings.exposure == 2)

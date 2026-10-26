@@ -5,8 +5,31 @@ import AppKit
 ///
 /// Every edit calls `onChange`. Intermediate changes (slider drags) only update the preview;
 /// final ones (mouse up, buttons, keyboard) are saved and recorded for undo by the owner.
+///
+/// The Masking panel uses it too, for a mask's own sections (`Scope.mask`): just those a mask applies, without
+/// the panel's header or scrolling, and with a relative Temp and Tint in place of the photo's white balance.
 final class AdjustmentsPanelViewController: NSViewController {
     typealias Adjustments = PhotoAdjustments
+
+    enum Scope {
+        /// The photo's settings: the Adjust panel.
+        case photo
+        /// A mask's (``PhotoAdjustments/LocalSettings/adjustments``).
+        case mask
+    }
+
+    let scope: Scope
+
+    init(scope: Scope = .photo) {
+        self.scope = scope
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    /// What sets a mask's sections apart: in their identifiers, action names and remembered open state.
+    private var scopeName: String { scope == .mask ? "Mask." : "" }
 
     private(set) var adjustments = Adjustments()
     private var asShotWhiteBalance: (temperature: Double, tint: Double) = (6500, 0)
@@ -43,6 +66,16 @@ final class AdjustmentsPanelViewController: NSViewController {
     private let whiteBalanceEyedropper = NSButton()
 
     override func loadView() {
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        if scope == .mask {
+            // Inside the Masking panel, which scrolls and has its own header.
+            view = stack
+            buildSections()
+            refresh()
+            return
+        }
         let title = NSTextField(labelWithString: "ADJUST")
         title.font = .systemFont(ofSize: 13, weight: .semibold)
         title.textColor = .secondaryLabelColor
@@ -56,9 +89,6 @@ final class AdjustmentsPanelViewController: NSViewController {
         headerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let header = NSStackView(views: [title, headerSpacer, resetAllButton])
 
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 8
         stack.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 20, right: 14)
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(header)
@@ -113,7 +143,7 @@ final class AdjustmentsPanelViewController: NSViewController {
     private func change(_ section: String, isFinal: Bool, _ mutate: (inout Adjustments) -> Void) {
         mutate(&adjustments)
         updateSectionStates()
-        onChange?(adjustments, isFinal, "Adjust \(section)")
+        onChange?(adjustments, isFinal, scope == .mask ? "Adjust Mask \(section)" : "Adjust \(section)")
     }
 
     private func refresh() {
@@ -159,9 +189,13 @@ final class AdjustmentsPanelViewController: NSViewController {
         hasAuto: Bool = false,
         expanded: Bool = false
     ) -> AdjustmentSectionView {
-        let section = AdjustmentSectionView(title: title, symbolName: symbol, hasAuto: hasAuto, expandedByDefault: expanded)
+        let section = AdjustmentSectionView(
+            // Under a mask only Light starts open; the others are a click away.
+            title: title, symbolName: symbol, hasAuto: hasAuto && scope == .photo,
+            expandedByDefault: scope == .mask ? keyPath as AnyKeyPath == \Adjustments.light : expanded, scope: scopeName
+        )
         stack.addArrangedSubview(section)
-        section.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -28).isActive = true
+        section.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -(stack.edgeInsets.left + stack.edgeInsets.right)).isActive = true
 
         let isModified: (Adjustments) -> Bool = { $0[keyPath: keyPath] != defaultValue }
         sectionStates.append { [weak self, weak section] in
@@ -196,8 +230,8 @@ final class AdjustmentsPanelViewController: NSViewController {
         set: @escaping (inout Adjustments, Double) -> Void
     ) -> SliderRow {
         let row = SliderRow(title: title, range: range, defaultValue: defaultValue, format: format, scale: scale, trackColors: trackColors)
-        row.setAccessibilityIdentifier("slider.\(sectionTitle).\(title)")
-        row.slider.setAccessibilityIdentifier("slider.\(sectionTitle).\(title)")
+        row.setAccessibilityIdentifier("slider.\(scopeName)\(sectionTitle).\(title)")
+        row.slider.setAccessibilityIdentifier("slider.\(scopeName)\(sectionTitle).\(title)")
         if placed { section.addControl(row) }
         row.onChange = { [weak self] value, isFinal in
             self?.change(sectionTitle, isFinal: isFinal) {
@@ -213,6 +247,21 @@ final class AdjustmentsPanelViewController: NSViewController {
     }
 
     private func buildSections() {
+        if scope == .mask {
+            // What a mask can apply, in the Adjust panel's order.
+            buildMaskWhiteBalance()
+            buildLight()
+            buildPresence()
+            buildColor()
+            buildBlackAndWhite()
+            buildCurves()
+            buildLevels()
+            buildDefinition()
+            buildSelectiveColor()
+            buildNoiseReduction()
+            buildEffects()
+            return
+        }
         buildProfile()
         // First among the tone and color controls, as at the top of Lightroom's Basic panel.
         buildWhiteBalance()
@@ -605,6 +654,21 @@ final class AdjustmentsPanelViewController: NSViewController {
     }
 
     /// "6,000", as Lightroom shows the temperature.
+    /// A mask's white balance: warmer or cooler and magenta or green than the photo's, -1…1.
+    private func buildMaskWhiteBalance() {
+        let title = "White Balance"
+        let section = addSection(
+            title, symbol: "thermometer.medium", keyPath: \.whiteBalance, enabled: \.isEnabled, defaultValue: .init(),
+            isApplied: { $0.whiteBalance.isActive }
+        )
+        addSlider(to: section, title, "Temp", keyPath: \.whiteBalance, enabled: \.isEnabled, range: -1...1,
+                  trackColors: Self.temperatureColors,
+                  get: { $0.whiteBalance.temperature ?? 0 }, set: { $0.whiteBalance.temperature = $1 == 0 ? nil : $1 })
+        addSlider(to: section, title, "Tint", keyPath: \.whiteBalance, enabled: \.isEnabled, range: -1...1,
+                  trackColors: Self.tintColors,
+                  get: { $0.whiteBalance.tint ?? 0 }, set: { $0.whiteBalance.tint = $1 == 0 ? nil : $1 })
+    }
+
     nonisolated static func temperatureText(_ value: Double) -> String {
         Int(value.rounded()).formatted()
     }

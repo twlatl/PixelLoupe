@@ -72,7 +72,7 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
     private let overlayCheckbox = NSButton(checkboxWithTitle: "Show Overlay (O)", target: nil, action: nil)
     private let kindLabel = NSTextField(labelWithString: "")
     private let invertSwitch = NSSwitch()
-    private var sliderRows: [SliderRow] = []
+    private let sections = AdjustmentsPanelViewController(scope: .mask)
     private let detail = NSStackView()
     private var refreshers: [() -> Void] = []
     private var brushRefreshers: [() -> Void] = []
@@ -180,43 +180,27 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
     private func buildDetail() {
         buildHeader()
 
-        let sliders: [(String, ClosedRange<Double>, WritableKeyPath<PhotoAdjustments.LocalSettings, Double>, (Double) -> String)] = [
-            ("Exposure", -5...5, \.exposure, { String(format: "%+.2f", $0) }),
-            ("Contrast", -1...1, \.contrast, MaskPanelViewController.signedPercent),
-            ("Highlights", -1...1, \.highlights, MaskPanelViewController.signedPercent),
-            ("Shadows", -1...1, \.shadows, MaskPanelViewController.signedPercent),
-            ("Whites", -1...1, \.whites, MaskPanelViewController.signedPercent),
-            ("Blacks", -1...1, \.blacks, MaskPanelViewController.signedPercent),
-            ("Temp", -1...1, \.temperature, MaskPanelViewController.signedPercent),
-            ("Tint", -1...1, \.tint, MaskPanelViewController.signedPercent),
-            ("Saturation", -1...1, \.saturation, MaskPanelViewController.signedPercent),
-            ("Clarity", -1...1, \.clarity, MaskPanelViewController.signedPercent),
-            ("Texture", -1...1, \.texture, MaskPanelViewController.signedPercent),
-            ("Dehaze", -1...1, \.dehaze, MaskPanelViewController.signedPercent),
-        ]
         let amount = SliderRow(title: "Amount", range: 0...1, defaultValue: 1, format: { String(format: "%.0f", $0 * 100) })
         amount.setAccessibilityIdentifier("slider.Mask.Amount")
         amount.slider.setAccessibilityIdentifier("slider.Mask.Amount")
         amount.onChange = { [weak self] value, isFinal in self?.edit("Mask Amount", isFinal: isFinal) { $0.amount = value } }
         refreshers.append { [weak self, weak amount] in amount?.value = self?.selected?.amount ?? 1 }
         detail.addArrangedSubview(amount)
-        sliderRows.append(amount)
+        amount.widthAnchor.constraint(equalTo: detail.widthAnchor).isActive = true
         buildBrushControls()
         buildSubjectControls()
 
-        for (name, range, path, format) in sliders {
-            let row = SliderRow(title: name, range: range, defaultValue: 0, format: format)
-            row.setAccessibilityIdentifier("slider.Mask.\(name)")
-            row.slider.setAccessibilityIdentifier("slider.Mask.\(name)")
-            row.onChange = { [weak self] value, isFinal in
-                self?.edit("Adjust Mask \(name)", isFinal: isFinal) { $0.settings[keyPath: path] = value }
-            }
-            refreshers.append { [weak self, weak row] in row?.value = self?.selected?.settings[keyPath: path] ?? 0 }
-            detail.addArrangedSubview(row)
-            sliderRows.append(row)
+        // The mask's own Develop sections (RAW-193), the Adjust panel's controls bound to the mask's settings.
+        addChild(sections)
+        sections.onChange = { [weak self] adjustments, isFinal, action in
+            self?.edit(action, isFinal: isFinal) { $0.settings = PhotoAdjustments.LocalSettings(adjustments) }
         }
-
-        for row in sliderRows { row.widthAnchor.constraint(equalTo: detail.widthAnchor).isActive = true }
+        refreshers.append { [weak self] in
+            guard let self else { return }
+            sections.display((selected?.settings ?? .init()).adjustments, asShotWhiteBalance: (0, 0), isRaw: false)
+        }
+        detail.addArrangedSubview(sections.view)
+        sections.view.widthAnchor.constraint(equalTo: detail.widthAnchor).isActive = true
     }
 
     /// Size, Feather, Flow and Density for the next stroke, shown while a brush mask is selected.
