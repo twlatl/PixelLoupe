@@ -1115,6 +1115,9 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         }
     }
 
+    /// The masks the Masking panel shows.
+    var shownMasks: [PhotoAdjustments.LocalAdjustment] { maskPanel.masks }
+
     /// Whether Space is held for the brush's hand.
     var isBrushHandHeld: Bool { maskOverlay.isHandHeld }
 
@@ -1409,6 +1412,9 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         panel.display(stored, asShotWhiteBalance: source.asShotWhiteBalance, isRaw: source.isRaw)
         if state.developTool == .crop { showCrop(stored.crop) }
         showLens()
+        // The masks and spots too, or their panels would show (and their next edit put back) what was undone.
+        showMasks()
+        showRetouch()
         metalView.needsDisplay = true
     }
 

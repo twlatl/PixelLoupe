@@ -177,3 +177,54 @@ struct MaskSectionsTests {
         return view.subviews.lazy.compactMap { self.subview(identifier, of: type, in: $0) }.first
     }
 }
+
+@MainActor
+@Suite("Undo in Masking (RAW-189)", .serialized)
+struct MaskUndoTests {
+    @Test("Undo and redo in Masking change the masks shown, not just the photo")
+    func undoShowsInTheMaskingPanel() async throws {
+        let directory = try TemporaryDirectory()
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "C.pixelloupe"))
+        let photo = Photo(context: store.viewContext)
+        photo.id = UUID()
+        photo.fileName = "IMG.jpg"
+        let url = directory.url.appending(path: photo.fileName)
+        try Fixtures.writeJPEG(to: url, width: 600, height: 400)
+        photo.filePath = url.path(percentEncoded: false)
+        photo.fileType = "JPG"
+        photo.pixelWidth = 600
+        photo.pixelHeight = 400
+        photo.orientation = 1
+        photo.captureDate = Date()
+        photo.importDate = Date()
+        photo.editDate = Date()
+        try store.viewContext.save()
+        let undo = try #require(store.viewContext.undoManager)
+        undo.groupsByEvent = false
+        defer { undo.groupsByEvent = true }
+        undo.removeAllActions()
+
+        let controller = CatalogWindowController(store: store)
+        controller.showWindow(nil)
+        defer { controller.close() }
+        controller.state.selectedPhotoIDs = [try #require(controller.state.photoOrder.first)]
+        controller.state.mode = .develop
+        controller.state.developTool = .mask
+        let develop = controller.rootViewController.main.develop
+        let start = Date()
+        while !develop.canAutoLight, Date().timeIntervalSince(start) < 30 { try await Task.sleep(for: .milliseconds(50)) }
+
+        undo.beginUndoGrouping()
+        develop.addMask(.radial)
+        undo.endUndoGrouping()
+        #expect(photo.adjustments.masks.count == 1 && develop.shownMasks.count == 1)
+
+        undo.undo()
+        #expect(photo.adjustments.masks.isEmpty, "the photo's settings went back")
+        #expect(develop.currentAdjustments?.masks.isEmpty == true)
+        #expect(develop.shownMasks.isEmpty, "and the Masking panel shows it")
+
+        undo.redo()
+        #expect(develop.shownMasks.count == 1, "redo brings it back")
+    }
+}
