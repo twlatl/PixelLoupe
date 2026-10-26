@@ -148,6 +148,16 @@ nonisolated enum MaskGeometry {
             feather = feather.clamped(to: 0...1)
         }
 
+        /// A two-finger swipe (or the scroll wheel) of `amount` points upward: larger, or with ⇧ softer;
+        /// downward is smaller or harder.
+        mutating func scroll(by amount: Double, feather: Bool) {
+            if feather {
+                self.feather = (self.feather + amount * 0.004).clamped(to: 0...1)
+            } else {
+                size = (size * pow(1.01, amount)).clamped(to: Self.sizeRange)
+            }
+        }
+
         func stroke(at point: PhotoAdjustments.UnitPoint, erasing: Bool) -> PhotoAdjustments.BrushStroke {
             .init(points: [point], size: size, feather: feather, flow: flow, density: density, isErasing: erasing)
         }

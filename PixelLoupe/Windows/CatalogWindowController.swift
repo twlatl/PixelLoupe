@@ -256,6 +256,8 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         if eventWindow === secondaryWindowController?.window, let secondary = secondaryWindowController {
             return performInSecondaryWindow(command, secondary)
         }
+        // While the brush is active, Space is its hand (Develop's key handler moves the photo), not Toggle Zoom.
+        if event.keyCode == 49, state.mode == .develop, rootViewController.main.develop.isBrushing { return true }
         return perform(command)
     }
 
