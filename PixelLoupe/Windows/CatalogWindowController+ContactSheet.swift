@@ -35,9 +35,9 @@ extension CatalogWindowController {
         }
     }
 
-    /// Enabling for Contact Sheet; nil for other items.
+    /// Enabling for Contact Sheet and Web Gallery, which show the same photos; nil for other items.
     func validateContactSheetItem(_ item: any NSValidatedUserInterfaceItem) -> Bool? {
-        guard item.action == #selector(showContactSheet(_:)) else { return nil }
+        guard item.action == #selector(showContactSheet(_:)) || item.action == #selector(showWebGallery(_:)) else { return nil }
         guard let ids = contactSheetPhotoIDs else { return false }
         // Usually the first photo answers it, so this stays quick for a large grid.
         let context = store.viewContext

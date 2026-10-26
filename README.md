@@ -111,6 +111,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `PixelLoupe/Develop/Panel` | Adjust panel and its controls |
 | `PixelLoupe/Merge` | Photo Merge: the HDR and panorama merges, their sheets, and the Linear DNG writer |
 | `PixelLoupe/ContactSheet` | Contact Sheet: its window, page layout, preview and PDF writer |
+| `PixelLoupe/WebGallery` | Web Gallery: its window, HTML pages and stylesheet, and preview |
 | `PixelLoupe/Windows` | Welcome, About, new-catalog and catalog windows |
 
 ## Keyboard shortcuts
@@ -175,6 +176,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `⌘Return` | Impromptu Slideshow of the selected photos (or every photo in the grid) on this display; `Esc` or `⌘Return` stops, `Space` pauses, `←` / `→` step |
 | `⌥⇧⌘Return` | Slideshow on the secondary display while you keep working (again to stop) |
 | `⌃⌥⌘C` | Contact Sheet: a window laying out the selected photos (or every photo in the grid) on pages, saved as a PDF with Generate… (see [Contact sheets](#contact-sheets)) |
+| `⌃⌥⌘W` | Web Gallery: a window laying out the selected photos (or every photo in the grid) as web pages (see [Web galleries](#web-galleries)) |
 
 Single-key shortcuts are ignored while typing in a text field.
 
@@ -319,6 +321,26 @@ The choices other than the headline and description are remembered for the next 
 the PDF and writes it in the background, rendering each photo at 300 pixels per inch of its cell (from its Smart
 Preview when the original is missing; a gray placeholder with its name when neither can be read). The text stays text,
 so the PDF can be searched. Cancel stops it without leaving a file behind.
+
+## Web galleries
+
+Window ▸ Web Gallery (`⌃⌥⌘W`) opens a window of the same photos a contact sheet would show: the selected photos when
+several are selected, otherwise every photo in the grid, in grid order, without videos. The photos are fixed when the
+window opens, and you can open several galleries at once.
+
+The middle of the window shows the gallery as a browser shows it, with the photos' Develop edits; its page links work.
+The sidebar on the right sets it up, and the preview follows as you change it, staying on the page you're viewing:
+
+- **Headline** and **Description**, at the top of every page (they start empty for each gallery).
+- **Text Color** and **Background Color**: black on white unless you choose others.
+- **Photos per Page** (24, 48, 96 or 192) and **Page Numbers**. A gallery with more than one page has Previous and
+  Next links under the photos; Page Numbers adds numbered links to the pages between them.
+- **Image Size**: larger photos mean fewer across. It sets the most columns across a wide window; a phone shows at most
+  two, and a very narrow screen one.
+- **Image Border** (white), **Shadow**, and **Image Caption**: one line under every photo with the field you choose,
+  as on a contact sheet.
+
+The choices other than the headline and description are remembered for the next gallery.
 
 ## Library views
 
