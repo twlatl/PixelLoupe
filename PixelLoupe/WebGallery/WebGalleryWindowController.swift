@@ -125,13 +125,46 @@ final class WebGalleryWindowController: NSWindowController, NSWindowDelegate, WK
         source.settings = model.settings
         let previewed = Self.previewed(model.settings)
         guard previewed != shownSettings else { return }
+        let onlyText = Self.withoutText(previewed) == Self.withoutText(shownSettings)
         shownSettings = previewed
+        if onlyText, !webView.isLoading, webView.url != nil {
+            replaceHeader()
+            return
+        }
         let last = model.pages.count - 1
         if currentPage > last {
             webView.load(URLRequest(url: WebGalleryPreviewSource.url(ofPage: last)))
         } else {
             webView.reload()
         }
+    }
+
+    /// The settings without the headline, description and email, which change only the pages' header
+    /// and title.
+    private static func withoutText(_ settings: WebGallerySettings) -> WebGallerySettings {
+        var settings = settings
+        settings.headline = ""
+        settings.description = ""
+        settings.email = ""
+        return settings
+    }
+
+    /// Swaps the page's header and title for the current settings' in place, so typing a headline
+    /// doesn't reload the page (and its photos) with every key. The page served next has them too.
+    private func replaceHeader() {
+        let pages = model.pages
+        let title = WebGalleryHTML.title(currentPage, pages: pages, settings: model.settings, sourceName: sourceName)
+        webView.callAsyncJavaScript("""
+            const old = document.querySelector("body > header");
+            const template = document.createElement("template");
+            template.innerHTML = header;
+            const fresh = template.content.firstElementChild;
+            if (old && fresh) old.replaceWith(fresh);
+            else if (old) old.remove();
+            else if (fresh) document.body.prepend(fresh);
+            document.title = title;
+            """, arguments: ["header": WebGalleryHTML.header(settings: model.settings), "title": title],
+            in: nil, in: .page, completionHandler: nil)
     }
 
     /// The settings without the ones the preview ignores (the generated images' quality and

@@ -537,6 +537,79 @@ struct WebGalleryWindowTests {
         }
     }
 
+    @Test func typingInHeadAndBodyReachesTheGeneratedPages() async throws {
+        let suite = "WebGalleryWindowTests.code"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let directory = try TemporaryDirectory()
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "C.pixelloupe"))
+        let file = try Fixtures.writeJPEG(to: directory.url.appending(path: "IMG_1.jpg"), width: 300, height: 200)
+        let photo = ContactSheetPhoto(source: PhotoSourceLocation(original: file), fileName: "IMG_1.jpg")
+        let controller = WebGalleryWindowController(photos: [photo], thumbnails: store.thumbnails, sourceName: "", defaults: defaults)
+        controller.showWindow(nil)
+        defer { controller.close() }
+        controller.window?.layoutIfNeeded()
+
+        func textViews(in view: NSView) -> [NSTextView] {
+            (view as? NSTextView).map { [$0] } ?? view.subviews.flatMap(textViews(in:))
+        }
+        let editors = textViews(in: try #require(controller.window?.contentView)).filter { !$0.isFieldEditor }
+        let head = try #require(editors.first { $0.accessibilityLabel() == "Head" })
+        let body = try #require(editors.first { $0.accessibilityLabel() == "Body" })
+        controller.window?.makeFirstResponder(head)
+        head.insertText("<meta name=\"robots\" content=\"noindex\">", replacementRange: NSRange(location: 0, length: 0))
+        controller.window?.makeFirstResponder(body)
+        body.insertText("<footer>Hi</footer>", replacementRange: NSRange(location: 0, length: 0))
+        #expect(controller.model.settings.headHTML == "<meta name=\"robots\" content=\"noindex\">")
+        #expect(controller.model.settings.bodyHTML == "<footer>Hi</footer>")
+
+        let folder = directory.url.appending(path: "Site")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        controller.write(to: folder)
+        await controller.generateTask?.value
+        let index = try String(contentsOf: folder.appending(path: "index.html"), encoding: .utf8)
+        #expect(index.contains("<meta name=\"robots\" content=\"noindex\">\n</head>"))
+        #expect(index.contains("<footer>Hi</footer>\n</body>"))
+    }
+
+    @Test func typingTheHeadlineUpdatesTheHeaderWithoutReloading() async throws {
+        let suite = "WebGalleryWindowTests.header"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let directory = try TemporaryDirectory()
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url)
+        let photos = (0..<30).map {
+            ContactSheetPhoto(source: PhotoSourceLocation(original: URL(filePath: "/missing/IMG_\($0).jpg")), fileName: "IMG_\($0).jpg")
+        }
+        let controller = WebGalleryWindowController(photos: photos, thumbnails: store.thumbnails, sourceName: "Dunes", defaults: defaults)
+        controller.model.settings.photosPerPage = 24
+        controller.showWindow(nil)
+        defer { controller.close() }
+        let webView = controller.webView
+        _ = try await evaluate("window.marker = 1", in: webView)
+        let header = "(document.querySelector('body > header') || {}).innerHTML + ' | ' + document.title + ' | ' + window.marker"
+
+        controller.model.settings.headline = "Pro"
+        controller.model.settings.headline = "Proofs <1>"
+        #expect(try await waitFor(header, toBe: "\n<h1>Proofs &lt;1&gt;</h1>\n | Proofs <1> (1 of 2) | 1", in: webView))
+
+        controller.model.settings.description = "Day one"
+        controller.model.settings.email = "ted@example.com"
+        #expect(try await waitFor("document.querySelector('header .email a').href + ' ' + document.querySelector('header .description').textContent + ' ' + window.marker",
+                                  toBe: "mailto:ted@example.com Day one 1", in: webView))
+
+        controller.model.settings.headline = ""
+        controller.model.settings.description = ""
+        controller.model.settings.email = ""
+        #expect(try await waitFor("(document.querySelector('header') === null) + ' ' + document.title + ' ' + window.marker",
+                                  toBe: "true Dunes (1 of 2) 1", in: webView), "no header left, and still not reloaded")
+
+        // Pages served later have it too.
+        controller.model.settings.headline = "Later"
+        webView.load(URLRequest(url: WebGalleryPreviewSource.url(ofPage: 1)))
+        #expect(try await waitFor("document.querySelector('h1').textContent + ' ' + document.title", toBe: "Later Later (2 of 2)", in: webView))
+    }
+
     @Test func outputSettingsDontReloadThePreview() async throws {
         let suite = "WebGalleryWindowTests.output"
         let defaults = try #require(UserDefaults(suiteName: suite))

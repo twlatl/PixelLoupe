@@ -41,11 +41,7 @@ nonisolated enum WebGalleryHTML {
     static func page(_ page: Int, photos: [ContactSheetPhoto], settings: WebGallerySettings, sourceName: String,
                      includesCustomCode: Bool = true) -> String {
         let pages = WebGalleryPages(photoCount: photos.count, photosPerPage: settings.photosPerPage)
-        let headline = settings.headline.trimmingCharacters(in: .whitespacesAndNewlines)
-        let description = settings.description.trimmingCharacters(in: .whitespacesAndNewlines)
-        let email = settings.email.trimmingCharacters(in: .whitespacesAndNewlines)
-        var title = headline.isEmpty ? sourceName : headline
-        if pages.count > 1 { title += " (\(page + 1) of \(pages.count))" }
+        let title = title(page, pages: pages, settings: settings, sourceName: sourceName)
         let language = Locale.current.language.languageCode?.identifier ?? "en"
 
         var html = """
@@ -61,13 +57,7 @@ nonisolated enum WebGalleryHTML {
         """
         if includesCustomCode { html += customCode(settings.headHTML) }
         html += "</head>\n<body>\n"
-        if !headline.isEmpty || !description.isEmpty || !email.isEmpty {
-            html += "<header>\n"
-            if !headline.isEmpty { html += "<h1>\(escape(headline))</h1>\n" }
-            if !description.isEmpty { html += "<p class=\"description\">\(escape(description))</p>\n" }
-            if !email.isEmpty { html += "<p class=\"email\">\(emailLink(email))</p>\n" }
-            html += "</header>\n"
-        }
+        html += header(settings: settings)
 
         var gridClasses = ["grid"]
         if settings.showsBorder { gridClasses.append("border") }
@@ -104,6 +94,26 @@ nonisolated enum WebGalleryHTML {
         }
         html += "</figure>\n"
         return html
+    }
+
+    /// The page's title: the headline (or the source's name without one), and which page it is.
+    static func title(_ page: Int, pages: WebGalleryPages, settings: WebGallerySettings, sourceName: String) -> String {
+        let headline = settings.headline.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = headline.isEmpty ? sourceName : headline
+        return pages.count > 1 ? "\(title) (\(page + 1) of \(pages.count))" : title
+    }
+
+    /// The headline, description and email at the top of every page; nothing when they're all empty.
+    static func header(settings: WebGallerySettings) -> String {
+        let headline = settings.headline.trimmingCharacters(in: .whitespacesAndNewlines)
+        let description = settings.description.trimmingCharacters(in: .whitespacesAndNewlines)
+        let email = settings.email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !headline.isEmpty || !description.isEmpty || !email.isEmpty else { return "" }
+        var html = "<header>\n"
+        if !headline.isEmpty { html += "<h1>\(escape(headline))</h1>\n" }
+        if !description.isEmpty { html += "<p class=\"description\">\(escape(description))</p>\n" }
+        if !email.isEmpty { html += "<p class=\"email\">\(emailLink(email))</p>\n" }
+        return html + "</header>\n"
     }
 
     /// The user's Head or Body text exactly as typed (it's theirs to get right), on lines of its own.
