@@ -39,6 +39,9 @@ enum Accent {
         switch view {
         case let slider as NSSlider:
             if slider.trackFillColor != fill { slider.trackFillColor = fill }
+        case let segmented as AccentSegmentedControl:
+            let accent = color(monochrome: mono)
+            if segmented.selectedSegmentBezelColor != accent { segmented.selectedSegmentBezelColor = accent }
         case let segmented as NSSegmentedControl:
             if segmented.selectedSegmentBezelColor != fill { segmented.selectedSegmentBezelColor = fill }
         case let button as ProminentButton:
@@ -75,6 +78,19 @@ enum Accent {
             }
         }
     }
+}
+
+/// A segmented control whose selected segment is filled with the accent color (or Monochrome Mode's), where
+/// a plain one draws the system's neutral selection: for a picker whose choice should stand out, like the
+/// Masking panel's kinds of mask. ``Accent/apply(in:monochrome:redraw:)`` keeps it in step with the setting.
+final class AccentSegmentedControl: NSSegmentedControl {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        selectedSegmentBezelColor = Accent.color
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 }
 
 /// A filled default button (the import window's Import): the accent color with white text, or in

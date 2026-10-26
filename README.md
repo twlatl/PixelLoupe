@@ -573,7 +573,8 @@ clone) and red eyes; generative or AI removals can't be imported and are reporte
 ## Masking (Develop)
 
 The **Masking** tool (⇧W, or its button in the Develop sidebar) adjusts part of a photo. **M** adds a linear gradient, **⇧M** a
-radial one, **K** a brush, and **O** shows the selected mask in red (Subject and Background have buttons and View menu items). On the photo, drag a linear gradient's lines (or its middle to move it),
+radial one, **K** a brush, and **O** shows the selected mask in red (the picker at the top of the panel adds each kind of mask and highlights the selected mask's kind; Subject and Background
+are also in the View menu). On the photo, drag a linear gradient's lines (or its middle to move it),
 or a radial gradient's handles (edge, feather ring, center, and the outer handle to turn it). On a brush mask, drag to paint and
 ⌥-drag to erase; the pointer shows the brush's edge and where its feather starts. The brush's Size (a share of the photo's long
 edge), Feather, Flow (how much each pass adds) and Density (the most a stroke reaches) apply to the next stroke, and `[` `]` and
@@ -582,7 +583,7 @@ Contrast, Highlights, Shadows, Whites, Blacks, Temp, Tint, Saturation, Clarity, 
 at the end of its row in the mask list deletes it; all of it is undoable, one step per brush stroke. Masks are stored as shapes and
 brush strokes, not bitmaps, in the photo's coordinates before cropping, so they stay on the subject if the crop changes and are as
 sharp in an export as on screen. Delete All Empty Masks also removes brushes that were never painted. **Subject** and
-**Background** (the buttons, or View ▸ Select Subject / Select Background) select what Vision finds as the photo's subject, or
+**Background** (the picker, or View ▸ Select Subject / Select Background) select what Vision finds as the photo's subject, or
 everything else; Feather softens the edge and Edge shrinks or grows the selection. The subject is found once per photo (it takes
 a moment the first time, and the panel says "Finding the subject…") and kept in the app's caches, not the catalog; it's found
 again only when Lens Corrections, Rotate/Flip or Transform change, and pasted settings find each photo's own subject (see

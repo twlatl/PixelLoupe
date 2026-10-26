@@ -455,6 +455,52 @@ struct MaskHandleTests {
         #expect(invert.state == .on)
     }
 
+    @MainActor
+    @Test("Masks are added from a segmented picker that highlights the selected mask's kind, in the accent color, and fits the panel")
+    func kindPicker() throws {
+        let panel = MaskPanelViewController()
+        let window = TestWindow(contentRect: NSRect(x: 0, y: 0, width: 366, height: 900), styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = panel.view
+        var added: [MaskPanelViewController.MaskKind] = []
+        panel.onAdd = { added.append($0) }
+        panel.display(masks: [])
+        window.layoutIfNeeded()
+
+        let picker = try #require(subview("addMask", of: NSSegmentedControl.self, in: panel.view))
+        #expect((0..<picker.segmentCount).map { picker.label(forSegment: $0) } == ["Linear", "Radial", "Brush", "Subject", "Background"])
+        #expect(picker.trackingMode == .selectOne && picker.selectedSegment == -1, "nothing highlighted without a mask")
+        #expect(picker.toolTip(forSegment: 0) == "Add a Linear Gradient (M)")
+        // Every label shows in the narrowest inspector.
+        #expect(picker.fittingSize.width <= picker.frame.width + 0.5, "fits \(picker.fittingSize.width) in \(picker.frame.width)")
+        #expect(picker.frame.maxX <= panel.view.bounds.maxX)
+
+        picker.selectedSegment = 1
+        picker.sendAction(picker.action, to: picker.target)
+        #expect(added == [.radial])
+
+        // The selected mask's kind is highlighted.
+        var brush = PhotoAdjustments.LocalAdjustment()
+        brush.components = [.init(shape: .brush(.init()))]
+        let radial = radialMask("Radial Gradient 1")
+        panel.display(masks: [radial, brush], selecting: brush.id)
+        #expect(picker.selectedSegment == 2)
+        panel.select(radial.id)
+        #expect(picker.selectedSegment == 1)
+
+        // Filled with the accent color, or Monochrome Mode's, and back again.
+        #expect(picker is AccentSegmentedControl)
+        Accent.apply(in: picker, monochrome: false)
+        #expect(picker.selectedSegmentBezelColor == .controlAccentColor)
+        Accent.apply(in: picker, monochrome: true)
+        #expect(picker.selectedSegmentBezelColor == Accent.monochrome)
+        Accent.apply(in: picker, monochrome: false)
+        #expect(picker.selectedSegmentBezelColor == .controlAccentColor)
+        // Other segmented controls keep the system's own selection.
+        let plain = NSSegmentedControl(labels: ["A", "B"], trackingMode: .selectOne, target: nil, action: nil)
+        Accent.apply(in: plain, monochrome: false)
+        #expect(plain.selectedSegmentBezelColor == nil)
+    }
+
     @Test("M, ⇧M, O and ⇧W are masking shortcuts; plain W stays the white balance selector")
     func shortcuts() throws {
         func command(_ character: String, shift: Bool = false) -> KeyCommand? {

@@ -1,6 +1,6 @@
 import AppKit
 
-/// The Masking panel: the photo's masks, buttons to add a linear or radial gradient, a brush, or the
+/// The Masking panel: the photo's masks, a picker to add a linear or radial gradient, a brush, or the
 /// subject or background, and the selected mask's sliders (and the brush's, or the subject's edge). Every edit calls `onChange` (final ones
 /// are saved and undoable).
 final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
@@ -13,7 +13,41 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
     var onOverlayChange: ((Bool) -> Void)?
     var onBrushChange: ((MaskGeometry.BrushSettings) -> Void)?
 
-    enum MaskKind: Sendable { case linear, radial, brush, subject, background }
+    enum MaskKind: CaseIterable, Sendable {
+        case linear, radial, brush, subject, background
+
+        var title: String {
+            switch self {
+            case .linear: "Linear"
+            case .radial: "Radial"
+            case .brush: "Brush"
+            case .subject: "Subject"
+            case .background: "Background"
+            }
+        }
+
+        var toolTip: String {
+            switch self {
+            case .linear: "Add a Linear Gradient (M)"
+            case .radial: "Add a Radial Gradient (⇧M)"
+            case .brush: "Add a Brush (K)"
+            case .subject: "Select Subject"
+            case .background: "Select Background"
+            }
+        }
+
+        /// The kind a mask was added as (its first shape's).
+        init?(_ mask: PhotoAdjustments.LocalAdjustment) {
+            switch mask.components.first?.shape {
+            case .linear?: self = .linear
+            case .radial?: self = .radial
+            case .brush?: self = .brush
+            case .subject?: self = .subject
+            case .background?: self = .background
+            case nil: return nil
+            }
+        }
+    }
 
     /// Whether the photo's subject has been found, for a Subject or Background mask.
     var subjectStatus = SubjectMatteStore.Status.finding {
@@ -33,6 +67,7 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         didSet { setControlsEnabled(isEditingEnabled, in: view) }
     }
 
+    private let kindPicker = AccentSegmentedControl()
     private let table = NSTableView()
     private let overlayCheckbox = NSButton(checkboxWithTitle: "Show Overlay (O)", target: nil, action: nil)
     private let kindLabel = NSTextField(labelWithString: "")
@@ -56,34 +91,28 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         title.font = .systemFont(ofSize: 13, weight: .semibold)
         title.textColor = .secondaryLabelColor
 
-        let linear = NSButton(title: "Linear", target: nil, action: nil)
-        let radial = NSButton(title: "Radial", target: nil, action: nil)
-        let brush = NSButton(title: "Brush", target: nil, action: nil)
-        let subject = NSButton(title: "Subject", target: nil, action: nil)
-        let background = NSButton(title: "Background", target: nil, action: nil)
-        for (button, kind, identifier, tip) in [
-            (linear, MaskKind.linear, "addLinearMask", "Linear Gradient (M)"), (radial, .radial, "addRadialMask", "Radial Gradient (⇧M)"),
-            (brush, .brush, "addBrushMask", "Brush (K)"), (subject, .subject, "addSubjectMask", "Select Subject"),
-            (background, .background, "addBackgroundMask", "Select Background"),
-        ] {
-            button.controlSize = .small
-            button.bezelStyle = .rounded
-            button.toolTip = tip
-            button.setAccessibilityIdentifier(identifier)
-            let target = ActionTarget { [weak self] _ in self?.onAdd?(kind) }
-            button.target = target
-            button.action = #selector(ActionTarget.fire(_:))
-            actionTargets.append(target)
+        // One segment per kind of mask: clicking one adds that kind, and the selected mask's kind is the one
+        // highlighted (in the accent color, or Monochrome Mode's).
+        let kinds = MaskKind.allCases
+        kindPicker.segmentCount = kinds.count
+        for (index, kind) in kinds.enumerated() {
+            kindPicker.setLabel(kind.title, forSegment: index)
+            kindPicker.setToolTip(kind.toolTip, forSegment: index)
         }
-        // Two rows, so they fit the sidebar.
-        let shapeButtons = NSStackView(views: [linear, radial, brush])
-        shapeButtons.spacing = 8
-        let subjectButtons = NSStackView(views: [subject, background])
-        subjectButtons.spacing = 8
-        let buttons = NSStackView(views: [shapeButtons, subjectButtons])
-        buttons.orientation = .vertical
-        buttons.alignment = .leading
-        buttons.spacing = 6
+        kindPicker.trackingMode = .selectOne
+        kindPicker.controlSize = .small
+        kindPicker.segmentDistribution = .fillProportionally
+        kindPicker.setAccessibilityIdentifier("addMask")
+        kindPicker.setAccessibilityLabel("Add Mask")
+        let pickTarget = ActionTarget { [weak self] control in
+            let index = (control as! NSSegmentedControl).selectedSegment
+            guard kinds.indices.contains(index) else { return }
+            self?.onAdd?(kinds[index])
+        }
+        kindPicker.target = pickTarget
+        kindPicker.action = #selector(ActionTarget.fire(_:))
+        actionTargets.append(pickTarget)
+        Accent.apply(in: kindPicker)
 
         overlayCheckbox.controlSize = .small
         overlayCheckbox.setAccessibilityIdentifier("maskOverlayCheckbox")
@@ -117,13 +146,13 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         detail.spacing = 8
         buildDetail()
 
-        let stack = NSStackView(views: [title, buttons, overlayCheckbox, scroll, emptyLabel, detail])
+        let stack = NSStackView(views: [title, kindPicker, overlayCheckbox, scroll, emptyLabel, detail])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
         stack.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 20, right: 14)
         stack.translatesAutoresizingMaskIntoConstraints = false
-        for view in [scroll, detail] { view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -28).isActive = true }
+        for view in [kindPicker, scroll, detail] { view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -28).isActive = true }
 
         let document = FlippedView()
         document.addSubview(stack)
@@ -391,9 +420,16 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
             table.deselectAll(nil)
         }
         refreshers.forEach { $0() }
+        showSelectedKind()
         detail.isHidden = selected == nil
         emptyLabel.isHidden = !masks.isEmpty
         setControlsEnabled(isEditingEnabled, in: view)
+    }
+
+    /// Highlights the selected mask's kind in the picker (none without a selection).
+    private func showSelectedKind() {
+        let index = selected.flatMap(MaskKind.init).flatMap(MaskKind.allCases.firstIndex(of:)) ?? -1
+        kindPicker.selectedSegment = index
     }
 
     private func reloadRowOnly(_ index: Int) {
@@ -457,6 +493,7 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         guard id != selectedID else { return }
         selectedID = id
         refreshers.forEach { $0() }
+        showSelectedKind()
         detail.isHidden = false
         onSelectionChange?(id)
     }

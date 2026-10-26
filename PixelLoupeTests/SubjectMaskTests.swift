@@ -207,15 +207,18 @@ struct SubjectMaskTests {
     // MARK: Panel and menu
 
     @MainActor
-    @Test("The Subject and Background buttons add them; Feather and Edge show once the subject is found and edit the mask")
+    @Test("The picker's Subject and Background add them; Feather and Edge show once the subject is found and edit the mask")
     func panel() throws {
         let panel = MaskPanelViewController()
         var added: [MaskPanelViewController.MaskKind] = []
         panel.onAdd = { added.append($0) }
         let subject = mask(.subject(.init()))
         panel.display(masks: [subject])
-        try #require(subview("addSubjectMask", of: NSButton.self, in: panel.view)).performClick(nil)
-        try #require(subview("addBackgroundMask", of: NSButton.self, in: panel.view)).performClick(nil)
+        let picker = try #require(subview("addMask", of: NSSegmentedControl.self, in: panel.view))
+        for segment in [3, 4] {
+            picker.selectedSegment = segment
+            picker.sendAction(picker.action, to: picker.target)
+        }
         #expect(added == [.subject, .background])
 
         let controls = try #require(subview("subjectControls", of: NSStackView.self, in: panel.view))

@@ -218,7 +218,7 @@ struct BrushMaskTests {
     // MARK: Panel and keys
 
     @MainActor
-    @Test("The Brush button adds a brush; its sliders show only for a brush mask and set the next stroke")
+    @Test("The picker's Brush adds a brush; its sliders show only for a brush mask and set the next stroke")
     func panelBrushControls() throws {
         let panel = MaskPanelViewController()
         var added: [MaskPanelViewController.MaskKind] = []
@@ -230,7 +230,9 @@ struct BrushMaskTests {
         radial.components = [.init(shape: .radial(MaskGeometry.defaultRadial()))]
         panel.display(masks: [radial, brush], selecting: radial.id)
 
-        try #require(subview("addBrushMask", of: NSButton.self, in: panel.view)).performClick(nil)
+        let picker = try #require(subview("addMask", of: NSSegmentedControl.self, in: panel.view))
+        picker.selectedSegment = 2
+        picker.sendAction(picker.action, to: picker.target)
         #expect(added == [.brush])
 
         let controls = try #require(subview("brushControls", of: NSStackView.self, in: panel.view))
