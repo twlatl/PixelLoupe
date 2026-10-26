@@ -141,8 +141,8 @@ nonisolated enum LocalAdjustmentRenderer {
     // MARK: - Adjusting
 
     /// `image` with a mask's sections applied everywhere (the mask decides where it shows): its exposure and
-    /// white balance shift, then the photo's own tone and color stage (``AdjustmentPipeline/applyTone``) and
-    /// grain, so a mask's sliders look just like the Develop panel's. `scale` is the render's (for grain size).
+    /// white balance shift, then the photo's own tone and color stage (``AdjustmentPipeline/applyTone``),
+    /// sharpening and grain, so a mask's sliders look just like the Develop panel's. `scale` is the render's (for grain size).
     static func adjust(_ image: CIImage, with settings: PhotoAdjustments.LocalSettings, scale: CGFloat = 1) -> CIImage {
         var result = image
         let light = settings.light
@@ -163,6 +163,7 @@ nonisolated enum LocalAdjustmentRenderer {
 
         let extent = image.extent
         result = AdjustmentPipeline.applyTone(settings.adjustments, to: result, longEdge: max(extent.width, extent.height), reducesNoise: true)
+        result = SharpenRenderer.apply(settings.sharpen, to: result, scale: scale)
 
         let effects = settings.effects
         if effects.isActive, effects.grain > 0, !extent.isInfinite, let grain = AdjustmentPipeline.grainLayer(effects, extent: extent, scale: scale) {

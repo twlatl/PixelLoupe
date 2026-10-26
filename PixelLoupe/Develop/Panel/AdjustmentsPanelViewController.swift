@@ -259,6 +259,7 @@ final class AdjustmentsPanelViewController: NSViewController {
             buildDefinition()
             buildSelectiveColor()
             buildNoiseReduction()
+            buildSharpen()
             buildEffects()
             return
         }
@@ -1115,7 +1116,8 @@ final class AdjustmentsPanelViewController: NSViewController {
         let masking = addSlider(
             to: section, title, "Masking", keyPath: \.sharpen, enabled: \.isEnabled, range: 0...1, format: Self.percent,
             get: { $0.sharpen.masking }, set: { $0.sharpen.masking = $1 })
-        masking.toolTip = "Hold Option while dragging to see the mask: white is sharpened"
+        // The preview shows the photo's own sharpening mask, so not under a mask.
+        if scope == .photo { masking.toolTip = "Hold Option while dragging to see the mask: white is sharpened" }
         // Option-drag shows the mask in the preview.
         let change = masking.onChange
         masking.onChange = { [weak self] value, isFinal in

@@ -583,7 +583,7 @@ edge), Feather, Flow (how much each pass adds) and Density (the most a stroke re
 `⇧[` `⇧]` change its size and feather, as does swiping up or down with two fingers over the photo (with `⇧` for the feather);
 holding Space turns the pointer into a hand to move a zoomed photo around. Each mask has its type and an Invert switch at the top, then Amount, then the Develop
 panel's own sections for the masked area: White Balance (Temp and Tint, warmer or cooler than the photo), Light, Presence,
-Color Grading, Black & White, Curves, Levels, Definition, Color Mixer, Noise Reduction and Effects (grain), each with its switch
+Color Grading, Black & White, Curves, Levels, Definition, Color Mixer, Noise Reduction, Sharpen and Effects (grain), each with its switch
 and reset as in the Adjust panel; they render just as the photo's do. Light starts open, and which sections are open is
 remembered for masks apart from the Adjust panel. Masks from before these sections open with their sliders in Light and
 Presence. the red ⊗ button

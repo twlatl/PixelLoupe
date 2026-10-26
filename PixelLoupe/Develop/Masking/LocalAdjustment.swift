@@ -132,8 +132,8 @@ nonisolated extension PhotoAdjustments {
     }
 
     /// What a mask applies: the Develop panel's own sections (RAW-193), less the ones that only make sense for
-    /// the whole photo (Profile, Calibration, Lens, Transform, Sharpen, Vignette, Crop), and a white balance
-    /// shift relative to the photo's.
+    /// the whole photo (Profile, Calibration, Lens, Transform, Vignette, Crop), and a white balance shift
+    /// relative to the photo's.
     struct LocalSettings: Codable, Equatable, Sendable {
         /// Warmer (positive) or cooler, -1…1.
         var temperature = 0.0
@@ -150,6 +150,7 @@ nonisolated extension PhotoAdjustments {
         var definition = Definition()
         var selectiveColor = SelectiveColor()
         var noiseReduction = NoiseReduction()
+        var sharpen = Sharpen()
         var effects = Effects()
 
         var isActive: Bool { self != LocalSettings() }
@@ -215,6 +216,7 @@ nonisolated extension PhotoAdjustments {
             adjustments.definition = definition
             adjustments.selectiveColor = selectiveColor
             adjustments.noiseReduction = noiseReduction
+            adjustments.sharpen = sharpen
             adjustments.effects = effects
             return adjustments
         }
@@ -236,6 +238,7 @@ nonisolated extension PhotoAdjustments {
             definition = adjustments.definition
             selectiveColor = adjustments.selectiveColor
             noiseReduction = adjustments.noiseReduction
+            sharpen = adjustments.sharpen
             effects = adjustments.effects
         }
     }
@@ -309,7 +312,7 @@ nonisolated extension PhotoAdjustments.LocalAdjustment {
 
 nonisolated extension PhotoAdjustments.LocalSettings {
     private enum CodingKeys: String, CodingKey {
-        case temperature, tint, isWhiteBalanceEnabled = "whiteBalanceEnabled", light, presence, color, blackAndWhite, curves, levels, definition, selectiveColor, noiseReduction, effects
+        case temperature, tint, isWhiteBalanceEnabled = "whiteBalanceEnabled", light, presence, color, blackAndWhite, curves, levels, definition, selectiveColor, noiseReduction, sharpen, effects
     }
 
     /// The flat sliders masks had before RAW-193.
@@ -332,6 +335,7 @@ nonisolated extension PhotoAdjustments.LocalSettings {
         definition = try container.decodeIfPresent(PhotoAdjustments.Definition.self, forKey: .definition) ?? definition
         selectiveColor = try container.decodeIfPresent(PhotoAdjustments.SelectiveColor.self, forKey: .selectiveColor) ?? selectiveColor
         noiseReduction = try container.decodeIfPresent(PhotoAdjustments.NoiseReduction.self, forKey: .noiseReduction) ?? noiseReduction
+        sharpen = try container.decodeIfPresent(PhotoAdjustments.Sharpen.self, forKey: .sharpen) ?? sharpen
         effects = try container.decodeIfPresent(PhotoAdjustments.Effects.self, forKey: .effects) ?? effects
 
         // A mask saved before RAW-193: its sliders, into the sections they now belong to.
@@ -364,6 +368,7 @@ nonisolated extension PhotoAdjustments.LocalSettings {
         try encode(\.definition, .definition)
         try encode(\.selectiveColor, .selectiveColor)
         try encode(\.noiseReduction, .noiseReduction)
+        try encode(\.sharpen, .sharpen)
         try encode(\.effects, .effects)
     }
 }

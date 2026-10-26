@@ -54,6 +54,7 @@ struct MaskSectionsTests {
         settings.definition.intensity = 0.3
         settings.selectiveColor.ranges[0].saturation = -0.5
         settings.noiseReduction.amount = 0.4
+        settings.sharpen = .init(intensity: 0.6, radius: 1.5, detail: 0.4, masking: 0.2)
         settings.effects.grain = 0.3
         #expect(try JSONDecoder().decode(Settings.self, from: JSONEncoder().encode(settings)) == settings)
     }
@@ -103,6 +104,14 @@ struct MaskSectionsTests {
         off.light.isEnabled = false
         #expect(pixel(LocalAdjustmentRenderer.adjust(base, with: off)) == plain, "Light switched off")
 
+        // Sharpening crisps an edge: past a soft step from dark to light, the light side gets lighter.
+        let step = CIImage(color: CIColor(red: 0.2, green: 0.2, blue: 0.2)).cropped(to: CGRect(x: 0, y: 0, width: 100, height: 100))
+            .composited(over: CIImage(color: CIColor(red: 0.7, green: 0.7, blue: 0.7)).cropped(to: extent))
+            .applyingGaussianBlur(sigma: 2).cropped(to: extent)
+        var sharp = Settings()
+        sharp.sharpen.intensity = 1
+        #expect(pixel(LocalAdjustmentRenderer.adjust(step, with: sharp), 103, 50)[0] > pixel(step, 103, 50)[0] + 0.01, "Sharpen")
+
         // Grain and noise reduction work on texture: grain varies a flat color.
         var grainy = Settings()
         grainy.effects.grain = 1
@@ -139,12 +148,12 @@ struct MaskSectionsTests {
         let view = panel.view
 
         let titles = ["White Balance", "Light", "Presence", "Color Grading", "Black & White", "Curves", "Levels", "Definition",
-                      "Color Mixer", "Noise Reduction", "Effects"]
+                      "Color Mixer", "Noise Reduction", "Sharpen", "Effects"]
         let sections = titles.compactMap { subview("adjustSection.Mask.\($0)", of: AdjustmentSectionView.self, in: view) }
         #expect(sections.count == titles.count, "\(sections.count) of \(titles.count)")
         let tops = sections.map { $0.convert($0.bounds, to: view).midY }
         #expect(tops == tops.sorted(by: view.isFlipped ? (<) : (>)), "in order")
-        for photoOnly in ["Profile", "Sharpen", "Post-Crop Vignette", "Transform", "Calibration", "Red-Eye"] {
+        for photoOnly in ["Profile", "Post-Crop Vignette", "Transform", "Calibration", "Red-Eye"] {
             #expect(subview("adjustSection.Mask.\(photoOnly)", of: AdjustmentSectionView.self, in: view) == nil, "\(photoOnly)")
             #expect(subview("adjustSection.\(photoOnly)", of: AdjustmentSectionView.self, in: view) == nil, "\(photoOnly)")
         }
