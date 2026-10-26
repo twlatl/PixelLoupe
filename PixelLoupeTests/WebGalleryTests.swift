@@ -195,6 +195,47 @@ struct WebGalleryHTMLTests {
         #expect(!WebGalleryHTML.script.contains("import "))
     }
 
+    @Test func theEmailIsALinkHiddenFromHarvesters() {
+        #expect(WebGalleryHTML.entities("a@b") == "&#97;&#64;&#98;")
+        #expect(WebGalleryHTML.entities("é") == "&#233;")
+
+        var settings = WebGallerySettings()
+        settings.email = "  ted@example.com \n"
+        let html = WebGalleryHTML.page(0, photos: photos(1), settings: settings, sourceName: "")
+        #expect(!html.contains("@"), "no address in plain text")
+        #expect(!html.contains("mailto"))
+        let link = WebGalleryHTML.emailLink("ted@example.com")
+        #expect(html.contains("<header>\n<p class=\"email\">\(link)</p>\n</header>"), "trimmed; a header of its own without a headline")
+        #expect(link.hasPrefix("<a href=\"\(WebGalleryHTML.entities("mailto:ted@example.com"))\">"))
+
+        // A browser reads it back as the address.
+        let parsed = NSAttributedString(html: Data(link.utf8), documentAttributes: nil)
+        #expect(parsed?.string == "ted@example.com")
+        #expect(parsed?.attribute(.link, at: 0, effectiveRange: nil) as? URL == URL(string: "mailto:ted@example.com"))
+
+        settings.email = "   "
+        #expect(!WebGalleryHTML.page(0, photos: photos(1), settings: settings, sourceName: "").contains("<header>"))
+    }
+
+    @Test func headAndBodyGoInAsTypedAtTheEnds() {
+        var settings = WebGallerySettings()
+        settings.headHTML = "<script async src=\"https://example.com/a.js\"></script>"
+        settings.bodyHTML = "<footer>© 2026 & <b>me</b></footer>\n"
+        let html = WebGalleryHTML.page(0, photos: photos(1), settings: settings, sourceName: "")
+        #expect(html.contains("<link rel=\"stylesheet\" href=\"gallery.css\">\n<script async src=\"https://example.com/a.js\"></script>\n</head>"))
+        #expect(html.contains("<script src=\"gallery.js\"></script>\n<footer>© 2026 & <b>me</b></footer>\n</body>"),
+                "after the gallery's own scripts, not escaped")
+
+        let preview = WebGalleryHTML.page(0, photos: photos(1), settings: settings, sourceName: "", includesCustomCode: false)
+        #expect(!preview.contains("example.com"))
+        #expect(!preview.contains("<footer>"))
+        #expect(preview.contains("gallery.css\">\n</head>\n<body>"))
+
+        settings.headHTML = "  \n "
+        settings.bodyHTML = ""
+        #expect(WebGalleryHTML.page(0, photos: photos(1), settings: settings, sourceName: "").contains("gallery.css\">\n</head>\n<body>"))
+    }
+
     @Test func borderAndShadowAreClassesOnTheGrid() {
         var settings = WebGallerySettings()
         #expect(WebGalleryHTML.page(0, photos: photos(1), settings: settings, sourceName: "").contains("<main class=\"grid\">"))
@@ -223,6 +264,9 @@ struct WebGallerySettingsTests {
         settings.captionField = .exposure
         settings.showsPageNumbers = false
         settings.photosPerPage = 192
+        settings.email = "ted@example.com"
+        settings.headHTML = "<meta name=\"robots\" content=\"noindex\">"
+        settings.bodyHTML = "<footer>Hi</footer>"
         settings.remember(in: defaults)
 
         var expected = settings
@@ -505,6 +549,8 @@ struct WebGalleryWindowTests {
         defer { controller.close() }
         _ = try await evaluate("window.marker = 1", in: controller.webView)
         controller.model.jpegQuality = 40
+        controller.model.settings.headHTML = "<script>window.ran = 1</script>"
+        controller.model.settings.bodyHTML = "<p id=body>Hi</p>"
         #expect(try await evaluate("window.marker", in: controller.webView) as? Int == 1, "not reloaded")
         controller.model.settings.showsBorder = true
         var reloaded = false
@@ -512,6 +558,8 @@ struct WebGalleryWindowTests {
             reloaded = try await evaluate("typeof window.marker", in: controller.webView) as? String == "undefined"
         }
         #expect(reloaded)
+        #expect(try await evaluate("typeof window.ran + ' ' + (document.getElementById('body') === null)", in: controller.webView) as? String
+                == "undefined true", "Head and Body stay out of the preview")
     }
 
     /// Polls `script` in the preview until it returns `expected` (pages load and scripts run after a moment).

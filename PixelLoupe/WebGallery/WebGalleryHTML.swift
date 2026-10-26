@@ -35,11 +35,15 @@ nonisolated enum WebGalleryHTML {
 
     // MARK: Pages
 
-    /// Page `page` of the gallery. `sourceName` titles it when there's no headline.
-    static func page(_ page: Int, photos: [ContactSheetPhoto], settings: WebGallerySettings, sourceName: String) -> String {
+    /// Page `page` of the gallery. `sourceName` titles it when there's no headline. The Head and Body
+    /// text goes in only with `includesCustomCode` (the preview leaves it out, so a pasted analytics
+    /// tag doesn't run with every change).
+    static func page(_ page: Int, photos: [ContactSheetPhoto], settings: WebGallerySettings, sourceName: String,
+                     includesCustomCode: Bool = true) -> String {
         let pages = WebGalleryPages(photoCount: photos.count, photosPerPage: settings.photosPerPage)
         let headline = settings.headline.trimmingCharacters(in: .whitespacesAndNewlines)
         let description = settings.description.trimmingCharacters(in: .whitespacesAndNewlines)
+        let email = settings.email.trimmingCharacters(in: .whitespacesAndNewlines)
         var title = headline.isEmpty ? sourceName : headline
         if pages.count > 1 { title += " (\(page + 1) of \(pages.count))" }
         let language = Locale.current.language.languageCode?.identifier ?? "en"
@@ -53,14 +57,15 @@ nonisolated enum WebGalleryHTML {
         <meta name="generator" content="PixelLoupe">
         <title>\(escape(title))</title>
         <link rel="stylesheet" href="\(stylesheetName)">
-        </head>
-        <body>
 
         """
-        if !headline.isEmpty || !description.isEmpty {
+        if includesCustomCode { html += customCode(settings.headHTML) }
+        html += "</head>\n<body>\n"
+        if !headline.isEmpty || !description.isEmpty || !email.isEmpty {
             html += "<header>\n"
             if !headline.isEmpty { html += "<h1>\(escape(headline))</h1>\n" }
             if !description.isEmpty { html += "<p class=\"description\">\(escape(description))</p>\n" }
+            if !email.isEmpty { html += "<p class=\"email\">\(emailLink(email))</p>\n" }
             html += "</header>\n"
         }
 
@@ -74,6 +79,7 @@ nonisolated enum WebGalleryHTML {
         html += "</main>\n"
         html += navigation(page, pages: pages, showsNumbers: settings.showsPageNumbers)
         html += "<script src=\"\(photosScriptName)\"></script>\n<script src=\"\(scriptName)\"></script>\n"
+        if includesCustomCode { html += customCode(settings.bodyHTML) }
         html += "</body>\n</html>\n"
         return html
     }
@@ -98,6 +104,24 @@ nonisolated enum WebGalleryHTML {
         }
         html += "</figure>\n"
         return html
+    }
+
+    /// The user's Head or Body text exactly as typed (it's theirs to get right), on lines of its own.
+    private static func customCode(_ code: String) -> String {
+        guard !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "" }
+        return code.hasSuffix("\n") ? code : code + "\n"
+    }
+
+    /// A `mailto:` link to `address`, every character of it written as a numeric character
+    /// reference: a browser reads it as usual (a click opens the mail app), but an address harvester
+    /// looking for "@" in the page source doesn't.
+    static func emailLink(_ address: String) -> String {
+        "<a href=\"\(entities("mailto:" + address))\">\(entities(address))</a>"
+    }
+
+    /// `text` as numeric character references (`&#109;&#97;…`).
+    static func entities(_ text: String) -> String {
+        text.unicodeScalars.map { "&#\($0.value);" }.joined()
     }
 
     /// The alt text describes the photo even when the caption shows something else; the file name is
@@ -160,6 +184,7 @@ nonisolated enum WebGalleryHTML {
         header { margin-bottom: 24px; }
         h1 { margin: 0 0 4px; font-size: 1.6em; font-weight: 600; }
         .description { margin: 0; white-space: pre-line; }
+        .email { margin: 4px 0 0; }
 
         .grid {
           display: grid;

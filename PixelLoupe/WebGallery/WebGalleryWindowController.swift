@@ -134,11 +134,14 @@ final class WebGalleryWindowController: NSWindowController, NSWindowDelegate, WK
         }
     }
 
-    /// The settings without the ones the preview ignores (the generated images' quality and watermark).
+    /// The settings without the ones the preview ignores (the generated images' quality and
+    /// watermark, and the Head and Body text).
     private static func previewed(_ settings: WebGallerySettings) -> WebGallerySettings {
         var settings = settings
         settings.jpegQuality = WebGallerySettings().jpegQuality
         settings.watermarkName = nil
+        settings.headHTML = ""
+        settings.bodyHTML = ""
         return settings
     }
 

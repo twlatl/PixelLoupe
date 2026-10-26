@@ -32,12 +32,18 @@ nonisolated struct WebGallerySettings: Codable, Equatable, Sendable {
     var jpegQuality = 85.0
     /// The watermark preset drawn on the large images; nil for none. The preview ignores it.
     var watermarkName: String?
+    /// The address the header's email link writes to; none when empty.
+    var email = ""
+    /// Inserted as typed at the end of every page's `<head>` and `<body>` (analytics, fonts, a footer).
+    /// The preview leaves them out.
+    var headHTML = ""
+    var bodyHTML = ""
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
         case textColor, backgroundColor, columns, showsBorder, showsShadow, showsCaption, captionField
-        case showsPageNumbers, photosPerPage, jpegQuality, watermarkName
+        case showsPageNumbers, photosPerPage, jpegQuality, watermarkName, email, headHTML, bodyHTML
     }
 
     // Tolerant decoding: missing or unknown values keep their defaults, so saved settings survive new options.
@@ -59,6 +65,9 @@ nonisolated struct WebGallerySettings: Codable, Equatable, Sendable {
         photosPerPage = Self.photosPerPageChoices.contains(perPage) ? perPage : defaults.photosPerPage
         jpegQuality = Self.clampedQuality(value(.jpegQuality, defaults.jpegQuality))
         watermarkName = value(.watermarkName, defaults.watermarkName)
+        email = value(.email, defaults.email)
+        headHTML = value(.headHTML, defaults.headHTML)
+        bodyHTML = value(.bodyHTML, defaults.bodyHTML)
     }
 
     /// `quality` in the slider's range, on its steps.

@@ -332,6 +332,8 @@ The middle of the window shows the gallery as a browser shows it, with the photo
 The sidebar on the right sets it up, and the preview follows as you change it, staying on the page you're viewing:
 
 - **Headline** and **Description**, at the top of every page (they start empty for each gallery).
+- **Email**: a link under them that opens the viewer's mail app. Every character of it is written as an HTML character
+  reference, so the address isn't in the page as plain text for address harvesters to find.
 - **Text Color** and **Background Color**: black on white unless you choose others.
 - **Photos per Page** (24, 48, 96 or 192) and **Page Numbers**. A gallery with more than one page has Previous and
   Next links under the photos; Page Numbers adds numbered links to the pages between them.
@@ -339,6 +341,9 @@ The sidebar on the right sets it up, and the preview follows as you change it, s
   two, and a very narrow screen one.
 - **Image Border** (white), **Shadow**, and **Image Caption**: one line under every photo with the field you choose,
   as on a contact sheet.
+- **Head** and **Body**: HTML added, exactly as you type it, at the end of every page's `<head>` and `<body>` (after
+  the gallery's scripts), for analytics, fonts or a footer. Smart quotes and spelling are off in these fields. The
+  preview leaves them out, so a tracking script doesn't run as you work.
 - **Watermark** (None, or one of your watermarks), drawn on the large images only, and **JPEG Quality** for the
   generated images. The preview doesn't change with these.
 

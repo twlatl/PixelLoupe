@@ -69,7 +69,8 @@ final class WebGalleryModel {
     }
 }
 
-/// The web gallery window's right sidebar: the text, colors, pages, photos and output, and Generate.
+/// The web gallery window's right sidebar: the text, colors, pages, photos, Head and Body, and output,
+/// and Generate.
 struct WebGalleryPanel: View {
     @Bindable var model: WebGalleryModel
 
@@ -104,6 +105,10 @@ struct WebGalleryPanel: View {
                 TextField("Description", text: $model.settings.description, prompt: Text("None"), axis: .vertical)
                     .lineLimit(2...6)
                     .accessibilityIdentifier("webGalleryDescription")
+                TextField("Email", text: $model.settings.email, prompt: Text("None"))
+                    .autocorrectionDisabled()
+                    .help("A link under the headline that opens the viewer's mail app, hidden from address harvesters")
+                    .accessibilityIdentifier("webGalleryEmail")
             }
             Section("Colors") {
                 ColorPicker("Text Color", selection: color(\.textColor), supportsOpacity: false)
@@ -155,6 +160,26 @@ struct WebGalleryPanel: View {
                     }
                     .accessibilityIdentifier("webGalleryCaptionField")
                 }
+            }
+            Section {
+                CodeTextView(text: $model.settings.headHTML, accessibilityLabel: "Head")
+                    .frame(height: 80)
+                    .accessibilityIdentifier("webGalleryHead")
+            } header: {
+                Text("Head")
+            } footer: {
+                Text("Added at the end of every page's <head>, as typed. Not in the preview.")
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                CodeTextView(text: $model.settings.bodyHTML, accessibilityLabel: "Body")
+                    .frame(height: 80)
+                    .accessibilityIdentifier("webGalleryBody")
+            } header: {
+                Text("Body")
+            } footer: {
+                Text("Added at the end of every page's <body>, as typed. Not in the preview.")
+                    .foregroundStyle(.secondary)
             }
             Section("Output") {
                 Picker("Watermark", selection: $model.settings.watermarkName) {
