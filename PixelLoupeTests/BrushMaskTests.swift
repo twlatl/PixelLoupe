@@ -350,3 +350,62 @@ struct BrushMaskTests {
         return view.subviews.lazy.compactMap { self.subview(identifier, of: type, in: $0) }.first
     }
 }
+
+@MainActor
+@Suite("Brush hand key (RAW-189)", .serialized)
+struct BrushHandKeyTests {
+    @Test("Space held in the window, with a brush mask selected in Masking, gives the brush its hand; letting go ends it")
+    func spaceHoldsTheHand() async throws {
+        let directory = try TemporaryDirectory()
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "C.pixelloupe"))
+        let photo = Photo(context: store.viewContext)
+        photo.id = UUID()
+        photo.fileName = "IMG.jpg"
+        let url = directory.url.appending(path: photo.fileName)
+        try Fixtures.writeJPEG(to: url, width: 600, height: 400)
+        photo.filePath = url.path(percentEncoded: false)
+        photo.fileType = "JPG"
+        photo.pixelWidth = 600
+        photo.pixelHeight = 400
+        photo.orientation = 1
+        photo.captureDate = Date()
+        photo.importDate = Date()
+        photo.editDate = Date()
+        var adjustments = PhotoAdjustments()
+        var brush = PhotoAdjustments.LocalAdjustment()
+        brush.components = [.init(shape: .brush(.init()))]
+        brush.settings.exposure = -0.5
+        adjustments.masks = [brush]
+        photo.adjustments = adjustments
+        try store.viewContext.save()
+
+        let controller = CatalogWindowController(store: store)
+        controller.showWindow(nil)
+        defer { controller.close() }
+        let window = try #require(controller.window)
+        controller.state.selectedPhotoIDs = [try #require(controller.state.photoOrder.first)]
+        controller.state.mode = .develop
+        controller.state.developTool = .mask
+        let develop = controller.rootViewController.main.develop
+        let start = Date()
+        while !develop.isBrushing, Date().timeIntervalSince(start) < 30 { try await Task.sleep(for: .milliseconds(50)) }
+        #expect(develop.isBrushing)
+
+        func space(_ type: NSEvent.EventType) -> NSEvent {
+            NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                             characters: " ", charactersIgnoringModifiers: " ", isARepeat: false, keyCode: 49)!
+        }
+        let zoomed = controller.state.zoom.isZoomed
+        #expect(controller.handleKeyDown(space(.keyDown)), "the window takes Space")
+        #expect(develop.isBrushHandHeld, "and gives the brush its hand")
+        #expect(controller.state.zoom.isZoomed == zoomed, "not Toggle Zoom")
+        // Key repeats while held keep it; letting go (seen by Develop's own key handler) ends it.
+        #expect(controller.handleKeyDown(space(.keyDown)) && develop.isBrushHandHeld)
+        #expect(develop.handleHandKey(space(.keyUp)))
+        #expect(!develop.isBrushHandHeld)
+
+        // Without a brush, Space is Toggle Zoom again.
+        controller.state.developTool = .adjust
+        #expect(!develop.handleHandKey(space(.keyDown)))
+    }
+}

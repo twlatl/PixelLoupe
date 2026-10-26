@@ -22,7 +22,11 @@ final class MaskOverlayView: NSView {
     var isHandHeld = false {
         didSet {
             guard isHandHeld != oldValue else { return }
-            if paints, pointer != nil { (isHandHeld ? NSCursor.openHand : NSCursor.crosshair).set() }
+            // Where the pointer is now: it may not have moved since the brush became active.
+            if let window { pointer = convert(window.mouseLocationOutsideOfEventStream, from: nil) }
+            if paints, let pointer, bounds.contains(pointer), !isHidden {
+                (isHandHeld ? NSCursor.openHand : NSCursor.crosshair).set()
+            }
             needsDisplay = true
         }
     }

@@ -245,7 +245,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
 
     /// Single-key shortcuts (G, D, 0–5, P/X/U, Return, F, Escape, ← →) for the catalog window and its
     /// full-screen view. Keys typed into text fields, sheets and alerts are left alone.
-    private func handleKeyDown(_ event: NSEvent) -> Bool {
+    func handleKeyDown(_ event: NSEvent) -> Bool {
         guard let eventWindow = event.window,
               eventWindow === window || eventWindow === fullScreenController?.window
                 || eventWindow === secondaryWindowController?.window,
@@ -256,8 +256,9 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         if eventWindow === secondaryWindowController?.window, let secondary = secondaryWindowController {
             return performInSecondaryWindow(command, secondary)
         }
-        // While the brush is active, Space is its hand (Develop's key handler moves the photo), not Toggle Zoom.
-        if event.keyCode == 49, state.mode == .develop, rootViewController.main.develop.isBrushing { return true }
+        // While the brush is active, Space is its hand, not Toggle Zoom. This monitor can see the key before
+        // Develop's, so it hands it over rather than swallowing it (Develop's sees the key coming up).
+        if state.mode == .develop, rootViewController.main.develop.handleHandKey(event) { return true }
         return perform(command)
     }
 

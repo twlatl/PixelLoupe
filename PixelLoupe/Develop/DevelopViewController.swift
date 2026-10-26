@@ -1115,8 +1115,11 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         }
     }
 
+    /// Whether Space is held for the brush's hand.
+    var isBrushHandHeld: Bool { maskOverlay.isHandHeld }
+
     /// Space held while the brush is active: a hand that moves the photo (as in Lightroom), not Toggle Zoom.
-    private func handleHandKey(_ event: NSEvent) -> Bool {
+    func handleHandKey(_ event: NSEvent) -> Bool {
         let spaceKeyCode: UInt16 = 49
         guard event.keyCode == spaceKeyCode, event.window === view.window,
               !((view.window?.firstResponder as? NSText)?.isEditable ?? false)
