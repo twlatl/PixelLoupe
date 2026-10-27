@@ -1,48 +1,77 @@
 {
   "fill" : {
     "linear-gradient" : [
-      "srgb:0.58813,0.93545,1.00000,1.00000",
-      "srgb:0.36114,0.40333,1.00000,1.00000"
+      "srgb:0.90017,0.93022,1.00000,1.00000",
+      "srgb:0.86070,0.98189,1.00000,1.00000"
     ]
   },
   "groups" : [
     {
       "layers" : [
+
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.3
+      }
+    },
+    {
+      "layers" : [
         {
-          "blend-mode" : "overlay",
-          "fill-specializations" : [
-            {
-              "value" : {
-                "solid" : "srgb:0.94364,1.00000,0.96525,1.00000"
-              }
-            },
-            {
-              "appearance" : "dark",
-              "value" : {
-                "solid" : "srgb:1.00000,0.99599,0.98769,1.00000"
-              }
-            }
-          ],
+          "blend-mode" : "multiply",
           "glass" : true,
-          "image-name" : "Image.svg",
-          "name" : "Image",
+          "image-name" : "image-1793109353049.png",
+          "name" : "image-1793109353049",
           "position" : {
-            "scale" : 5.79,
+            "scale" : 1.2,
             "translation-in-points" : [
               0,
-              0
+              -35
             ]
           }
         },
         {
+          "image-name" : "Masked-BG.png",
+          "name" : "Masked-BG"
+        },
+        {
+          "glass" : true,
           "hidden" : true,
-          "image-name" : "contact-sheet-tilted.svg",
-          "name" : "contact-sheet-tilted",
+          "image-name" : "Image 2.png",
+          "name" : "Image 2",
+          "position" : {
+            "scale" : 1.5,
+            "translation-in-points" : [
+              68,
+              34
+            ]
+          }
+        },
+        {
+          "glass" : true,
+          "hidden" : true,
+          "image-name" : "Image.png",
+          "name" : "Image",
+          "position" : {
+            "scale" : 1.5,
+            "translation-in-points" : [
+              68,
+              47
+            ]
+          }
+        },
+        {
+          "image-name" : "bg 2.png",
+          "name" : "bg 2",
           "position" : {
             "scale" : 1,
             "translation-in-points" : [
-              -386,
-              471.27999999999975
+              0,
+              0
             ]
           }
         }
