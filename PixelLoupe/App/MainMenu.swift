@@ -437,7 +437,7 @@ enum MainMenu {
         menu.addItem(item("Impromptu Slideshow", #selector(PixelLoupeActions.impromptuSlideshow(_:)), "\r"))
         menu.addItem(item("Contact Sheet", #selector(PixelLoupeActions.showContactSheet(_:)), "c", modifiers: [.control, .option, .command]))
         menu.addItem(item("Web Gallery", #selector(PixelLoupeActions.showWebGallery(_:)), "w", modifiers: [.control, .option, .command]))
-        menu.addItem(item("Publishing Manager…", #selector(PixelLoupeActions.showPublishingManager(_:))))
+        menu.addItem(item("Publishing Manager…", #selector(PixelLoupeActions.showPublishingManager(_:)), "p", modifiers: [.control, .option, .command]))
         menu.addItem(.separator())
         menu.addItem(item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:))))
         return menu
