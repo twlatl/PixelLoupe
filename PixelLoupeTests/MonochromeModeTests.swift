@@ -46,12 +46,12 @@ struct MonochromeModeTests {
         let rejected = NSButton(title: "", target: nil, action: nil)
         rejected.contentTintColor = .systemRed
         let nested = NSView()
-        nested.addSubview(slider)
-        for view in [nested, segmented, defaultButton, icon, rejected] { container.addSubview(view) }
+        nested.addSubview(segmented)
+        for view in [nested, slider, defaultButton, icon, rejected] { container.addSubview(view) }
 
         Accent.apply(in: container, monochrome: true)
-        #expect(slider.trackFillColor == Accent.monochrome, "found below the top level too")
-        #expect(segmented.selectedSegmentBezelColor == Accent.monochrome)
+        #expect(segmented.selectedSegmentBezelColor == Accent.monochrome, "found below the top level too")
+        #expect(slider.trackFillColor == nil, "sliders are monochrome whatever the setting (RAW-201)")
         #expect(defaultButton.bezelColor == Accent.monochrome)
         #expect(icon.contentTintColor == Accent.monochrome)
         #expect(rejected.contentTintColor == .systemRed, "colors that mean something are left alone")

@@ -110,29 +110,21 @@ struct AutoStackView: View {
                 case .captureTime:
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Time between photos: \(model.gapTitle)")
-                        Slider(value: $model.gapPosition, in: 0...1) {
-                            Text("Time between photos")
-                        } minimumValueLabel: {
+                        HStack {
                             Text("1 s")
-                        } maximumValueLabel: {
+                            MonochromeSliderView(value: $model.gapPosition, range: 0...1, label: "Time between photos", identifier: "autoStackGap")
                             Text("1 h")
                         }
-                        .labelsHidden()
-                        .accessibilityIdentifier("autoStackGap")
                     }
                 case .similarity:
                     VStack(alignment: .leading, spacing: 4) {
                         Text("How alike photos must look")
-                        Slider(value: $model.strictness, in: 0...1) {
-                            Text("How alike photos must look")
-                        } minimumValueLabel: {
+                        HStack {
                             Text("Loose")
-                        } maximumValueLabel: {
+                            MonochromeSliderView(value: $model.strictness, range: 0...1, label: "How alike photos must look", identifier: "autoStackStrictness")
                             Text("Strict")
                         }
-                        .labelsHidden()
                         .disabled(model.distances == nil)
-                        .accessibilityIdentifier("autoStackStrictness")
                     }
                 }
             }

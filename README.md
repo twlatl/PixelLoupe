@@ -183,8 +183,11 @@ Single-key shortcuts are ignored while typing in a text field.
 In the Develop Adjust panel, double-click a slider's label, a color wheel or the curve to reset it.
 
 The side panels' sliders (Develop, Crop, Lens, Masking, Retouch and the preset Amount) also reset when you double-click
-the knob, and Option-dragging one moves it in large steps: a tenth of its range, counted from its default (so a −5…+5
-slider such as Exposure steps by 1.00).
+the knob.
+
+Sliders that set a value have tick marks under the track at every tenth of the range (5 on each side of the middle, the
+middle one longer when it's 0); hold Option while dragging to snap to them (so a −5…+5 slider such as Exposure stops at
+whole steps). Sliders that zoom or size thumbnails have no ticks.
 
 ## Navigator and zoom
 
@@ -212,7 +215,7 @@ behind photos. Choosing a theme (or macOS switching between Light and Dark) puts
 
 ## Monochrome Mode
 
-**Settings ▸ Appearance ▸ Monochrome Mode** (off by default) replaces the accent color on sliders, buttons, icons
+**Settings ▸ Appearance ▸ Monochrome Mode** (off by default) replaces the accent color on buttons, icons
 (including the sidebar's folder, catalog and collection icons) and selection highlights with dark gray in Dark Mode
 and black (#000000) in Light Mode and Gray, so nothing in the interface competes with the
 colors in your photos. Colors that carry meaning (color labels, the rejected flag, curve channels) stay as they are.

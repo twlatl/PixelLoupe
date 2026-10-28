@@ -23,7 +23,7 @@ final class PanoramaMergeSheetController: NSWindowController, NSWindowDelegate {
     let cylindricalButton = NSButton(radioButtonWithTitle: PanoramaProjection.cylindrical.title, target: nil, action: nil)
     let perspectiveButton = NSButton(radioButtonWithTitle: PanoramaProjection.perspective.title, target: nil, action: nil)
     let perspectiveNote = NSTextField(wrappingLabelWithString: "Perspective can’t show photos spanning more than \(Int(PanoramaProjection.perspectiveLimit))°.")
-    let boundaryWarpSlider = NSSlider(value: 0, minValue: 0, maxValue: 100, target: nil, action: nil)
+    let boundaryWarpSlider = MonochromeSlider(value: 0, minValue: 0, maxValue: 100, target: nil, action: nil)
     let boundaryWarpField = NSTextField()
     let autoCropCheckbox = NSButton(checkboxWithTitle: "Auto Crop", target: nil, action: nil)
     let autoSettingsCheckbox = NSButton(checkboxWithTitle: "Auto Settings", target: nil, action: nil)

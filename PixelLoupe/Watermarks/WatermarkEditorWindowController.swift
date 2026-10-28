@@ -772,7 +772,7 @@ final class WatermarkEditorWindowController: NSWindowController, NSWindowDelegat
 
 /// A slider with an editable number beside it, as in Lightroom's Watermark Editor.
 final class WatermarkValueRow: NSView, NSTextFieldDelegate {
-    let slider = NSSlider()
+    let slider = MonochromeSlider()
     let field = NSTextField()
     var onChange: ((Double) -> Void)?
 

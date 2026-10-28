@@ -1,15 +1,16 @@
 import AppKit
 
-/// The color PixelLoupe uses for sliders, selected and active controls, tool icons and selection
+/// The color PixelLoupe uses for selected and active controls, tool icons and selection
 /// highlights: the system accent color, or with Settings ▸ Appearance ▸ Monochrome Mode, dark gray
 /// in Dark Mode and black in Light Mode.
 ///
 /// Code that tints or draws with the accent uses ``color``. Native controls that would otherwise
-/// draw in the system accent (sliders, segmented controls, default buttons) are recolored by
+/// draw in the system accent (segmented controls, default buttons) are recolored by
 /// ``apply(in:)``, which runs for every window when it becomes key, when the setting changes, and
 /// when a view builds its controls after its window is already showing. Checkboxes, switches and
 /// focus rings have no tint of their own; for those, Monochrome Mode sets the app's accent to
-/// Graphite, which macOS reads when the app launches.
+/// Graphite, which macOS reads when the app launches. Sliders are gray whatever the setting
+/// (`MonochromeSlider`).
 @MainActor
 enum Accent {
     /// The accent to tint or draw with now. Not a dynamic color for the setting itself: read it again
@@ -37,8 +38,6 @@ enum Accent {
     static func apply(in view: NSView, monochrome mono: Bool = AppSettings.shared.isMonochrome, redraw: Bool = false) {
         let fill: NSColor? = mono ? monochrome : nil
         switch view {
-        case let slider as NSSlider:
-            if slider.trackFillColor != fill { slider.trackFillColor = fill }
         case let segmented as AccentSegmentedControl:
             let accent = color(monochrome: mono)
             if segmented.selectedSegmentBezelColor != accent { segmented.selectedSegmentBezelColor = accent }
