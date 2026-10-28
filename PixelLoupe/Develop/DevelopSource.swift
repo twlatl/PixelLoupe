@@ -340,6 +340,13 @@ nonisolated enum AdjustmentPipeline {
             : nil
         image = LocalAdjustmentRenderer.apply(adjustments.masks, to: image, subject: subject, scale: scale)
 
+        // Rim Light lights the subject's edges, so it needs the subject too (refined onto the photo's edges), found and
+        // waited for the same way; on the whole frame, before the crop.
+        if adjustments.rimLight.isActive {
+            let rimSubject = source.subjectMattes.refinedMatte(for: source, adjustments: adjustments, waiting: !Thread.isMainThread)
+            image = RimLightRenderer.apply(adjustments.rimLight, to: image, subject: rimSubject?.image)
+        }
+
         // Straighten and crop before the vignette and grain, so they follow the crop (Lightroom's
         // post-crop vignette).
         image = CropRenderer.apply(adjustments.crop, to: image, frame: extent, rendering: geometry)

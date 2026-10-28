@@ -26,9 +26,9 @@ final class CullingPanelView: NSView {
     let actionButton = NSPopUpButton(frame: .zero, pullsDown: true)
 
     let subjectFocusBox = NSButton(checkboxWithTitle: "Subject Focus", target: nil, action: nil)
-    let subjectFocusSlider = NSSlider(value: 0.5, minValue: 0, maxValue: 1, target: nil, action: nil)
+    let subjectFocusSlider = MonochromeSlider(value: 0.5, minValue: 0, maxValue: 1, target: nil, action: nil)
     let eyeFocusBox = NSButton(checkboxWithTitle: "Eye Focus", target: nil, action: nil)
-    let eyeFocusSlider = NSSlider(value: 0.5, minValue: 0, maxValue: 1, target: nil, action: nil)
+    let eyeFocusSlider = MonochromeSlider(value: 0.5, minValue: 0, maxValue: 1, target: nil, action: nil)
     let eyeFocusNeedsEyesBox = NSButton(checkboxWithTitle: "Only photos with eyes detected", target: nil, action: nil)
     let eyesOpenBox = NSButton(checkboxWithTitle: "Eyes Open", target: nil, action: nil)
     let eyesOpenNeedsEyesBox = NSButton(checkboxWithTitle: "Only photos with eyes detected", target: nil, action: nil)

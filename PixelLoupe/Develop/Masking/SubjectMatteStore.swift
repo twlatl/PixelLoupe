@@ -85,11 +85,27 @@ nonisolated final class SubjectMatteStore: @unchecked Sendable {
         return nil
     }
 
-    /// Whether the subject is known yet, for the Masking panel (doesn't wait, or start finding it).
-    func status(for source: DevelopSource, adjustments: PhotoAdjustments) -> Status {
-        guard let matte = remembered(Request(source: source, adjustments: adjustments).key) else { return .finding }
+    /// The subject pulled onto the photo's own edges (``GuidedMatte``), for Rim Light (RAW-203), so hair and fine
+    /// edges are lit rather than the blur around them. Found after the plain matte, and kept the same way.
+    func refinedMatte(for source: DevelopSource, adjustments: PhotoAdjustments, waiting: Bool) -> Matte? {
+        let request = Request(source: source, adjustments: adjustments)
+        if let matte = remembered(Self.refinedKey(request)) { return matte }
+        if waiting { return findRefined(request) }
+        Task.detached(priority: .userInitiated) { [self] in
+            _ = findRefined(request)
+            await MainActor.run { NotificationCenter.default.post(name: Self.didFind, object: self) }
+        }
+        return nil
+    }
+
+    /// Whether the subject is known yet, for the Masking and Rim Light panels (doesn't wait, or start finding it).
+    func status(for source: DevelopSource, adjustments: PhotoAdjustments, refined: Bool = false) -> Status {
+        let request = Request(source: source, adjustments: adjustments)
+        guard let matte = remembered(refined ? Self.refinedKey(request) : request.key) else { return .finding }
         return matte.hasSubject ? .found : .noSubject
     }
+
+    private static func refinedKey(_ request: Request) -> String { request.key + "-refined" }
 
     private func remembered(_ key: String) -> Matte? {
         lock.withLock {
@@ -147,7 +163,45 @@ nonisolated final class SubjectMatteStore: @unchecked Sendable {
 
     /// Finds the subject (or reads it from disk), once however many renders ask at the same time.
     private func find(_ request: Request) -> Matte? {
-        let key = request.key
+        find(key: request.key) { [self] in
+            guard let image = Self.detectionImage(for: request) else { return nil }
+            return detect(image)
+        }
+    }
+
+    /// The refined subject: the plain one pulled onto the detection image's edges.
+    private func findRefined(_ request: Request) -> Matte? {
+        find(key: Self.refinedKey(request)) { [self] in
+            guard let matte = find(request) else { return nil }
+            guard matte.hasSubject else { return matte }
+            guard let guide = Self.detectionImage(for: request) else { return nil }
+            return Self.refined(matte, guide: guide)
+        }
+    }
+
+    /// `matte` refined against `guide` (the image it was found in), at the matte's size.
+    static func refined(_ matte: Matte, guide: CGImage) -> Matte? {
+        let width = matte.width, height = matte.height
+        guard width > 0, height > 0,
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width,
+                                      space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue),
+              let data = context.data else { return nil }
+        context.interpolationQuality = .high
+        context.draw(guide, in: CGRect(x: 0, y: 0, width: width, height: height))
+        // Both rows from the top: the context's memory starts at the image's top row, as the matte's bytes do.
+        let pixels = data.bindMemory(to: UInt8.self, capacity: context.bytesPerRow * height)
+        var levels = [Float](repeating: 0, count: width * height)
+        for y in 0..<height {
+            for x in 0..<width { levels[y * width + x] = Float(pixels[y * context.bytesPerRow + x]) / 255 }
+        }
+        let mask = matte.bytes.map { Float($0) / 255 }
+        let radius = max(2, Int((Double(max(width, height)) * 0.008).rounded()))
+        let filtered = GuidedMatte.filter(mask: mask, guide: levels, width: width, height: height, radius: radius, epsilon: 1e-4)
+        return Matte(width: width, height: height, bytes: Data(filtered.map { UInt8(min(255, max(0, $0 * 255 + 0.5))) }))
+    }
+
+    /// Finds the matte for `key` with `make` (or reads it from disk), once however many renders ask at the same time.
+    private func find(key: String, make: () -> Matte?) -> Matte? {
         let (group, isFinding) = lock.withLock { () -> (DispatchGroup, Bool) in
             if let group = finding[key] { return (group, false) }
             let group = DispatchGroup()
@@ -168,7 +222,7 @@ nonisolated final class SubjectMatteStore: @unchecked Sendable {
             remember(matte, for: key)
             return matte
         }
-        guard let image = Self.detectionImage(for: request), let matte = detect(image) else { return nil }
+        guard let matte = make() else { return nil }
         write(matte, for: key)
         remember(matte, for: key)
         return matte

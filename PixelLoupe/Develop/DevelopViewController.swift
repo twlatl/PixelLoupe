@@ -55,6 +55,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     /// The crop when the crop tool was opened for the current photo, restored by Esc.
     private var cropSessionStart: PhotoAdjustments.Crop?
     private let adjustToolButton = NSButton()
+    private let rimLightToolButton = NSButton()
+    private let rimLightPanel = RimLightPanelViewController()
     private let presetsToolButton = NSButton()
     private let presetsPanel = PresetsPanelViewController()
     private let cropToolButton = NSButton()
@@ -68,7 +70,9 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     private let retouchPanel = RetouchPanelViewController()
     private let retouchOverlay = RetouchOverlayView()
     /// The preview as last drawn in the Masking or Spot Removal tool, for finding an eye to click.
-    private var lastFrameImage: CIImage?
+    /// The scale the preview was last rendered at in Masking or Spot Removal, for finding red eyes on the
+    /// whole frame at the size shown.
+    private var lastFrameScale: CGFloat?
     private let maskPanel = MaskPanelViewController()
     private let maskOverlay = MaskOverlayView()
     /// Whether the selected mask is painted red over the preview (O).
@@ -97,7 +101,10 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     /// flashes an empty preview.
     private var placeholder: CIImage?
     private var keyMonitor: Any?
-    private var adjustments = PhotoAdjustments()
+    private var adjustments = PhotoAdjustments() {
+        // However the settings change (an edit, undo, another photo, a preset), the Rim Light panel shows them.
+        didSet { if adjustments.rimLight != oldValue.rimLight { rimLightPanel.display(adjustments.rimLight) } }
+    }
     private var displayedPhotoID: NSManagedObjectID?
     private var loadTask: Task<Void, Never>?
 
@@ -142,6 +149,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         addChild(panel)
         addChild(cropPanel)
         addChild(lensPanel)
+        addChild(rimLightPanel)
         // The panel isn't part of this view: it lives in the window's right column, shared with the
         // Library's inspector (see ``MainSplitViewController``).
         sidebarView = makeSidebar()
@@ -245,6 +253,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         configureHistogram()
         configurePresets()
         configureLens()
+        configureRimLight()
 
         loupeOverlay.geometry = { [weak self] in self?.geometry }
         loupeOverlay.onChange = { [weak self] in self?.metalView.needsDisplay = true }
@@ -340,6 +349,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     private func makeSidebar() -> NSView {
         for (button, symbol, title, identifier) in [
             (adjustToolButton, "slider.horizontal.3", "Adjust", "developTool.adjust"),
+            (rimLightToolButton, "", "Rim Light", "developTool.rimLight"),
             (presetsToolButton, "photo.on.rectangle.angled", "Presets", "developTool.presets"),
             (cropToolButton, "crop.rotate", "Crop & Straighten (R)", "developTool.crop"),
             (lensToolButton, "camera", "Lens Corrections", "developTool.lens"),
@@ -347,8 +357,9 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             (retouchToolButton, "bandage", "Spot Removal (Q)", "developTool.retouch"),
             (historyToolButton, "clock.arrow.circlepath", "History and Snapshots", "developTool.history"),
         ] {
-            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)?
-                .withSymbolConfiguration(.init(pointSize: 24, weight: .regular))
+            button.image = symbol.isEmpty
+                ? Self.rimLightIcon(title)
+                : NSImage(systemSymbolName: symbol, accessibilityDescription: title)?.withSymbolConfiguration(.init(pointSize: 24, weight: .regular))
             button.isBordered = false
             button.imagePosition = .imageOnly
             button.toolTip = title
@@ -357,8 +368,9 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             button.setAccessibilityLabel(title)
             button.setAccessibilityIdentifier(identifier)
         }
-        let header = NSStackView(views: [adjustToolButton, presetsToolButton, cropToolButton, lensToolButton, maskToolButton, retouchToolButton, historyToolButton])
-        header.spacing = 16
+        let header = NSStackView(views: [adjustToolButton, rimLightToolButton, presetsToolButton, cropToolButton, lensToolButton, maskToolButton, retouchToolButton, historyToolButton])
+        // Eight tools fit the narrowest inspector (366 pt) at this spacing.
+        header.spacing = 12
         // Exactly as tall as the tallest icon, so the line sits 10pt below the icons and the
         // panels get the rest of the sidebar.
         header.setHuggingPriority(.required, for: .vertical)
@@ -368,7 +380,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
 
         let sidebar = NSView()
         addChild(presetsPanel)
-        let content = [panel.view, presetsPanel.view, cropPanel.view, lensPanel.view, maskPanel.view, retouchPanel.view, historyPanel.view]
+        let content = [panel.view, rimLightPanel.view, presetsPanel.view, cropPanel.view, lensPanel.view, maskPanel.view, retouchPanel.view, historyPanel.view]
         for view in [histogramView, header, headerLine] + content {
             view.translatesAutoresizingMaskIntoConstraints = false
             sidebar.addSubview(view)
@@ -397,6 +409,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         // the Mask, Spot Removal and History panels drew over Adjust until a tool was chosen.
         let tool = state.developTool
         panel.view.isHidden = tool != .adjust
+        rimLightPanel.view.isHidden = tool != .rimLight
         presetsPanel.view.isHidden = tool != .presets
         cropPanel.view.isHidden = tool != .crop
         lensPanel.view.isHidden = tool != .lens
@@ -409,15 +422,24 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     }
 
     @objc private func toolButtonClicked(_ sender: NSButton) {
-        state.developTool = sender === presetsToolButton ? .presets : sender === cropToolButton ? .crop : sender === lensToolButton ? .lens : sender === maskToolButton ? .mask : sender === retouchToolButton ? .retouch : sender === historyToolButton ? .history : .adjust
+        state.developTool = sender === rimLightToolButton ? .rimLight : sender === presetsToolButton ? .presets : sender === cropToolButton ? .crop : sender === lensToolButton ? .lens : sender === maskToolButton ? .mask : sender === retouchToolButton ? .retouch : sender === historyToolButton ? .history : .adjust
     }
 
     private func updateToolButtons() {
-        for (button, tool) in [(adjustToolButton, DevelopTool.adjust), (presetsToolButton, .presets), (cropToolButton, .crop), (lensToolButton, .lens), (maskToolButton, .mask), (retouchToolButton, .retouch), (historyToolButton, .history)] {
+        for (button, tool) in [(adjustToolButton, DevelopTool.adjust), (rimLightToolButton, .rimLight), (presetsToolButton, .presets), (cropToolButton, .crop), (lensToolButton, .lens), (maskToolButton, .mask), (retouchToolButton, .retouch), (historyToolButton, .history)] {
             let active = state.developTool == tool
             button.contentTintColor = active ? Accent.color : .systemGray
             button.setAccessibilityValue(active ? "active" : "inactive")
         }
+    }
+
+    /// The softbox (Design/RimLight-Softbox.svg), a template so it's tinted like the symbols beside it, at their size.
+    private static func rimLightIcon(_ title: String) -> NSImage? {
+        guard let image = NSImage(named: "RimLight")?.copy() as? NSImage else { return nil }
+        image.size = NSSize(width: 26, height: 26)
+        image.isTemplate = true
+        image.accessibilityDescription = title
+        return image
     }
 
     // MARK: - Histogram
@@ -495,6 +517,24 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         let catalog: LensCatalog
         let cropFactor: Double?
         let shooting: ShootingInfo
+    }
+
+    private func configureRimLight() {
+        rimLightPanel.display(adjustments.rimLight)
+        rimLightPanel.onChange = { [weak self] rimLight, isFinal, actionName in
+            guard let self, let source else { return }
+            var newValue = adjustments
+            newValue.rimLight = rimLight
+            // Keep the Adjust panel's copy current, or its next edit would undo this one.
+            panel.display(newValue, asShotWhiteBalance: source.asShotWhiteBalance, isRaw: source.isRaw)
+            adjustmentsChanged(newValue, isFinal: isFinal, actionName: actionName)
+            refreshRimLightStatus()
+        }
+    }
+
+    /// Tells the Rim Light panel whether the photo's subject has been found (it's found when the light first renders).
+    private func refreshRimLightStatus() {
+        rimLightPanel.subjectStatus = source.map { $0.subjectMattes.status(for: $0, adjustments: adjustments, refined: true) }
     }
 
     private func configureLens() {
@@ -775,6 +815,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         updateToolButtons()
         let cropping = state.developTool == .crop
         panel.view.isHidden = state.developTool != .adjust
+        rimLightPanel.view.isHidden = state.developTool != .rimLight
+        if state.developTool == .rimLight { refreshRimLightStatus() }
         presetsPanel.view.isHidden = state.developTool != .presets
         if state.developTool != .presets { endPresetPreview() }
         cropPanel.view.isHidden = !cropping
@@ -933,6 +975,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         subjectObserver = NotificationCenter.default.addObserver(forName: SubjectMatteStore.didFind, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.refreshSubjectStatus()
+                self?.refreshRimLightStatus()
                 self?.metalView.needsDisplay = true
             }
         }
@@ -1061,6 +1104,14 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     /// zoomed in, a new spot is as big on screen as it would be unzoomed, not as big on the photo.
     private var spotBrushRadius = 0.02
 
+    /// The whole frame, uncropped and unstraightened, at the size the preview shows it: spots are placed in it.
+    private func frameImage(_ source: DevelopSource) -> CIImage? {
+        guard let scale = lastFrameScale else { return nil }
+        var uncropped = adjustments
+        uncropped.crop = PhotoAdjustments.Crop()
+        return source.image(with: uncropped, scale: scale)
+    }
+
     /// A click in the Spot Removal tool: a heal or clone spot with a source beside it, or a red eye.
     private func placeRetouch(at point: PhotoAdjustments.UnitPoint) {
         guard let source else { return }
@@ -1081,7 +1132,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         case .redEye:
             var eye = PhotoAdjustments.RedEyeSpot()
             eye.center = point
-            if let image = lastFrameImage, let ciContext, let found = RetouchRenderer.findRedEye(near: point, in: image, context: ciContext) {
+            if let image = frameImage(source), let ciContext, let found = RetouchRenderer.findRedEye(near: point, in: image, context: ciContext) {
                 eye.center = found.center
                 eye.radius = max(found.radius * 1.15, 0.003)
             } else {
@@ -1435,6 +1486,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             lensContext = nil
             lensPanel.isEditingEnabled = false
             lensPanel.display(.init(), status: .unavailable, catalog: LensCatalog())
+            rimLightPanel.isEditingEnabled = false
+            rimLightPanel.subjectStatus = nil
             endFringePicking()
             histogramView.isEditingEnabled = false
             histogramView.histogram = nil
@@ -1469,6 +1522,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         endFringePicking()
         lensContext = nil
         lensPanel.isEditingEnabled = false
+        rimLightPanel.isEditingEnabled = false
+        rimLightPanel.subjectStatus = nil
         showLens()
         panel.cameraModel = photo.cameraModel
         presetsPanel.photo = .init(cameraModel: photo.cameraModel)
@@ -1517,6 +1572,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             presetsPanel.isEditingEnabled = true
             histogramView.isEditingEnabled = true
             lensPanel.isEditingEnabled = true
+            rimLightPanel.isEditingEnabled = true
+            refreshRimLightStatus()
             if state.developTool == .lens { loadLensContext() }
             metalView.needsDisplay = true
 
@@ -1572,7 +1629,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         zoomClickView.isActive = { [weak self] in
             guard let self, source != nil else { return false }
             // Crop, Masking and Spot Removal use clicks on the photo themselves.
-            return [.adjust, .presets, .lens, .history].contains(state.developTool)
+            return [.adjust, .rimLight, .presets, .lens, .history].contains(state.developTool)
         }
         zoomClickView.isZoomed = { [weak self] in self?.state.zoom.isZoomed ?? false }
         zoomClickView.onClick = { [weak self] point in
@@ -1667,11 +1724,11 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         if let source {
             // Render at display resolution: RAW decoding at a reduced scale keeps slider drags live.
             let cropping = state.developTool == .crop
-            // Masks are placed on the whole frame, so the Masking tool shows it uncropped and unstraightened.
+            // Masks and spots are placed on the whole frame, but shown on the photo as cropped (RAW-202): their
+            // overlays map through the crop and its straightening.
             let masking = state.developTool == .mask || state.developTool == .retouch
             // A preset under the pointer in the Presets panel is previewed.
-            var shownAdjustments = presetPreview ?? adjustments
-            if masking { shownAdjustments.crop = PhotoAdjustments.Crop() }
+            let shownAdjustments = presetPreview ?? adjustments
             // A cropped photo renders at the size it's shown; the crop tool shows the whole frame.
             let previewScale = cropping
                 ? source.scale(toFit: max(bounds.width, bounds.height))
@@ -1692,7 +1749,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             }
             let afterImage = photo(from: source, scale: previewScale, showing: .after)
             let image = content == .after ? afterImage : photo(from: source, scale: previewScale, showing: content)
-            if !cropping, !masking { previewImage = (beforeAfter?.isSideBySide == true ? afterImage : image, previewScale) }
+            if !cropping { previewImage = (beforeAfter?.isSideBySide == true ? afterImage : image, previewScale) }
             if content == .before { loupeAdjustments = beforeAdjustments }
             if !image.extent.isEmpty, !image.extent.isInfinite {
                 // The histogram is always the edited photo's.
@@ -1702,11 +1759,15 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
                     var shown = showsSharpenMask
                         ? SharpenRenderer.maskPreview(for: image, masking: adjustments.sharpen.masking, scale: scale)
                         : ClippingOverlay.apply(to: image, shadows: clippingDisplay.shadows, highlights: clippingDisplay.highlights)
+                    // Masks are placed on the whole frame: made over it, then straightened and cropped as the photo is.
+                    let frameSize = source.frameSize(adjustments)
+                    let frameExtent = CGRect(x: 0, y: 0, width: frameSize.width * scale, height: frameSize.height * scale)
                     if masking, showsMaskOverlay, let selected = adjustments.masks.first(where: { $0.id == maskPanel.selectedID }),
-                       let mask = LocalAdjustmentRenderer.mask(
-                           for: selected, extent: image.extent,
+                       let frameMask = LocalAdjustmentRenderer.mask(
+                           for: selected, extent: frameExtent,
                            subject: selected.usesSubject ? source.subjectMattes.matte(for: source, adjustments: adjustments, waiting: false)?.image : nil
                        ) {
+                        let mask = CropRenderer.apply(shownAdjustments.crop, to: frameMask, frame: frameExtent, rendering: .cropped)
                         // The selected mask in red, half strength.
                         let half = mask.applyingFilter("CIColorMatrix", parameters: [
                             "inputRVector": CIVector(x: 0.5, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0.5, y: 0, z: 0, w: 0),
@@ -1840,15 +1901,17 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
                         width: frame.width / backingScale, height: frame.height / backingScale
                     )
                     cropOverlay.imageSize = source.frameSize(adjustments)
-                } else if masking {
-                    let framePoints = CGRect(
-                        x: rect.minX / backingScale, y: rect.minY / backingScale,
-                        width: rect.width / backingScale, height: rect.height / backingScale
-                    )
-                    maskOverlay.frameRect = framePoints
-                    retouchOverlay.frameRect = framePoints
-                    lastFrameImage = image
                 } else {
+                    if masking {
+                        let shown = CGRect(
+                            x: rect.minX / backingScale, y: rect.minY / backingScale,
+                            width: rect.width / backingScale, height: rect.height / backingScale
+                        )
+                        let frame = PreviewFrame.cropped(shown: shown, crop: shownAdjustments.crop, frameSize: source.frameSize(adjustments))
+                        maskOverlay.previewFrame = frame
+                        retouchOverlay.previewFrame = frame
+                        lastFrameScale = previewScale
+                    }
                     newGeometry = PreviewGeometry(
                         imageRect: CGRect(
                             x: rect.minX / backingScale, y: rect.minY / backingScale,

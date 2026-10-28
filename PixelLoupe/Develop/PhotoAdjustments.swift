@@ -27,6 +27,7 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
     var transform = Transform()
     var profile = Profile()
     var calibration = Calibration()
+    var rimLight = RimLight()
     /// Local adjustments, in the order they are applied.
     var masks: [LocalAdjustment] = []
     /// Spot removal, applied first (to the photo as decoded).
@@ -220,6 +221,47 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
         var grainSeed = 0
 
         var isActive: Bool { isEnabled && grain != 0 }
+    }
+
+    /// Rim Light (RAW-203, from Pixegen's Filter ▸ Rim Light): up to three colored lights behind the subject that
+    /// catch its edges, and how much of their light glows in the air around it. Off on a new photo; turning it on
+    /// with no lights adds one.
+    struct RimLight: Codable, Equatable, Sendable {
+        static let maximumLights = 3
+        var isEnabled = false
+        var lights: [Light] = []
+        /// How much of the lights' light glows around the subject, 0…1.
+        var glow = 0.1
+
+        var isActive: Bool { isEnabled && lights.contains { $0.strength > 0 } }
+
+        /// One light: where it comes from, its color, how strong it is, how far it wraps in from the edges, and how
+        /// hard its inner edge is rather than feathered.
+        struct Light: Codable, Equatable, Identifiable, Sendable {
+            var id = UUID()
+            /// Degrees counterclockwise from the right, −180…180: 90 is from above.
+            var angle = 135.0
+            /// The light's color, sRGB 0…1. Warm by default.
+            var red = 1.0
+            var green = 0.86
+            var blue = 0.7
+            /// 0…1.
+            var strength = 0.5
+            /// How far in from the edge it reaches, 0…1.
+            var width = 0.3
+            /// 0 tails off softly from the edge; 1 holds it bright and ends it crisply at Width.
+            var choke = 0.0
+        }
+
+        /// What the next added light starts as: from across the last one, in a color that sets it off (cool, then
+        /// white), as wide and choked as the last.
+        var nextLight: Light {
+            guard let last = lights.last else { return Light() }
+            let colors: [(Double, Double, Double)] = [(0.7, 0.84, 1), (1, 1, 1)]
+            let color = colors[min(max(lights.count - 1, 0), 1)]
+            return Light(angle: last.angle > 0 ? last.angle - 180 : last.angle + 180, red: color.0, green: color.1, blue: color.2,
+                         strength: 0.5, width: last.width, choke: last.choke)
+        }
     }
 
     struct RedEye: Codable, Equatable, Sendable {
@@ -514,7 +556,8 @@ nonisolated extension PhotoAdjustments {
 
     private enum CodingKeys: String, CodingKey {
         case light, color, blackAndWhite, redEye, whiteBalance, curves, levels, definition
-        case selectiveColor, noiseReduction, sharpen, vignette, crop, orientation, lens, presence, effects, transform, profile, calibration, masks, spots, redEyes
+        case selectiveColor, noiseReduction, sharpen, vignette, crop, orientation, lens, presence, effects, transform, profile, calibration, rimLight
+        case masks, spots, redEyes
     }
 
     /// Sections missing from older saved settings decode as their defaults.
@@ -544,6 +587,7 @@ nonisolated extension PhotoAdjustments {
         transform = try decode(.transform, transform)
         profile = try decode(.profile, profile)
         calibration = try decode(.calibration, calibration)
+        rimLight = try decode(.rimLight, rimLight)
         masks = try decode(.masks, masks)
         spots = try decode(.spots, spots)
         redEyes = try decode(.redEyes, redEyes)
@@ -569,6 +613,36 @@ nonisolated extension PhotoAdjustments {
         // Stable output, so unchanged settings compare equal and don't dirty the photo.
         encoder.outputFormatting = .sortedKeys
         return try? encoder.encode(self)
+    }
+}
+
+/// Rim Light's fields missing from saved settings decode as their defaults, so it can grow.
+nonisolated extension PhotoAdjustments.RimLight {
+    private enum CodingKeys: String, CodingKey { case isEnabled, lights, glow }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? isEnabled
+        lights = Array((try container.decodeIfPresent([Light].self, forKey: .lights) ?? lights).prefix(Self.maximumLights))
+        glow = try container.decodeIfPresent(Double.self, forKey: .glow) ?? glow
+    }
+}
+
+nonisolated extension PhotoAdjustments.RimLight.Light {
+    private enum CodingKeys: String, CodingKey { case id, angle, red, green, blue, strength, width, choke }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? id
+        angle = try container.decodeIfPresent(Double.self, forKey: .angle) ?? angle
+        red = try container.decodeIfPresent(Double.self, forKey: .red) ?? red
+        green = try container.decodeIfPresent(Double.self, forKey: .green) ?? green
+        blue = try container.decodeIfPresent(Double.self, forKey: .blue) ?? blue
+        strength = try container.decodeIfPresent(Double.self, forKey: .strength) ?? strength
+        width = try container.decodeIfPresent(Double.self, forKey: .width) ?? width
+        choke = try container.decodeIfPresent(Double.self, forKey: .choke) ?? choke
     }
 }
 

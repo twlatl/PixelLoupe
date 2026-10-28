@@ -12,6 +12,7 @@ nonisolated enum DevelopSetting: String, CaseIterable, Codable, Sendable {
     case sharpening, noiseReduction
     case lensCorrections, transform
     case vignette, grain
+    case rimLight
     case profile, calibration
     case redEye, spotRemoval, masking, crop
 
@@ -43,6 +44,7 @@ nonisolated enum DevelopSetting: String, CaseIterable, Codable, Sendable {
         case .transform: "Transform"
         case .vignette: "Vignette"
         case .grain: "Grain"
+        case .rimLight: "Rim Light"
         case .profile: "Profile"
         case .calibration: "Calibration"
         case .redEye: "Red Eye"
@@ -71,6 +73,7 @@ nonisolated enum DevelopSetting: String, CaseIterable, Codable, Sendable {
         Group(title: "Lens Corrections", settings: [.lensCorrections]),
         Group(title: "Transform", settings: [.transform]),
         Group(title: "Effects", settings: [.vignette, .grain]),
+        Group(title: "Rim Light", settings: [.rimLight]),
         Group(title: "Profile", settings: [.profile]),
         Group(title: "Calibration", settings: [.calibration]),
         Group(title: "Red Eye", settings: [.redEye]),
@@ -118,6 +121,7 @@ nonisolated enum DevelopSetting: String, CaseIterable, Codable, Sendable {
             case .transform: copy(\.transform)
             case .vignette: copy(\.vignette)
             case .grain: copy(\.effects)
+            case .rimLight: copy(\.rimLight)
             case .profile: copy(\.profile)
             case .calibration: copy(\.calibration)
             case .redEye:

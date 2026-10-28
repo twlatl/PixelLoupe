@@ -3,7 +3,7 @@ import Foundation
 /// The parts of the settings a preset can hold, as Lightroom's New Develop Preset dialog lists them.
 nonisolated enum PresetSection: String, CaseIterable, Codable, Sendable {
     case whiteBalance, basicTone, presence, toneCurve, colorMixer, colorGrading, blackAndWhite, detail, effects, lens, transform,
-         calibration, profile
+         calibration, profile, rimLight
 
     var title: String {
         switch self {
@@ -20,6 +20,7 @@ nonisolated enum PresetSection: String, CaseIterable, Codable, Sendable {
         case .transform: "Transform"
         case .calibration: "Calibration"
         case .profile: "Profile"
+        case .rimLight: "Rim Light"
         }
     }
 
@@ -29,6 +30,22 @@ nonisolated enum PresetSection: String, CaseIterable, Codable, Sendable {
             let sample = PresetWriter.settings(for: PhotoAdjustments(), sections: [section]).keys
             return !keys.isDisjoint(with: sample)
         })
+    }
+}
+
+/// Rim Light in a preset. Lightroom has nothing like it, so it's PixelLoupe's own setting, written as one attribute
+/// holding its settings as JSON. Lightroom ignores it; PixelLoupe reads it back (``DevelopPreset/applied(to:isRaw:cameraModel:iso:profiles:)``).
+nonisolated enum RimLightPreset {
+    static let key = "PixelLoupeRimLight"
+
+    static func text(_ rimLight: PhotoAdjustments.RimLight) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return (try? encoder.encode(rimLight)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    static func rimLight(_ text: String?) -> PhotoAdjustments.RimLight? {
+        text.flatMap { try? JSONDecoder().decode(PhotoAdjustments.RimLight.self, from: Data($0.utf8)) }
     }
 }
 
@@ -205,6 +222,9 @@ nonisolated enum PresetWriter {
                 }
                 out["Look"] = .look(name: name, amount: profile.amount, uuid: nil)
             }
+        }
+        if sections.contains(.rimLight), let text = RimLightPreset.text(a.rimLight) {
+            out[RimLightPreset.key] = .text(text)
         }
         return out
     }

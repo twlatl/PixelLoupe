@@ -1,27 +1,96 @@
 import AppKit
+import SwiftUI
 import Testing
 @testable import PixelLoupe
 
-/// Double-clicking a side-panel slider's knob resets it, and Option-dragging moves it in large steps (RAW-77).
+/// Double-clicking a side-panel slider's knob resets it (RAW-77), and Option-dragging any slider snaps to its tick marks,
+/// which mark every tenth of the range (RAW-201).
 @MainActor
 struct AdjustmentSliderTests {
-    @Test func optionDragStepsAreATenthOfTheRangeFromTheDefault() {
+    @Test func optionDragSnapsToTicksAtEveryTenthOfTheRange() {
         let exposure = AdjustmentSlider(value: 0, minValue: -5, maxValue: 5)
-        #expect(exposure.largeStep == 1)
-        #expect(exposure.stepped(0.4) == 0)
-        #expect(exposure.stepped(0.6) == 1)
-        #expect(exposure.stepped(-2.7) == -3)
-        #expect(exposure.stepped(4.9) == 5)
+        #expect(exposure.numberOfTickMarks == 11)
+        #expect(exposure.snapped(0.4) == 0)
+        #expect(exposure.snapped(0.6) == 1)
+        #expect(exposure.snapped(-2.7) == -3)
+        #expect(exposure.snapped(4.9) == 5)
 
-        // Counted from the default, not the end of the range.
-        let temperature = AdjustmentSlider(value: 5500, minValue: 2000, maxValue: 50000)
-        #expect(temperature.largeStep == 4800)
-        #expect(temperature.stepped(5600) == 5500)
-        #expect(temperature.stepped(8000) == 5500 + 4800)
-        #expect(temperature.stepped(2100) == 2000, "kept within the range")
-
+        // One-sided ranges count from their low end, not from the default.
         let amount = AdjustmentSlider(value: 100, minValue: 0, maxValue: 200)
-        #expect(amount.stepped(131) == 140)
+        #expect(amount.snapped(131) == 140)
+        let opacity = AdjustmentSlider(value: 1, minValue: 0, maxValue: 1)
+        #expect(abs(opacity.snapped(0.33) - 0.3) < 1e-9)
+
+        // A logarithmic row's ticks are tenths of the track, not of the kelvin range.
+        let temperature = SliderRow(title: "Temp", range: 2000...50000, defaultValue: 5500, scale: .logarithmic(2000...50000))
+        #expect(abs(temperature.slider.snapped(0.27) - 0.3) < 1e-9)
+    }
+
+    @Test func navigationSlidersHaveNoTicksAndDoNotSnap() throws {
+        let zoom = MonochromeSlider(value: 0.37, minValue: 0, maxValue: 1, target: nil, action: nil)
+        zoom.numberOfTickMarks = 0
+        #expect(zoom.snapped(0.37) == 0.37)
+        let cell = try #require(zoom.cell as? MonochromeSliderCell)
+        let withTicks = try #require(MonochromeSlider(frame: .zero).cell as? MonochromeSliderCell)
+        #expect(cell.cellSize.height < withTicks.cellSize.height, "no room kept for ticks")
+    }
+
+    @Test func theMiddleTickIsLongerOnlyWhenItIsZero() throws {
+        let tint = AdjustmentSlider(value: 0, minValue: -1, maxValue: 1)
+        tint.frame = NSRect(x: 0, y: 0, width: 200, height: 22)
+        let bipolar = try #require(tint.cell as? MonochromeSliderCell)
+        #expect(bipolar.isBipolar)
+        #expect(bipolar.rectOfTickMark(at: 5).height > bipolar.rectOfTickMark(at: 4).height)
+        #expect(bipolar.rectOfTickMark(at: 0).height == bipolar.rectOfTickMark(at: 10).height)
+
+        for (low, high) in [(0.0, 1.0), (0, 2), (-1, 3)] {
+            let slider = AdjustmentSlider(value: low, minValue: low, maxValue: high)
+            #expect((slider.cell as? MonochromeSliderCell)?.isBipolar == false)
+        }
+    }
+
+    @Test func ticksLineUpWithTheKnobAtTheirValues() throws {
+        let slider = AdjustmentSlider(value: 0, minValue: -5, maxValue: 5)
+        slider.frame = NSRect(x: 0, y: 0, width: 240, height: 22)
+        let cell = try #require(slider.cell as? MonochromeSliderCell)
+        for index in [0, 3, 5, 10] {
+            slider.doubleValue = slider.tickMarkValue(at: index)
+            let knob = cell.knobRect(flipped: slider.isFlipped)
+            #expect(abs(knob.midX - cell.rectOfTickMark(at: index).midX) <= 0.5)
+            #expect(knob.minX >= 0 && knob.maxX <= 240, "the knob stays inside the slider")
+            #expect(cell.rectOfTickMark(at: index).minY >= knob.maxY || cell.rectOfTickMark(at: index).maxY <= knob.minY,
+                    "ticks sit under the knob, not across the track")
+        }
+    }
+
+    @Test func draggingPutsTheKnobUnderThePointer() throws {
+        let slider = AdjustmentSlider(value: 0, minValue: -5, maxValue: 5)
+        slider.frame = NSRect(x: 0, y: 0, width: 240, height: 22)
+        let cell = try #require(slider.cell as? MonochromeSliderCell)
+        let knob = cell.knobRect(flipped: slider.isFlipped)
+        let start = NSPoint(x: knob.midX, y: knob.midY)
+        for (index, value) in [(8, 3.0), (0, -5), (10, 5)] {
+            slider.doubleValue = 0
+            let end = NSPoint(x: cell.rectOfTickMark(at: index).midX, y: knob.midY)
+            #expect(cell.startTracking(at: start, in: slider))
+            _ = cell.continueTracking(last: start, current: end, in: slider)
+            cell.stopTracking(last: end, current: end, in: slider, mouseIsUp: true)
+            #expect(abs(slider.doubleValue - value) < 0.1, "the knob follows the pointer to the \(value) tick: \(slider.doubleValue)")
+        }
+    }
+
+    @Test func swiftUISlidersTickAtTheirStepsWhenThereAreFewEnough() {
+        var value = 0.0
+        let binding = Binding(get: { value }, set: { value = $0 })
+        let columns = MonochromeSliderView(value: binding, range: 1...10, step: 1, label: "Image Size")
+        #expect(columns.tickCount == 10)
+        let quality = MonochromeSliderView(value: binding, range: 10...100, step: 5, label: "JPEG Quality")
+        #expect(quality.tickCount == 11)
+        #expect(quality.stepped(37) == 35 && quality.stepped(99) == 100)
+        let matte = MonochromeSliderView(value: binding, range: 0...1, label: "Matte")
+        #expect(matte.tickCount == 11 && matte.stepped(0.37) == 0.37)
+        let zoom = MonochromeSliderView(value: binding, range: 0...1, showsTicks: false, label: "Zoom")
+        #expect(zoom.tickCount == 0)
     }
 
     @Test func doubleClickingTheKnobResetsTheRow() throws {
@@ -71,7 +140,7 @@ struct AdjustmentSliderTests {
         try drag(option: false)
         slider.doubleValue = 1.4
         _ = slider.sendAction(slider.action, to: slider.target)
-        #expect(values == [1, 1.4], "snapped to a whole step only while Option is held")
+        #expect(values == [1, 1.4], "snapped to a tick only while Option is held")
     }
 
     @Test func aDoubleClickIsAFinalChange() throws {
