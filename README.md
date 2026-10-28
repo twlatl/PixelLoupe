@@ -596,6 +596,16 @@ Feather and Highlights, and Highlight Priority, Color Priority and Paint Overlay
 Amount, Size and Roughness; each photo has its own grain pattern, and the size is in full-size pixels, so it looks the same
 fitted or at 100%.
 
+## Rim Light (Develop)
+
+The softbox beside Adjust opens **Rim Light**: up to three colored lights behind the subject that catch its edges, from
+Pixegen's Filter ▸ Rim Light. Switch it on to get a warm light from the upper left; each light has a color, Angle (where
+it comes from, 90° is from above), Strength, Width (how far in from the edges it reaches) and Choke (how hard its inner
+edge is), and **Add Light** puts the next one across from the last. Glow spreads some of the light into the air around
+the subject. It lights the subject Vision finds (the same one Subject masks use, pulled onto the photo's own edges so
+hair catches the light); until it's found, the panel says so and the photo shows without it. Rim Light is copied by Copy
+and Sync Settings and saved in presets (as PixelLoupe's own setting, which Lightroom ignores).
+
 ## History and snapshots (Develop)
 
 The **History** tool lists a photo's edits, newest first, and **Snapshots** above it. Every edit in Develop adds a step (the first

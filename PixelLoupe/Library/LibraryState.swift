@@ -22,6 +22,8 @@ enum AppMode: Int, CaseIterable {
 
 enum DevelopTool {
     case adjust
+    /// Colored lights behind the subject (RAW-203).
+    case rimLight
     /// Lightroom presets (RAW-13).
     case presets
     case crop

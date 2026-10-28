@@ -43,6 +43,18 @@ material from others.
   License. The full texts ship in the app as `libjxl-LICENSE.txt`, which the build script writes from the same source.
 - **Changes:** none to the source. The build leaves out libjxl's tools, plugins, jpegli and thread pool.
 
+### Rim Light (from Compositor, by way of Pixegen)
+
+- **What:** Develop's Rim Light (RAW-203): the lighting model, its Metal kernels and the guided filter that refines the
+  subject, in `PixelLoupe/Develop/RimLight/` (`RimLightRenderer.swift`, `RimLightKernel.swift`, `GuidedMatte.swift`).
+- **From:** [Compositor](https://github.com/robbietilton/Compositor) by Robbie Tilton
+  ([@robbietilton](https://github.com/robbietilton)), © 2026 Wonder Assembly LLC, by way of Pixegen, its fork
+  (© 2026 Ted Lee).
+- **License:** the MIT License. The full text, with both copyright notices, ships in the app as
+  `Compositor-LICENSE.txt`.
+- **Changes:** ported into PixelLoupe's pipeline as a non-destructive adjustment. It lights the subject PixelLoupe already
+  finds, works in sRGB values inside the linear pipeline, and keeps highlights above white instead of clipping them.
+
 ## Used but not bundled
 
 - **Adobe camera profiles and presets:** PixelLoupe reads profiles and Lightroom / Camera Raw presets that the user

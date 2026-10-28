@@ -128,6 +128,7 @@ nonisolated struct DevelopPreset: Identifiable, Equatable, Sendable {
         _ = LightroomDevelopMapper.apply(input, to: &mapped)
         var result = Self.baseline(settings["Baseline"]?.string, from: adjustments)
         PresetMerge.copy(Set(settings.hash.keys).subtracting(Self.metadataKeys), from: mapped, to: &result)
+        if let rimLight = RimLightPreset.rimLight(settings[RimLightPreset.key]?.string) { result.rimLight = rimLight }
         return result
     }
 

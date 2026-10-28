@@ -55,6 +55,7 @@ struct AboutWindowTests {
         let text = controller.creditsView.string
         #expect(text.contains("Free and open source under the MIT License."))
         #expect(text.contains("LensFun") && text.contains("Sparkle") && text.contains("libjxl"))
+        #expect(text.contains("Rim Light comes from Compositor by Robbie Tilton"))
         #expect(text.contains("This app isn’t affiliated with or endorsed by Adobe."))
         #expect(!text.contains("<p>"), "the HTML is rendered, not shown as source")
 
@@ -64,7 +65,7 @@ struct AboutWindowTests {
             if let url = value as? URL { links.insert(url.absoluteString) } else if let string = value as? String { links.insert(string) }
         }
         let hrefs = Set(html.matches(of: /href="([^"]+)"/).map { String($0.output.1) })
-        #expect(hrefs.count == 7)
+        #expect(hrefs.count == 9)
         // The importer writes https://sparkle-project.org as https://sparkle-project.org/.
         func trimmed(_ urls: Set<String>) -> Set<String> { Set(urls.map { $0.hasSuffix("/") ? String($0.dropLast()) : $0 }) }
         #expect(trimmed(links) == trimmed(hrefs))
