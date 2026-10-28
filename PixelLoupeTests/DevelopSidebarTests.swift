@@ -14,8 +14,8 @@ struct DevelopSidebarTests {
         controller.showWindow(nil)
         controller.state.mode = .develop
         let sidebar = try #require(controller.rootViewController.main.develop.sidebarView)
-        // Histogram, tool icons and their line, plus the seven tools' panels stacked in one place.
-        #expect(sidebar.subviews.count == 10)
+        // Histogram, tool icons and their line, plus the eight tools' panels stacked in one place.
+        #expect(sidebar.subviews.count == 11)
         #expect(sidebar.subviews.filter { !$0.isHidden }.count == 4, "the histogram, icons, line and the Adjust panel")
     }
 
@@ -32,7 +32,7 @@ struct DevelopSidebarTests {
 
         let icons = window.contentView!.descendants.compactMap { $0 as? NSButton }
             .filter { $0.accessibilityIdentifier().hasPrefix("developTool.") }
-        #expect(icons.map { $0.accessibilityIdentifier() } == ["developTool.adjust", "developTool.presets", "developTool.crop", "developTool.lens", "developTool.mask", "developTool.retouch", "developTool.history"])
+        #expect(icons.map { $0.accessibilityIdentifier() } == ["developTool.adjust", "developTool.rimLight", "developTool.presets", "developTool.crop", "developTool.lens", "developTool.mask", "developTool.retouch", "developTool.history"])
         let header = try #require(icons.first?.superview)
         let line = try #require(header.superview?.subviews.compactMap { $0 as? NSBox }.first)
         // Measured from the icons' alignment rects (their frames add padding around the symbols)
