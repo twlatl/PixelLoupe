@@ -5,8 +5,14 @@ import AppKit
 /// hovered or selected circle (or scroll) to resize it. While the photo is zoomed in the cursor is a
 /// hand, and dragging off the spots pans the photo.
 final class RetouchOverlayView: NSView {
-    /// The photo's frame in view points.
-    var frameRect = CGRect.zero { didSet { needsDisplay = true } }
+    /// Where the photo's whole frame is, which the spots are placed on: past the photo shown when it's
+    /// cropped, and turned when it's straightened.
+    var previewFrame = PreviewFrame.zero { didSet { needsDisplay = true } }
+    /// The photo's whole frame in view points, unrotated.
+    var frameRect: CGRect {
+        get { previewFrame.rect }
+        set { previewFrame = PreviewFrame(rect: newValue) }
+    }
     var spots: [PhotoAdjustments.Spot] = [] { didSet { needsDisplay = true } }
     var redEyes: [PhotoAdjustments.RedEyeSpot] = [] { didSet { needsDisplay = true } }
     var selectedID: UUID? { didSet { needsDisplay = true } }
@@ -59,7 +65,7 @@ final class RetouchOverlayView: NSView {
     /// How far the photo is zoomed past fitting the view (1 while it fits).
     var zoomFactor: Double {
         guard isZoomed(), bounds.width > 0, bounds.height > 0 else { return 1 }
-        return max(1, frameRect.width / bounds.width, frameRect.height / bounds.height)
+        return max(1, previewFrame.visible.width / bounds.width, previewFrame.visible.height / bounds.height)
     }
 
     /// Call when the zoom changes, so the cursor follows.
@@ -70,11 +76,12 @@ final class RetouchOverlayView: NSView {
     private var longEdge: CGFloat { max(frameRect.width, frameRect.height) }
 
     private func viewPoint(_ p: PhotoAdjustments.UnitPoint) -> CGPoint {
-        CGPoint(x: frameRect.minX + p.x * frameRect.width, y: frameRect.minY + p.y * frameRect.height)
+        previewFrame.viewPoint(CGPoint(x: p.x * frameRect.width, y: p.y * frameRect.height))
     }
 
     private func unit(_ point: CGPoint) -> PhotoAdjustments.UnitPoint {
-        .init(x: Double((point.x - frameRect.minX) / max(frameRect.width, 1)), y: Double((point.y - frameRect.minY) / max(frameRect.height, 1)))
+        let point = previewFrame.framePoint(point)
+        return .init(x: Double(point.x / max(frameRect.width, 1)), y: Double(point.y / max(frameRect.height, 1)))
     }
 
     /// The circle drawn for a spot or red eye (the one its handles sit on), in view points.
@@ -130,7 +137,8 @@ final class RetouchOverlayView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard frameRect.width > 0 else { return }
         NSGraphicsContext.saveGraphicsState()
-        NSBezierPath(rect: frameRect).addClip()
+        // Sources and spots past a crop still show over the matte, so they can be dragged back.
+        previewFrame.outline.addClip()
         for spot in spots {
             let selected = spot.id == selectedID
             let center = viewPoint(spot.center), source = viewPoint(spot.source)
@@ -248,7 +256,8 @@ final class RetouchOverlayView: NSView {
             drag = .pan(down: point, last: point, isPanning: false)
             return
         }
-        guard frameRect.contains(point) else { onSelect?(nil); return }
+        // New spots go on the photo as shown, not in the matte around a crop.
+        guard previewFrame.visible.contains(point) else { onSelect?(nil); return }
         drag = nil
         onPlace?(unit(point))
     }
@@ -273,7 +282,7 @@ final class RetouchOverlayView: NSView {
         if case .pan(let down, _, let isPanning) = drag {
             drag = nil
             guard !isPanning else { return }
-            if frameRect.contains(down) { onPlace?(unit(down)) } else { onSelect?(nil) }
+            if previewFrame.visible.contains(down) { onPlace?(unit(down)) } else { onSelect?(nil) }
             return
         }
         if moved { update(with: event, isFinal: true) }
@@ -284,8 +293,9 @@ final class RetouchOverlayView: NSView {
         guard let drag else { return }
         let point = convert(event.locationInWindow, from: nil)
         func shifted(_ p: PhotoAdjustments.UnitPoint, from start: CGPoint) -> PhotoAdjustments.UnitPoint {
-            .init(x: (p.x + Double((point.x - start.x) / max(frameRect.width, 1))).clamped(to: -0.5...1.5),
-                  y: (p.y + Double((point.y - start.y) / max(frameRect.height, 1))).clamped(to: -0.5...1.5))
+            let moved = previewFrame.frameVector(CGVector(dx: point.x - start.x, dy: point.y - start.y))
+            return .init(x: (p.x + Double(moved.dx / max(frameRect.width, 1))).clamped(to: -0.5...1.5),
+                         y: (p.y + Double(moved.dy / max(frameRect.height, 1))).clamped(to: -0.5...1.5))
         }
         var newSpots = spots, newEyes = redEyes
         var action = "Move Spot"

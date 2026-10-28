@@ -68,7 +68,9 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     private let retouchPanel = RetouchPanelViewController()
     private let retouchOverlay = RetouchOverlayView()
     /// The preview as last drawn in the Masking or Spot Removal tool, for finding an eye to click.
-    private var lastFrameImage: CIImage?
+    /// The scale the preview was last rendered at in Masking or Spot Removal, for finding red eyes on the
+    /// whole frame at the size shown.
+    private var lastFrameScale: CGFloat?
     private let maskPanel = MaskPanelViewController()
     private let maskOverlay = MaskOverlayView()
     /// Whether the selected mask is painted red over the preview (O).
@@ -1061,6 +1063,14 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     /// zoomed in, a new spot is as big on screen as it would be unzoomed, not as big on the photo.
     private var spotBrushRadius = 0.02
 
+    /// The whole frame, uncropped and unstraightened, at the size the preview shows it: spots are placed in it.
+    private func frameImage(_ source: DevelopSource) -> CIImage? {
+        guard let scale = lastFrameScale else { return nil }
+        var uncropped = adjustments
+        uncropped.crop = PhotoAdjustments.Crop()
+        return source.image(with: uncropped, scale: scale)
+    }
+
     /// A click in the Spot Removal tool: a heal or clone spot with a source beside it, or a red eye.
     private func placeRetouch(at point: PhotoAdjustments.UnitPoint) {
         guard let source else { return }
@@ -1081,7 +1091,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         case .redEye:
             var eye = PhotoAdjustments.RedEyeSpot()
             eye.center = point
-            if let image = lastFrameImage, let ciContext, let found = RetouchRenderer.findRedEye(near: point, in: image, context: ciContext) {
+            if let image = frameImage(source), let ciContext, let found = RetouchRenderer.findRedEye(near: point, in: image, context: ciContext) {
                 eye.center = found.center
                 eye.radius = max(found.radius * 1.15, 0.003)
             } else {
@@ -1667,11 +1677,11 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         if let source {
             // Render at display resolution: RAW decoding at a reduced scale keeps slider drags live.
             let cropping = state.developTool == .crop
-            // Masks are placed on the whole frame, so the Masking tool shows it uncropped and unstraightened.
+            // Masks and spots are placed on the whole frame, but shown on the photo as cropped (RAW-202): their
+            // overlays map through the crop and its straightening.
             let masking = state.developTool == .mask || state.developTool == .retouch
             // A preset under the pointer in the Presets panel is previewed.
-            var shownAdjustments = presetPreview ?? adjustments
-            if masking { shownAdjustments.crop = PhotoAdjustments.Crop() }
+            let shownAdjustments = presetPreview ?? adjustments
             // A cropped photo renders at the size it's shown; the crop tool shows the whole frame.
             let previewScale = cropping
                 ? source.scale(toFit: max(bounds.width, bounds.height))
@@ -1692,7 +1702,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             }
             let afterImage = photo(from: source, scale: previewScale, showing: .after)
             let image = content == .after ? afterImage : photo(from: source, scale: previewScale, showing: content)
-            if !cropping, !masking { previewImage = (beforeAfter?.isSideBySide == true ? afterImage : image, previewScale) }
+            if !cropping { previewImage = (beforeAfter?.isSideBySide == true ? afterImage : image, previewScale) }
             if content == .before { loupeAdjustments = beforeAdjustments }
             if !image.extent.isEmpty, !image.extent.isInfinite {
                 // The histogram is always the edited photo's.
@@ -1702,11 +1712,15 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
                     var shown = showsSharpenMask
                         ? SharpenRenderer.maskPreview(for: image, masking: adjustments.sharpen.masking, scale: scale)
                         : ClippingOverlay.apply(to: image, shadows: clippingDisplay.shadows, highlights: clippingDisplay.highlights)
+                    // Masks are placed on the whole frame: made over it, then straightened and cropped as the photo is.
+                    let frameSize = source.frameSize(adjustments)
+                    let frameExtent = CGRect(x: 0, y: 0, width: frameSize.width * scale, height: frameSize.height * scale)
                     if masking, showsMaskOverlay, let selected = adjustments.masks.first(where: { $0.id == maskPanel.selectedID }),
-                       let mask = LocalAdjustmentRenderer.mask(
-                           for: selected, extent: image.extent,
+                       let frameMask = LocalAdjustmentRenderer.mask(
+                           for: selected, extent: frameExtent,
                            subject: selected.usesSubject ? source.subjectMattes.matte(for: source, adjustments: adjustments, waiting: false)?.image : nil
                        ) {
+                        let mask = CropRenderer.apply(shownAdjustments.crop, to: frameMask, frame: frameExtent, rendering: .cropped)
                         // The selected mask in red, half strength.
                         let half = mask.applyingFilter("CIColorMatrix", parameters: [
                             "inputRVector": CIVector(x: 0.5, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0.5, y: 0, z: 0, w: 0),
@@ -1840,15 +1854,17 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
                         width: frame.width / backingScale, height: frame.height / backingScale
                     )
                     cropOverlay.imageSize = source.frameSize(adjustments)
-                } else if masking {
-                    let framePoints = CGRect(
-                        x: rect.minX / backingScale, y: rect.minY / backingScale,
-                        width: rect.width / backingScale, height: rect.height / backingScale
-                    )
-                    maskOverlay.frameRect = framePoints
-                    retouchOverlay.frameRect = framePoints
-                    lastFrameImage = image
                 } else {
+                    if masking {
+                        let shown = CGRect(
+                            x: rect.minX / backingScale, y: rect.minY / backingScale,
+                            width: rect.width / backingScale, height: rect.height / backingScale
+                        )
+                        let frame = PreviewFrame.cropped(shown: shown, crop: shownAdjustments.crop, frameSize: source.frameSize(adjustments))
+                        maskOverlay.previewFrame = frame
+                        retouchOverlay.previewFrame = frame
+                        lastFrameScale = previewScale
+                    }
                     newGeometry = PreviewGeometry(
                         imageRect: CGRect(
                             x: rect.minX / backingScale, y: rect.minY / backingScale,

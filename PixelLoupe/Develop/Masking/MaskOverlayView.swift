@@ -7,8 +7,14 @@ import AppKit
 /// swiping up or down with two fingers sizes it (with ⇧, softens it), and holding Space turns the pointer into a
 /// hand that moves a zoomed photo around.
 final class MaskOverlayView: NSView {
-    /// The photo's frame in view points.
-    var frameRect = CGRect.zero { didSet { needsDisplay = true } }
+    /// Where the photo's whole frame is, which the masks are placed on: past the photo shown when it's
+    /// cropped, and turned when it's straightened.
+    var previewFrame = PreviewFrame.zero { didSet { needsDisplay = true } }
+    /// The photo's whole frame in view points, unrotated.
+    var frameRect: CGRect {
+        get { previewFrame.rect }
+        set { previewFrame = PreviewFrame(rect: newValue) }
+    }
     var adjustment: PhotoAdjustments.LocalAdjustment? { didSet { needsDisplay = true } }
     /// Called with the adjustment while a handle is dragged or a stroke painted (`isFinal` on mouse up).
     var onChange: ((_ adjustment: PhotoAdjustments.LocalAdjustment, _ isFinal: Bool, _ actionName: String) -> Void)?
@@ -69,7 +75,8 @@ final class MaskOverlayView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     /// Points in the frame (pixels of `frameRect`) from view points.
-    private func framePoint(_ point: CGPoint) -> CGPoint { CGPoint(x: point.x - frameRect.minX, y: point.y - frameRect.minY) }
+    private func framePoint(_ point: CGPoint) -> CGPoint { previewFrame.framePoint(point) }
+    /// View points from points in the frame, before the straightening angle: the shapes are drawn turned by it.
     private func viewPoint(_ point: CGPoint) -> CGPoint { CGPoint(x: point.x + frameRect.minX, y: point.y + frameRect.minY) }
 
     /// The brush the selected mask paints into: its last brush shape (not on a Subject or Background mask,
@@ -85,6 +92,8 @@ final class MaskOverlayView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let adjustment, frameRect.width > 0 else { return }
         NSGraphicsContext.saveGraphicsState()
+        // Handles past a crop still show over the matte, so they can be dragged back.
+        NSGraphicsContext.current?.cgContext.concatenate(previewFrame.rotation)
         NSBezierPath(rect: frameRect).addClip()
         if adjustment.isEnabled {
             for component in adjustment.components {
@@ -95,8 +104,8 @@ final class MaskOverlayView: NSView {
                 }
             }
         }
-        if paints, !isHandHeld, let pointer, frameRect.contains(pointer) { drawBrush(at: pointer) }
         NSGraphicsContext.restoreGraphicsState()
+        if paints, !isHandHeld, let pointer, previewFrame.visible.contains(pointer) { drawBrush(at: pointer) }
     }
 
     private func stroke(_ path: NSBezierPath, dashed: Bool = false) {
@@ -221,8 +230,11 @@ final class MaskOverlayView: NSView {
             NSCursor.closedHand.set()
             return
         }
-        let point = framePoint(convert(event.locationInWindow, from: nil))
+        let viewPoint = convert(event.locationInWindow, from: nil)
+        let point = framePoint(viewPoint)
         guard var adjustment else { onClickEmpty?(); return }
+        // Strokes start on the photo as shown, not in the matte around a crop.
+        if paints, !previewFrame.visible.contains(viewPoint) { onClickEmpty?(); return }
         if adjustment.usesSubject {
             let erasing = event.modifierFlags.contains(.option)
             let start = MaskGeometry.unitPoint(point, frame: frameRect.size)
