@@ -19,7 +19,7 @@ final class HDRMergeSheetController: NSWindowController, NSWindowDelegate {
     let messageLabel = NSTextField(wrappingLabelWithString: "")
     let autoAlignCheckbox = NSButton(checkboxWithTitle: "Auto Align", target: nil, action: nil)
     let autoSettingsCheckbox = NSButton(checkboxWithTitle: "Auto Settings", target: nil, action: nil)
-    let deghostSlider = NSSlider()
+    let deghostSlider = MonochromeSlider()
     let overlayCheckbox = NSButton(checkboxWithTitle: "Show Deghost Overlay", target: nil, action: nil)
     let createStackCheckbox = NSButton(checkboxWithTitle: "Create Stack", target: nil, action: nil)
     let mergeButton = NSButton(title: "Merge", target: nil, action: nil)

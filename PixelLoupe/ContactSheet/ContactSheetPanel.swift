@@ -91,18 +91,15 @@ struct ContactSheetPanel: View {
                 }
                 Section("Photos") {
                     LabeledContent("Image Size") {
-                        Slider(value: $model.imageSize,
-                               in: Double(ContactSheetSettings.columnRange.lowerBound)...Double(ContactSheetSettings.columnRange.upperBound),
-                               step: 1) {
-                            Text("Image Size")
-                        } minimumValueLabel: {
+                        HStack {
                             Image(systemName: "photo").imageScale(.small).accessibilityHidden(true)
-                        } maximumValueLabel: {
+                            MonochromeSliderView(
+                                value: $model.imageSize,
+                                range: Double(ContactSheetSettings.columnRange.lowerBound)...Double(ContactSheetSettings.columnRange.upperBound),
+                                step: 1, label: "Image Size", identifier: "contactSheetImageSize")
+                                .accessibilityValue(model.layout.summary)
                             Image(systemName: "photo").imageScale(.large).accessibilityHidden(true)
                         }
-                        .labelsHidden()
-                        .accessibilityValue(model.layout.summary)
-                        .accessibilityIdentifier("contactSheetImageSize")
                     }
                     Text(model.layout.summary)
                         .foregroundStyle(.secondary)

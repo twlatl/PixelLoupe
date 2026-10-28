@@ -15,7 +15,7 @@ final class MapViewController: NSViewController, MKMapViewDelegate, NSPopoverDel
     private let topSeparator = NSBox()
     private var mapBelowFilterBar: NSLayoutConstraint!
     private var mapAtTop: NSLayoutConstraint!
-    let zoomSlider = NSSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
+    let zoomSlider = MonochromeSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
     let styleControl = NSSegmentedControl(labels: ["Standard", "Satellite", "Hybrid"], trackingMode: .selectOne, target: nil, action: nil)
     let countLabel = NSTextField(labelWithString: "")
     let emptyLabel = NSTextField(labelWithString: "No photos in this source have a location")
@@ -74,6 +74,7 @@ final class MapViewController: NSViewController, MKMapViewDelegate, NSPopoverDel
         zoomSlider.action = #selector(zoomChanged(_:))
         zoomSlider.isContinuous = true
         zoomSlider.controlSize = .small
+        zoomSlider.numberOfTickMarks = 0
         zoomSlider.setAccessibilityLabel("Zoom")
         zoomSlider.setAccessibilityIdentifier("mapZoom")
         zoomSlider.widthAnchor.constraint(equalToConstant: 160).isActive = true

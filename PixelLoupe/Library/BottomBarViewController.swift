@@ -11,7 +11,7 @@ final class BottomBarViewController: NSViewController {
     private let cancelExportButton = NSButton()
     private let sortPopUp = NSPopUpButton()
     private let directionButton = NSButton()
-    private let sizeSlider = NSSlider()
+    private let sizeSlider = MonochromeSlider()
 
     init(state: LibraryState) {
         self.state = state
@@ -59,6 +59,7 @@ final class BottomBarViewController: NSViewController {
         sizeSlider.minValue = LibraryState.thumbnailSizeRange.lowerBound
         sizeSlider.maxValue = LibraryState.thumbnailSizeRange.upperBound
         sizeSlider.controlSize = .small
+        sizeSlider.numberOfTickMarks = 0
         sizeSlider.isContinuous = true
         sizeSlider.target = self
         sizeSlider.action = #selector(sizeChanged(_:))

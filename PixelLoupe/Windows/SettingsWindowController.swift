@@ -200,9 +200,7 @@ struct AppearanceSettingsView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
                         swatch(.white)
-                        Slider(value: matte, in: 0...1)
-                            .accessibilityLabel("Matte color")
-                            .accessibilityIdentifier("matteSlider")
+                        MonochromeSliderView(value: matte, range: 0...1, label: "Matte color", identifier: "matteSlider")
                         swatch(.black)
                     }
                     Button("Use Theme Default") { settings.matte = nil }
@@ -215,7 +213,7 @@ struct AppearanceSettingsView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Toggle("Use gray instead of the accent color", isOn: $settings.isMonochrome)
                         .accessibilityIdentifier("monochromeToggle")
-                    Text("Sliders, buttons and icons turn dark gray in Dark Mode and black in Light Mode and Gray. Checkboxes and focus rings change the next time PixelLoupe opens.")
+                    Text("Buttons and icons turn dark gray in Dark Mode and black in Light Mode and Gray. Checkboxes and focus rings change the next time PixelLoupe opens.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

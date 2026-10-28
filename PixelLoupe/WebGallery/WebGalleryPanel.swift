@@ -128,19 +128,16 @@ struct WebGalleryPanel: View {
             }
             Section("Photos") {
                 LabeledContent("Image Size") {
-                    Slider(value: $model.imageSize,
-                           in: Double(WebGallerySettings.columnRange.lowerBound)...Double(WebGallerySettings.columnRange.upperBound),
-                           step: 1) {
-                        Text("Image Size")
-                    } minimumValueLabel: {
+                    HStack {
                         Image(systemName: "photo").imageScale(.small).accessibilityHidden(true)
-                    } maximumValueLabel: {
+                        MonochromeSliderView(
+                            value: $model.imageSize,
+                            range: Double(WebGallerySettings.columnRange.lowerBound)...Double(WebGallerySettings.columnRange.upperBound),
+                            step: 1, label: "Image Size", identifier: "webGalleryImageSize")
+                            .help("Up to \(model.settings.columns) across; fewer on a narrow screen")
+                            .accessibilityValue("\(model.settings.columns) across")
                         Image(systemName: "photo").imageScale(.large).accessibilityHidden(true)
                     }
-                    .labelsHidden()
-                    .help("Up to \(model.settings.columns) across; fewer on a narrow screen")
-                    .accessibilityValue("\(model.settings.columns) across")
-                    .accessibilityIdentifier("webGalleryImageSize")
                 }
                 Text(model.pages.summary)
                     .foregroundStyle(.secondary)
@@ -191,12 +188,10 @@ struct WebGalleryPanel: View {
                 .accessibilityIdentifier("webGalleryWatermark")
                 LabeledContent("JPEG Quality") {
                     HStack {
-                        Slider(value: $model.jpegQuality, in: WebGallerySettings.qualityRange, step: WebGallerySettings.qualityStep) {
-                            Text("JPEG Quality")
-                        }
-                        .labelsHidden()
-                        .accessibilityValue("\(Int(model.settings.jpegQuality)) percent")
-                        .accessibilityIdentifier("webGalleryQuality")
+                        MonochromeSliderView(
+                            value: $model.jpegQuality, range: WebGallerySettings.qualityRange, step: WebGallerySettings.qualityStep,
+                            label: "JPEG Quality", identifier: "webGalleryQuality")
+                            .accessibilityValue("\(Int(model.settings.jpegQuality)) percent")
                         Text("\(Int(model.settings.jpegQuality))%")
                             .monospacedDigit()
                             .frame(minWidth: 36, alignment: .trailing)

@@ -75,7 +75,7 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     private let emptyLabel = NSTextField(wrappingLabelWithString: "")
     private let spinner = NSProgressIndicator()
     private let viewControl = NSSegmentedControl()
-    private let sizeSlider = NSSlider()
+    private let sizeSlider = MonochromeSlider()
     // Footer
     private let summaryLabel = NSTextField(labelWithString: "")
     private let presetPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -446,6 +446,7 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         sizeSlider.maxValue = Self.thumbnailSizeRange.upperBound
         sizeSlider.doubleValue = min(max(size, Self.thumbnailSizeRange.lowerBound), Self.thumbnailSizeRange.upperBound)
         sizeSlider.controlSize = .small
+        sizeSlider.numberOfTickMarks = 0
         sizeSlider.target = self
         sizeSlider.action = #selector(thumbnailSizeChanged(_:))
         sizeSlider.setAccessibilityLabel("Thumbnail size")

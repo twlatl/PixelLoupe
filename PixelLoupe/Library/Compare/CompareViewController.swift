@@ -14,7 +14,7 @@ final class CompareViewController: NSViewController {
         ComparePhotoView(role: .candidate, store: store),
     ]
     private let lockButton = NSButton()
-    private let zoomSlider = NSSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
+    private let zoomSlider = MonochromeSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
     private let zoomLabel = NSTextField(labelWithString: "")
     /// While locked (the default), zooming and panning apply to both photos.
     private(set) var isLocked = true
@@ -60,6 +60,7 @@ final class CompareViewController: NSViewController {
         zoomTitle.textColor = .secondaryLabelColor
         zoomTitle.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         zoomSlider.controlSize = .small
+        zoomSlider.numberOfTickMarks = 0
         zoomSlider.isContinuous = true
         zoomSlider.target = self
         zoomSlider.action = #selector(zoomChanged(_:))
