@@ -8,7 +8,7 @@ import QuartzCore
 /// the credits roll up from the bottom like a film's, at twice the speed for as long as ⌥⌘ stay held (see
 /// ``CreditsRoll``).
 final class AboutWindowController: NSWindowController, NSWindowDelegate {
-    static let secretPhotoDescription = "A camera and a loupe beside strips of color negative film"
+    static let secretPhotoDescription = "A loupe on a strip of color negative film, magnifying a portrait"
 
     let photoView = WelcomePhotoView()
     /// The version under the icon ("Version 1.1"), or the build number ("Build 67") opened with ⌥⌘.
