@@ -501,6 +501,10 @@ struct PanoramaMergeTests {
         changed.autoCrop = true
         changed.save(to: defaults)
         #expect(PanoramaMergeOptions.load(from: defaults) == changed)
+        // Fill Edges is remembered too, for Merge with Previous Settings.
+        changed.fillEdges = true
+        changed.save(to: defaults)
+        #expect(PanoramaMergeOptions.load(from: defaults).fillEdges)
     }
 
     @Test func fillEdgesStartsOffAndOlderSettingsStillLoad() throws {
@@ -643,5 +647,66 @@ struct PanoramaCatalogTests {
         sheet.autoCropCheckbox.performClick(nil)
         sheet.merge(nil)
         #expect(finished?.projection == .spherical && finished?.autoCrop == true && finished?.boundaryWarp == 30)
+        #expect(finished?.fillEdges == false)
+    }
+
+    @Test func fillEdgesTurnsAutoCropOffButKeepsTheChoice() async throws {
+        let setup = try await Setup()
+        var options = PanoramaMergeOptions()
+        options.autoCrop = true
+        let sheet = PanoramaMergeSheetController(sources: setup.editing.photoMergeSources(setup.ids), options: options)
+        let window = try #require(sheet.window)
+        window.contentView?.layoutSubtreeIfNeeded()
+        for _ in 0..<600 where !sheet.mergeButton.isEnabled { try await Task.sleep(for: .milliseconds(100)) }
+        // Lightroom's order: Fill Edges just above Auto Crop.
+        let fill = sheet.fillEdgesCheckbox.convert(sheet.fillEdgesCheckbox.bounds, to: nil)
+        let crop = sheet.autoCropCheckbox.convert(sheet.autoCropCheckbox.bounds, to: nil)
+        #expect(fill.minY > crop.maxY && abs(fill.minX - crop.minX) < 1)
+        #expect(sheet.fillEdgesCheckbox.state == .off && sheet.fillEdgesCheckbox.isEnabled)
+        #expect(sheet.autoCropCheckbox.state == .on && sheet.autoCropCheckbox.isEnabled)
+
+        sheet.fillEdgesCheckbox.performClick(nil)
+        #expect(sheet.options.fillEdges && sheet.options.autoCrop)
+        #expect(sheet.autoCropCheckbox.state == .off && !sheet.autoCropCheckbox.isEnabled)
+        // Other options still change with it on.
+        sheet.autoSettingsCheckbox.performClick(nil)
+        #expect(sheet.options.autoCrop && !sheet.options.autoSettings)
+
+        sheet.fillEdgesCheckbox.performClick(nil)
+        #expect(!sheet.options.fillEdges && sheet.options.autoCrop)
+        #expect(sheet.autoCropCheckbox.state == .on && sheet.autoCropCheckbox.isEnabled)
+
+        sheet.fillEdgesCheckbox.performClick(nil)
+        var finished: PanoramaMergeOptions?
+        sheet.onFinish = { finished = $0 }
+        sheet.merge(nil)
+        #expect(finished?.fillEdges == true && finished?.autoCrop == true && finished?.cropsToCovered == false)
+    }
+
+    @Test func previewWithFillEdgesHasNoCheckerboard() async throws {
+        let setup = try await Setup()
+        let previewer = try PanoramaMergePreviewer(sources: setup.editing.photoMergeSources(setup.ids))
+        var options = PanoramaMergeOptions()
+        options.autoSettings = false
+        // The merge's top left corner is outside every photo (they're turned side to side, and Spherical bows them).
+        func corner(_ options: PanoramaMergeOptions) async throws -> (CGSize, [UInt8]) {
+            let preview = try await previewer.render(options: options, maxPixels: 400)
+            let image = preview.image
+            let context = try #require(CGContext(
+                data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            let pixels = try #require(context.data).assumingMemoryBound(to: UInt8.self)
+            // The top left pixel (the context's rows run top down).
+            return (preview.photoSize, [pixels[0], pixels[1], pixels[2]])
+        }
+        let (plainSize, plain) = try await corner(options)
+        options.fillEdges = true
+        let (filledSize, filled) = try await corner(options)
+        // The same uncropped panorama, but the checkerboard's light gray (0.84 or 0.98) is gone from the corner.
+        #expect(plainSize == filledSize)
+        #expect(plain.allSatisfy { $0 > 200 } && Set(plain).count == 1, "\(plain)")
+        #expect(filled != plain, "\(filled)")
     }
 }
