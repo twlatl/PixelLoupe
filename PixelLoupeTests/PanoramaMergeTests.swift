@@ -302,9 +302,8 @@ struct PanoramaMergeTests {
                 if green > 0.98 { white += 1 }
             }
         }
-        // The photos' pixels are kept, but Core Image draws the blend's pyramid a little differently once the fill is
-        // laid under it (its Gaussian blur depends on the region asked for), most near the panorama's edges.
-        #expect(coveredChange / coveredCount < 0.002 && worstChange < 0.05, "mean \(coveredChange / coveredCount), worst \(worstChange)")
+        // The photos' pixels are kept (to a step or so of the half floats Core Image keeps its intermediates in).
+        #expect(worstChange < 1e-3, "mean \(coveredChange / coveredCount), worst \(worstChange)")
         #expect(holeCount > 100)
         #expect(Float(white) / holeCount < 0.05, "\(white) of \(holeCount) hole pixels are still white")
         // The fill is made of the scene, so it's about as bright.
