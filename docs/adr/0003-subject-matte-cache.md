@@ -46,3 +46,12 @@ black Stage). `SubjectMatteStore` finds them the same way, as a second kind of m
 photo's edges like Rim Light's subject, and kept in the same memory and disk caches. The kind is part of the key
 only for people, so subject mattes kept before people were found are still used. A mask with less than 0.1% of the
 frame in it counts as no person.
+
+## Faces (RAW-215)
+
+Studio and Contour need each face's place, tilt and turn. `FaceStore` finds them with Vision's
+`VNDetectFaceLandmarksRequest` on the same 1536-pixel detection image and keeps them the same way: in memory, and on
+disk as small JSON files in `~/Library/Caches/<bundle id>/Faces`, under the subject's key plus `-faces`. They're found
+only when Studio or Contour renders, never on import, and nothing goes in the catalog (Assisted Culling's faces are
+stored only as scores). Turn and tilt come from the landmarks (where the nose sits across the face, the line through
+the eyes) rather than Vision's yaw and roll, so their direction in the frame is unambiguous.

@@ -599,7 +599,10 @@ fitted or at 100%.
 ## Portrait Lighting (Develop)
 
 The **Lighting** tool's top section is **Portrait Lighting**: switch it on and pick an effect, with **Intensity** for
-how strong it is. **Stage** puts the people in the photo on black (Intensity takes the background from the photo to
+how strong it is. **Studio** puts a soft key light on each face from above the camera, and **Contour** lights each
+face from one side and shadows the other: the side it's turned toward, or the camera's left for a face looking straight
+at it. They follow how each face is turned and tilted; someone whose face can't be found is lit from the top of them.
+**Stage** puts the people in the photo on black (Intensity takes the background from the photo to
 black) and **Stage Mono** does the same with them in black and white. It works on the people Vision finds (not pets or
 things, as Subject masks do), pulled onto the photo's own edges; until they're found the panel says so, and a photo with
 no one in it is left alone. Portrait Lighting is applied before Rim Light, so a rim can light someone on a Stage. It's
