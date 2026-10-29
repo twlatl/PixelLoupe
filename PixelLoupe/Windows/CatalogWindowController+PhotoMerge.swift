@@ -1,10 +1,10 @@
 import AppKit
 import CoreData
 
-/// Photo ▸ Photo Merge, as in Lightroom: HDR… (⌃H) and Panorama… (⌃M) show a sheet previewing the
-/// merge of the selected photos with its options, then Merge runs it in the background with progress
-/// (and Cancel) in the Library's bottom bar. HDR and Panorama with Previous Settings (⌃⇧H, ⌃⇧M) merge
-/// straight away. The merged DNG joins the catalog beside its sources.
+/// Photo ▸ Photo Merge, as in Lightroom: HDR… (⌃H), Panorama… (⌃M) and HDR Panorama… show a sheet
+/// previewing the merge of the selected photos with its options, then Merge runs it in the background
+/// with progress (and Cancel) in the Library's bottom bar. HDR and Panorama with Previous Settings (⌃⇧H,
+/// ⌃⇧M) merge straight away. The merged DNG joins the catalog beside its sources.
 extension CatalogWindowController {
     @objc func photoMergeHDR(_ sender: Any?) {
         guard let window, window.attachedSheet == nil, mergeTask == nil else { return }
@@ -35,14 +35,66 @@ extension CatalogWindowController {
             NSSound.beep()
             return
         }
-        let sheet = PanoramaMergeSheetController(sources: sources, options: PanoramaMergeOptions.load())
+        showPanoramaSheet(ids, sources: sources, brackets: nil)
+    }
+
+    /// Photo ▸ Photo Merge ▸ HDR Panorama…: the selection split into bracket sets (``HDRBrackets``; their
+    /// exposure compensation is read from the files, off the main thread), then the HDR Panorama Merge
+    /// Preview. When they aren't sets of one bracket, Lightroom's alert offers a plain panorama instead.
+    @objc func photoMergeHDRPanorama(_ sender: Any?) {
+        guard let window, window.attachedSheet == nil, mergeTask == nil, bracketTask == nil else { return }
+        let ids = selectedMergeIDs()
+        let sources = editing.photoMergeSources(ids)
+        guard sources.count >= 2 else {
+            NSSound.beep()
+            return
+        }
+        bracketTask = Task { [weak self] in
+            let brackets = await Self.findBrackets(sources)
+            guard let self else { return }
+            bracketTask = nil
+            guard window.attachedSheet == nil, mergeTask == nil else { return }
+            if let brackets {
+                showPanoramaSheet(ids, sources: brackets.flatMap { $0 }, brackets: brackets)
+            } else {
+                offerPlainPanorama(ids, sources: sources)
+            }
+        }
+    }
+
+    @concurrent
+    private nonisolated static func findBrackets(_ sources: [PhotoMergeSource]) async -> [[PhotoMergeSource]]? {
+        HDRBrackets.sets(sources.map { $0.readingExposureBias() })
+    }
+
+    /// Lightroom's alert when the photos aren't sets of one bracket: Yes merges them as a plain panorama.
+    private func offerPlainPanorama(_ ids: [NSManagedObjectID], sources: [PhotoMergeSource]) {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.messageText = Self.bracketSizeAlert
+        alert.informativeText = "Merge To Non-HDR Panorama Instead?"
+        alert.addButton(withTitle: "Yes")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            // Once the alert has gone: the window still has it as its sheet here.
+            Task { @MainActor in self?.showPanoramaSheet(ids, sources: sources, brackets: nil) }
+        }
+    }
+
+    static let bracketSizeAlert = "Unable To Detect HDR Exposure Bracket Size"
+
+    /// The Panorama Merge Preview sheet (HDR Panorama's with `brackets`), then the merge.
+    private func showPanoramaSheet(_ ids: [NSManagedObjectID], sources: [PhotoMergeSource], brackets: [[PhotoMergeSource]]?) {
+        guard let window, window.attachedSheet == nil else { return }
+        let sheet = PanoramaMergeSheetController(sources: sources, brackets: brackets, options: PanoramaMergeOptions.load())
         sheet.onFinish = { [weak self, weak sheet] options in
             guard let self, let sheet, let sheetWindow = sheet.window else { return }
             window.endSheet(sheetWindow)
             mergeSheet = nil
             guard let options else { return }
             options.save()
-            startPanoramaMerge(ids, options: options)
+            startPanoramaMerge(ids, options: options, brackets: brackets)
         }
         mergeSheet = sheet
         window.beginSheet(sheet.window!)
@@ -71,6 +123,8 @@ extension CatalogWindowController {
         switch kind {
         case .hdr: startHDRMerge(ids, options: HDRMergeOptions.load())
         case .panorama: startPanoramaMerge(ids, options: PanoramaMergeOptions.load())
+        // No headless HDR Panorama, as in Lightroom.
+        case .hdrPanorama: break
         }
     }
 
@@ -97,13 +151,16 @@ extension CatalogWindowController {
         }
     }
 
-    private func startPanoramaMerge(_ ids: [NSManagedObjectID], options: PanoramaMergeOptions) {
+    private func startPanoramaMerge(_ ids: [NSManagedObjectID], options: PanoramaMergeOptions, brackets: [[PhotoMergeSource]]? = nil) {
         let sources = editing.photoMergeSources(ids)
-        startMerge(ids, kind: .panorama, createsStack: options.createsStack) { destination, thumbnails, progress in
+        let kind: PhotoMergeKind = brackets == nil ? .panorama : .hdrPanorama
+        let things = brackets == nil ? "photos" : "bracket sets"
+        startMerge(ids, kind: kind, createsStack: options.createsStack) { destination, thumbnails, progress in
             let result = try await PanoramaMergeRunner.run(
-                sources: sources, options: options, destination: destination, thumbnailDirectory: thumbnails, progress: progress
+                sources: sources, brackets: brackets, options: options, destination: destination,
+                thumbnailDirectory: thumbnails, progress: progress
             )
-            let note = result.mergedCount < result.photoCount ? "\(result.mergedCount) of \(result.photoCount) photos merged" : nil
+            let note = result.mergedCount < result.photoCount ? "\(result.mergedCount) of \(result.photoCount) \(things) merged" : nil
             return (result.output, note)
         }
     }

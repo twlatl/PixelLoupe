@@ -875,7 +875,8 @@ same scene into one high-dynamic-range photo, as Lightroom does. The HDR Merge P
 left, updating as the options on the right change. Click the photo to zoom to 100% (the part shown is merged at full
 resolution), drag to look around, and click again to fit it:
 
-- **Auto Align** lines the photos up (for brackets shot without a tripod). It corrects shifts, not rotation.
+- **Auto Align** lines the photos up (for brackets shot without a tripod). It corrects shifts, not rotation. Each
+  exposure is matched to the next one toward the middle exposure, so wide brackets (±6 EV) line up too.
 - **Auto Settings** tone maps the merge so the highlights and the shadows both show, matched to Lightroom's HDR
   merges: the scene's brightness is split into an edge-aware base layer and local detail, the base layer's range is
   compressed (more for scenes with more range) with the midtones at middle gray and the highlights rolling off, and
@@ -938,7 +939,24 @@ selects the result when it's done. The panorama is a Linear DNG (16-bit floating
 up to Lightroom's limits (65,000 pixels on a side, 512 megapixels), saved beside the earliest photo as `<name>-Pano.dng`
 (`-Pano-2`, `-Pano-3`… when that name is taken). It takes the earliest photo's capture date, camera and shooting
 details, and every source's keywords; its rating, flag and label start empty. Only RAW photos from one camera, all the
-same size, can be merged. Lightroom's Fill Edges and HDR Panorama aren't available yet.
+same size, can be merged. Lightroom's Fill Edges isn't available yet.
+
+### HDR Panorama
+
+Photo ▸ Photo Merge ▸ HDR Panorama… (no shortcut, as in Lightroom) merges a panorama shot as exposure brackets, one
+bracket at each position, in one step. Select every photo (say 9 positions × 5 exposures). The photos are sorted by
+capture time and split into sets: the first set size (2 to 9) where every set has the same exposure compensation
+pattern (−2, 0, +2…) with no step repeated. Compensation is read from each file's EXIF, since each position can meter
+its own base exposure and the darkest frames can all hit the fastest shutter speed; photos that don't record it are
+matched by exposure (shutter speed, aperture and ISO) instead. When the photos aren't sets of one bracket, Lightroom's
+alert asks "Unable To Detect HDR Exposure Bracket Size. Merge To Non-HDR Panorama Instead?": Yes opens the Panorama
+sheet for all of them.
+
+The HDR Panorama Merge Preview sheet has the Panorama options and says how many bracket sets merged. Each set is merged
+as HDR does (Auto Align on, no deghosting, no tone mapping: the panorama's Auto Settings tones the result), as Core Image
+needs it at each size rather than written out first, and the sets are placed, blended and stored as one panorama, so
+positions metered differently match. The merged photo is `<name>-HDR-Pano.dng`, beside the earliest photo; Create Stack
+stacks every photo under it in the order they were taken.
 
 ## Edit In (external editors)
 

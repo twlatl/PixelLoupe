@@ -631,9 +631,11 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
     var publishingManager: PublishingManagerWindowController?
     /// The running Publish (RAW-179), cancelled from the bottom bar.
     var publishTask: Task<Void, Never>?
-    /// Photo ▸ Photo Merge's merge (HDR or Panorama), running in the background.
+    /// Photo ▸ Photo Merge's merge (HDR, Panorama or HDR Panorama), running in the background.
     var mergeTask: Task<Void, Never>?
     var mergeSheet: NSWindowController?
+    /// HDR Panorama finding the selection's bracket sets, before its sheet opens.
+    var bracketTask: Task<Void, Never>?
     /// Photo ▸ Edit In's copies being written.
     var editInTask: Task<Void, Never>?
     var editInSheet: EditPhotoSheetController?
@@ -1175,8 +1177,9 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         case #selector(cancelExport(_:)):
             return exportTask != nil
         case #selector(photoMergeHDR(_:)), #selector(photoMergePanorama(_:)),
-             #selector(photoMergeHDRWithPreviousSettings(_:)), #selector(photoMergePanoramaWithPreviousSettings(_:)):
-            return mergeTask == nil && window?.attachedSheet == nil
+             #selector(photoMergeHDRWithPreviousSettings(_:)), #selector(photoMergePanoramaWithPreviousSettings(_:)),
+             #selector(photoMergeHDRPanorama(_:)):
+            return mergeTask == nil && bracketTask == nil && window?.attachedSheet == nil
                 && state.selectedPhotoIDs.count >= 2
                 && editing.photos(state.selectedPhotoIDs).filter { SupportedImageTypes.isRaw($0.fileURL) }.count >= 2
         case #selector(cancelPhotoMerge(_:)):

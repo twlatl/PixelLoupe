@@ -4,12 +4,15 @@ import AppKit
 /// Merge Preview options: the merged panorama on the left, updating as the options change, and on
 /// the right how many photos merged, the projection (Spherical, Cylindrical, Perspective), Boundary
 /// Warp, Auto Crop, Auto Settings, Create Stack and Lightroom's lens profile notice. Merge and Cancel
-/// sit centered below. Clicking the panorama zooms to 100% (see ``MergePreviewView``).
+/// sit centered below. Clicking the panorama zooms to 100% (see ``MergePreviewView``). For HDR Panorama
+/// it's the HDR Panorama Merge Preview, each bracket set merged as one photo.
 final class PanoramaMergeSheetController: NSWindowController, NSWindowDelegate {
     /// The options to merge with, or nil for Cancel.
     var onFinish: ((PanoramaMergeOptions?) -> Void)?
 
     let sources: [PhotoMergeSource]
+    /// HDR Panorama's bracket sets (``HDRBrackets``), or nil for a panorama of single photos.
+    let brackets: [[PhotoMergeSource]]?
     private(set) var options: PanoramaMergeOptions
 
     /// The well the preview sits in: the user's matte color with a medium gray border, so the sheet keeps
@@ -42,14 +45,15 @@ final class PanoramaMergeSheetController: NSWindowController, NSWindowDelegate {
         [(.spherical, sphericalButton), (.cylindrical, cylindricalButton), (.perspective, perspectiveButton)]
     }
 
-    init(sources: [PhotoMergeSource], options: PanoramaMergeOptions) {
+    init(sources: [PhotoMergeSource], brackets: [[PhotoMergeSource]]? = nil, options: PanoramaMergeOptions) {
         self.sources = sources
+        self.brackets = brackets
         self.options = options
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1080, height: 680),
             styleMask: [.titled, .resizable], backing: .buffered, defer: true
         )
-        window.title = "Panorama Merge Preview"
+        window.title = brackets == nil ? "Panorama Merge Preview" : "HDR Panorama Merge Preview"
         window.contentMinSize = NSSize(width: 760, height: 480)
         window.setAccessibilityIdentifier("panoramaMergeSheet")
         super.init(window: window)
@@ -264,17 +268,18 @@ final class PanoramaMergeSheetController: NSWindowController, NSWindowDelegate {
     /// Reads and aligns the photos (off the main thread), then draws the first preview.
     private func prepare() {
         spinner.startAnimation(nil)
-        let sources = sources
+        let sources = sources, brackets = brackets
         previewTask = Task { [weak self] in
             let result: Result<PanoramaMergePreviewer, Error>
-            do { result = .success(try await Self.makePreviewer(sources)) } catch { result = .failure(error) }
+            do { result = .success(try await Self.makePreviewer(sources, brackets: brackets)) } catch { result = .failure(error) }
             guard let self else { return }
             switch result {
             case .success(let previewer):
                 self.previewer = previewer
+                let things = brackets == nil ? "photos" : "bracket sets"
                 statusLabel.stringValue = previewer.mergedCount == previewer.photoCount
-                    ? "All \(previewer.photoCount) photos merged"
-                    : "\(previewer.mergedCount) of \(previewer.photoCount) photos merged"
+                    ? "All \(previewer.photoCount) \(things) merged"
+                    : "\(previewer.mergedCount) of \(previewer.photoCount) \(things) merged"
                 lensNoticeRow.isHidden = previewer.lensWarning == nil
                 // Perspective can't show these photos: Spherical instead, as a headless merge does.
                 if options.projection == .perspective, !previewer.allowsPerspective { options.projection = .spherical }
@@ -291,8 +296,10 @@ final class PanoramaMergeSheetController: NSWindowController, NSWindowDelegate {
     }
 
     @concurrent
-    private nonisolated static func makePreviewer(_ sources: [PhotoMergeSource]) async throws -> PanoramaMergePreviewer {
-        try PanoramaMergePreviewer(sources: sources)
+    private nonisolated static func makePreviewer(
+        _ sources: [PhotoMergeSource], brackets: [[PhotoMergeSource]]?
+    ) async throws -> PanoramaMergePreviewer {
+        try PanoramaMergePreviewer(sources: sources, brackets: brackets)
     }
 
     /// Redraws the preview with the current options, after a moment so dragging the slider doesn't
