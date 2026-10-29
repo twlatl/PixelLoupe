@@ -914,13 +914,16 @@ the others are left out ("10 of 12 photos merged").
   spanning more than 150°, so it's unavailable for those.
 - **Boundary Warp** (0–100) bends the panorama's ragged edge out toward its rectangle, keeping the shapes of what's in
   it as much as it can, so less is lost to cropping. At 100 the panorama fills (nearly) the whole rectangle.
+- **Fill Edges** fills the edges the photos don't reach with what's around them (a content-aware fill, made of patches
+  of the photos), so the panorama keeps its whole rectangle. While it's on, Auto Crop shows off and is unavailable;
+  turning Fill Edges off brings back the Auto Crop choice. It works with Boundary Warp: warp less, fill more.
 - **Auto Crop** crops away the edges the photos don't reach, to the largest rectangle they cover entirely. It's a
   Develop crop on the whole panorama, so it can be widened again in Crop & Straighten.
 - **Auto Settings** starts the panorama with Develop's Auto Settings (tone), measured inside that rectangle.
 - **Create Stack** stacks the panorama on top of its sources, in the order they were taken, collapsed (or adds it to
   the top of the stack the sources already share).
 
-Where the photos don't reach, the sheet shows a checkerboard and the merged photo is white (in Develop, thumbnails and
+Without Fill Edges, where the photos don't reach, the sheet shows a checkerboard and the merged photo is white (in Develop, thumbnails and
 exports). When a photo has no lens profile to apply, the sheet shows Lightroom's notice: for the best results, apply the
 lens's profile in Develop's Lens Corrections before merging. Photo ▸ Photo Merge ▸ Panorama with Previous Settings
 (`⌃⇧M`, or hold Shift in the menu) merges straight away with the last options used, without the sheet; Perspective
@@ -939,7 +942,7 @@ selects the result when it's done. The panorama is a Linear DNG (16-bit floating
 up to Lightroom's limits (65,000 pixels on a side, 512 megapixels), saved beside the earliest photo as `<name>-Pano.dng`
 (`-Pano-2`, `-Pano-3`… when that name is taken). It takes the earliest photo's capture date, camera and shooting
 details, and every source's keywords; its rating, flag and label start empty. Only RAW photos from one camera, all the
-same size, can be merged. Lightroom's Fill Edges isn't available yet.
+same size, can be merged.
 
 ### HDR Panorama
 

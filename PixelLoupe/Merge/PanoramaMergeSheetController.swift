@@ -3,7 +3,7 @@ import AppKit
 /// Photo ▸ Photo Merge ▸ Panorama's sheet, laid out like the HDR sheet with Lightroom's Panorama
 /// Merge Preview options: the merged panorama on the left, updating as the options change, and on
 /// the right how many photos merged, the projection (Spherical, Cylindrical, Perspective), Boundary
-/// Warp, Auto Crop, Auto Settings, Create Stack and Lightroom's lens profile notice. Merge and Cancel
+/// Warp, Fill Edges, Auto Crop, Auto Settings, Create Stack and Lightroom's lens profile notice. Merge and Cancel
 /// sit centered below. Clicking the panorama zooms to 100% (see ``MergePreviewView``). For HDR Panorama
 /// it's the HDR Panorama Merge Preview, each bracket set merged as one photo.
 final class PanoramaMergeSheetController: NSWindowController, NSWindowDelegate {
@@ -28,6 +28,7 @@ final class PanoramaMergeSheetController: NSWindowController, NSWindowDelegate {
     let perspectiveNote = NSTextField(wrappingLabelWithString: "Perspective can’t show photos spanning more than \(Int(PanoramaProjection.perspectiveLimit))°.")
     let boundaryWarpSlider = MonochromeSlider(value: 0, minValue: 0, maxValue: 100, target: nil, action: nil)
     let boundaryWarpField = NSTextField()
+    let fillEdgesCheckbox = NSButton(checkboxWithTitle: "Fill Edges", target: nil, action: nil)
     let autoCropCheckbox = NSButton(checkboxWithTitle: "Auto Crop", target: nil, action: nil)
     let autoSettingsCheckbox = NSButton(checkboxWithTitle: "Auto Settings", target: nil, action: nil)
     let createStackCheckbox = NSButton(checkboxWithTitle: "Create Stack", target: nil, action: nil)
@@ -162,10 +163,11 @@ final class PanoramaMergeSheetController: NSWindowController, NSWindowDelegate {
         let warpRow = NSStackView(views: [boundaryWarpSlider, boundaryWarpField])
         warpRow.spacing = 8
 
-        for checkbox in [autoCropCheckbox, autoSettingsCheckbox, createStackCheckbox] {
+        for checkbox in [fillEdgesCheckbox, autoCropCheckbox, autoSettingsCheckbox, createStackCheckbox] {
             checkbox.target = self
             checkbox.action = #selector(optionChanged(_:))
         }
+        fillEdgesCheckbox.toolTip = "Fills the edges the photos don't reach with what's around them."
         autoCropCheckbox.toolTip = "Crops away the edges the photos don't reach. The crop can be changed in Develop."
         autoSettingsCheckbox.toolTip = "Starts the panorama with automatic tone settings."
         createStackCheckbox.toolTip = "Stacks the panorama on top of the photos it was made from."
@@ -189,7 +191,7 @@ final class PanoramaMergeSheetController: NSWindowController, NSWindowDelegate {
         let separators = [separator(), separator(), separator()]
         let options = NSStackView(views: [
             heading, statusLabel, separators[0], projectionLabel, sphericalButton, cylindricalButton, perspectiveButton,
-            perspectiveNote, warpLabel, warpRow, separators[1], autoCropCheckbox, autoSettingsCheckbox, separators[2],
+            perspectiveNote, warpLabel, warpRow, separators[1], fillEdgesCheckbox, autoCropCheckbox, autoSettingsCheckbox, separators[2],
             createStackCheckbox, lensNoticeRow,
         ])
         options.orientation = .vertical
@@ -254,12 +256,15 @@ final class PanoramaMergeSheetController: NSWindowController, NSWindowDelegate {
         perspectiveNote.isHidden = allowsPerspective
         boundaryWarpSlider.integerValue = options.boundaryWarp
         boundaryWarpField.integerValue = options.boundaryWarp
-        autoCropCheckbox.state = options.autoCrop ? .on : .off
+        fillEdgesCheckbox.state = options.fillEdges ? .on : .off
+        // Fill Edges leaves nothing to crop: Auto Crop shows off, but keeps its choice for when Fill Edges is off.
+        autoCropCheckbox.state = options.cropsToCovered ? .on : .off
         autoSettingsCheckbox.state = options.autoSettings ? .on : .off
         createStackCheckbox.state = options.createsStack ? .on : .off
-        for control in [boundaryWarpSlider, boundaryWarpField, autoCropCheckbox, autoSettingsCheckbox, createStackCheckbox] as [NSControl] {
+        for control in [boundaryWarpSlider, boundaryWarpField, fillEdgesCheckbox, autoCropCheckbox, autoSettingsCheckbox, createStackCheckbox] as [NSControl] {
             control.isEnabled = enabled
         }
+        autoCropCheckbox.isEnabled = enabled && !options.fillEdges
         mergeButton.isEnabled = enabled
     }
 
@@ -386,14 +391,16 @@ final class PanoramaMergeSheetController: NSWindowController, NSWindowDelegate {
     }
 
     @objc private func optionChanged(_ sender: Any?) {
-        let cropChanged = (autoCropCheckbox.state == .on) != options.autoCrop
-        options.autoCrop = autoCropCheckbox.state == .on
+        let shapeChanged = sender as AnyObject? === autoCropCheckbox || sender as AnyObject? === fillEdgesCheckbox
+        // Auto Crop shows off while Fill Edges is on, so only a click on it changes it.
+        if sender as AnyObject? === autoCropCheckbox { options.autoCrop = autoCropCheckbox.state == .on }
+        options.fillEdges = fillEdgesCheckbox.state == .on
         options.autoSettings = autoSettingsCheckbox.state == .on
         options.createsStack = createStackCheckbox.state == .on
         updateControls()
         // Create Stack doesn't change how the merge looks.
         guard sender as AnyObject? !== createStackCheckbox else { return }
-        if cropChanged { previewView.zoomToFit() }
+        if shapeChanged { previewView.zoomToFit() }
         refreshPreview(debounce: false)
     }
 
