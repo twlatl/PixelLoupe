@@ -3,13 +3,17 @@ import AppKit
 /// The Lighting tool's panel (RAW-212): lighting effects stacked as sections in one scrolling column. Each section is
 /// its own view controller with its own switch, status and changes; the Develop view controller talks to them directly.
 final class LightingPanelViewController: NSViewController {
+    let portraitLighting = PortraitLightingPanelViewController()
     let rimLight = RimLightPanelViewController()
 
     /// The sections, top to bottom.
-    private var sections: [NSViewController] { [rimLight] }
+    private var sections: [NSViewController] { [portraitLighting, rimLight] }
 
     var isEditingEnabled = false {
-        didSet { rimLight.isEditingEnabled = isEditingEnabled }
+        didSet {
+            portraitLighting.isEditingEnabled = isEditingEnabled
+            rimLight.isEditingEnabled = isEditingEnabled
+        }
     }
 
     override func loadView() {

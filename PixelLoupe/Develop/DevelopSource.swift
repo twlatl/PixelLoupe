@@ -340,6 +340,13 @@ nonisolated enum AdjustmentPipeline {
             : nil
         image = LocalAdjustmentRenderer.apply(adjustments.masks, to: image, subject: subject, scale: scale)
 
+        // Portrait Lighting needs the people (refined onto the photo's edges), found and waited for the same way; before
+        // Rim Light, so a rim lights the people after Stage has darkened what's behind them.
+        if adjustments.portraitLighting.isActive {
+            let people = source.subjectMattes.refinedMatte(for: source, adjustments: adjustments, kind: .person, waiting: !Thread.isMainThread)
+            image = PortraitLightingRenderer.apply(adjustments.portraitLighting, to: image, people: people?.image)
+        }
+
         // Rim Light lights the subject's edges, so it needs the subject too (refined onto the photo's edges), found and
         // waited for the same way; on the whole frame, before the crop.
         if adjustments.rimLight.isActive {

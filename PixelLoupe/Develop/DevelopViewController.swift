@@ -103,7 +103,10 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     private var keyMonitor: Any?
     private var adjustments = PhotoAdjustments() {
         // However the settings change (an edit, undo, another photo, a preset), the Rim Light panel shows them.
-        didSet { if adjustments.rimLight != oldValue.rimLight { lightingPanel.rimLight.display(adjustments.rimLight) } }
+        didSet {
+            if adjustments.portraitLighting != oldValue.portraitLighting { lightingPanel.portraitLighting.display(adjustments.portraitLighting) }
+            if adjustments.rimLight != oldValue.rimLight { lightingPanel.rimLight.display(adjustments.rimLight) }
+        }
     }
     private var displayedPhotoID: NSManagedObjectID?
     private var loadTask: Task<Void, Never>?
@@ -253,7 +256,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         configureHistogram()
         configurePresets()
         configureLens()
-        configureRimLight()
+        configureLighting()
 
         loupeOverlay.geometry = { [weak self] in self?.geometry }
         loupeOverlay.onChange = { [weak self] in self?.metalView.needsDisplay = true }
@@ -519,7 +522,17 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         let shooting: ShootingInfo
     }
 
-    private func configureRimLight() {
+    private func configureLighting() {
+        lightingPanel.portraitLighting.display(adjustments.portraitLighting)
+        lightingPanel.portraitLighting.onChange = { [weak self] portraitLighting, isFinal, actionName in
+            guard let self, let source else { return }
+            var newValue = adjustments
+            newValue.portraitLighting = portraitLighting
+            // Keep the Adjust panel's copy current, or its next edit would undo this one.
+            panel.display(newValue, asShotWhiteBalance: source.asShotWhiteBalance, isRaw: source.isRaw)
+            adjustmentsChanged(newValue, isFinal: isFinal, actionName: actionName)
+            refreshLightingStatus()
+        }
         lightingPanel.rimLight.display(adjustments.rimLight)
         lightingPanel.rimLight.onChange = { [weak self] rimLight, isFinal, actionName in
             guard let self, let source else { return }
@@ -528,13 +541,22 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             // Keep the Adjust panel's copy current, or its next edit would undo this one.
             panel.display(newValue, asShotWhiteBalance: source.asShotWhiteBalance, isRaw: source.isRaw)
             adjustmentsChanged(newValue, isFinal: isFinal, actionName: actionName)
-            refreshRimLightStatus()
+            refreshLightingStatus()
         }
     }
 
-    /// Tells the Rim Light panel whether the photo's subject has been found (it's found when the light first renders).
-    private func refreshRimLightStatus() {
+    /// Tells the Lighting panel's sections whether the photo's people and subject have been found (they're found when
+    /// the effect first renders).
+    private func refreshLightingStatus() {
+        lightingPanel.portraitLighting.peopleStatus = source.map {
+            $0.subjectMattes.status(for: $0, adjustments: adjustments, kind: .person, refined: true)
+        }
         lightingPanel.rimLight.subjectStatus = source.map { $0.subjectMattes.status(for: $0, adjustments: adjustments, refined: true) }
+    }
+
+    private func clearLightingStatus() {
+        lightingPanel.portraitLighting.peopleStatus = nil
+        lightingPanel.rimLight.subjectStatus = nil
     }
 
     private func configureLens() {
@@ -816,7 +838,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         let cropping = state.developTool == .crop
         panel.view.isHidden = state.developTool != .adjust
         lightingPanel.view.isHidden = state.developTool != .lighting
-        if state.developTool == .lighting { refreshRimLightStatus() }
+        if state.developTool == .lighting { refreshLightingStatus() }
         presetsPanel.view.isHidden = state.developTool != .presets
         if state.developTool != .presets { endPresetPreview() }
         cropPanel.view.isHidden = !cropping
@@ -975,7 +997,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         subjectObserver = NotificationCenter.default.addObserver(forName: SubjectMatteStore.didFind, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.refreshSubjectStatus()
-                self?.refreshRimLightStatus()
+                self?.refreshLightingStatus()
                 self?.metalView.needsDisplay = true
             }
         }
@@ -1487,7 +1509,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             lensPanel.isEditingEnabled = false
             lensPanel.display(.init(), status: .unavailable, catalog: LensCatalog())
             lightingPanel.isEditingEnabled = false
-            lightingPanel.rimLight.subjectStatus = nil
+            clearLightingStatus()
             endFringePicking()
             histogramView.isEditingEnabled = false
             histogramView.histogram = nil
@@ -1523,7 +1545,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         lensContext = nil
         lensPanel.isEditingEnabled = false
         lightingPanel.isEditingEnabled = false
-        lightingPanel.rimLight.subjectStatus = nil
+        clearLightingStatus()
         showLens()
         panel.cameraModel = photo.cameraModel
         presetsPanel.photo = .init(cameraModel: photo.cameraModel)
@@ -1573,7 +1595,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             histogramView.isEditingEnabled = true
             lensPanel.isEditingEnabled = true
             lightingPanel.isEditingEnabled = true
-            refreshRimLightStatus()
+            refreshLightingStatus()
             if state.developTool == .lens { loadLensContext() }
             metalView.needsDisplay = true
 
