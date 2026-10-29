@@ -598,7 +598,7 @@ fitted or at 100%.
 
 ## Rim Light (Develop)
 
-The softbox beside Adjust opens **Rim Light**: up to three colored lights behind the subject that catch its edges, from
+The softbox beside Adjust opens **Lighting**, whose **Rim Light** section has up to three colored lights behind the subject that catch its edges, from
 Pixegen's Filter ▸ Rim Light. Switch it on to get a warm light from the upper left; each light has a color, Angle (where
 it comes from, 90° is from above), Strength, Width (how far in from the edges it reaches) and Choke (how hard its inner
 edge is), and **Add Light** puts the next one across from the last. Glow spreads some of the light into the air around

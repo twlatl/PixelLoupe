@@ -2,7 +2,7 @@ import AppKit
 
 /// The Rim Light panel (RAW-203), from Pixegen's Filter ▸ Rim Light: a switch, Glow, and up to three lights, each with a
 /// color, Angle, Strength, Width and Choke. Turning it on with no lights adds one; Add Light puts the next one across
-/// from the last.
+/// from the last. It's a section of the Lighting panel (RAW-212), which scrolls it.
 final class RimLightPanelViewController: NSViewController {
     typealias RimLight = PhotoAdjustments.RimLight
 
@@ -70,25 +70,8 @@ final class RimLightPanelViewController: NSViewController {
             view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -28).isActive = true
         }
 
-        let document = FlippedView()
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        document.addSubview(stack)
-        document.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: document.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: document.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: document.trailingAnchor),
-            stack.bottomAnchor.constraint(equalTo: document.bottomAnchor),
-        ])
-        let scrollView = NSScrollView()
-        scrollView.documentView = document
-        scrollView.hasVerticalScroller = true
-        scrollView.autohidesScrollers = true
-        scrollView.drawsBackground = false
-        scrollView.setAccessibilityIdentifier("rimLightPanel")
-        document.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor).isActive = true
-        document.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor).isActive = true
-        view = scrollView
+        stack.setAccessibilityIdentifier("rimLightPanel")
+        view = stack
         update()
     }
 

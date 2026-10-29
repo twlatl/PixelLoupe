@@ -55,8 +55,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     /// The crop when the crop tool was opened for the current photo, restored by Esc.
     private var cropSessionStart: PhotoAdjustments.Crop?
     private let adjustToolButton = NSButton()
-    private let rimLightToolButton = NSButton()
-    private let rimLightPanel = RimLightPanelViewController()
+    private let lightingToolButton = NSButton()
+    private let lightingPanel = LightingPanelViewController()
     private let presetsToolButton = NSButton()
     private let presetsPanel = PresetsPanelViewController()
     private let cropToolButton = NSButton()
@@ -103,7 +103,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     private var keyMonitor: Any?
     private var adjustments = PhotoAdjustments() {
         // However the settings change (an edit, undo, another photo, a preset), the Rim Light panel shows them.
-        didSet { if adjustments.rimLight != oldValue.rimLight { rimLightPanel.display(adjustments.rimLight) } }
+        didSet { if adjustments.rimLight != oldValue.rimLight { lightingPanel.rimLight.display(adjustments.rimLight) } }
     }
     private var displayedPhotoID: NSManagedObjectID?
     private var loadTask: Task<Void, Never>?
@@ -149,7 +149,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         addChild(panel)
         addChild(cropPanel)
         addChild(lensPanel)
-        addChild(rimLightPanel)
+        addChild(lightingPanel)
         // The panel isn't part of this view: it lives in the window's right column, shared with the
         // Library's inspector (see ``MainSplitViewController``).
         sidebarView = makeSidebar()
@@ -349,7 +349,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     private func makeSidebar() -> NSView {
         for (button, symbol, title, identifier) in [
             (adjustToolButton, "slider.horizontal.3", "Adjust", "developTool.adjust"),
-            (rimLightToolButton, "", "Rim Light", "developTool.rimLight"),
+            (lightingToolButton, "", "Lighting", "developTool.lighting"),
             (presetsToolButton, "photo.on.rectangle.angled", "Presets", "developTool.presets"),
             (cropToolButton, "crop.rotate", "Crop & Straighten (R)", "developTool.crop"),
             (lensToolButton, "camera", "Lens Corrections", "developTool.lens"),
@@ -358,7 +358,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             (historyToolButton, "clock.arrow.circlepath", "History and Snapshots", "developTool.history"),
         ] {
             button.image = symbol.isEmpty
-                ? Self.rimLightIcon(title)
+                ? Self.lightingIcon(title)
                 : NSImage(systemSymbolName: symbol, accessibilityDescription: title)?.withSymbolConfiguration(.init(pointSize: 24, weight: .regular))
             button.isBordered = false
             button.imagePosition = .imageOnly
@@ -368,7 +368,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             button.setAccessibilityLabel(title)
             button.setAccessibilityIdentifier(identifier)
         }
-        let header = NSStackView(views: [adjustToolButton, rimLightToolButton, presetsToolButton, cropToolButton, lensToolButton, maskToolButton, retouchToolButton, historyToolButton])
+        let header = NSStackView(views: [adjustToolButton, lightingToolButton, presetsToolButton, cropToolButton, lensToolButton, maskToolButton, retouchToolButton, historyToolButton])
         // Eight tools fit the narrowest inspector (366 pt) at this spacing.
         header.spacing = 12
         // Exactly as tall as the tallest icon, so the line sits 10pt below the icons and the
@@ -380,7 +380,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
 
         let sidebar = NSView()
         addChild(presetsPanel)
-        let content = [panel.view, rimLightPanel.view, presetsPanel.view, cropPanel.view, lensPanel.view, maskPanel.view, retouchPanel.view, historyPanel.view]
+        let content = [panel.view, lightingPanel.view, presetsPanel.view, cropPanel.view, lensPanel.view, maskPanel.view, retouchPanel.view, historyPanel.view]
         for view in [histogramView, header, headerLine] + content {
             view.translatesAutoresizingMaskIntoConstraints = false
             sidebar.addSubview(view)
@@ -409,7 +409,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         // the Mask, Spot Removal and History panels drew over Adjust until a tool was chosen.
         let tool = state.developTool
         panel.view.isHidden = tool != .adjust
-        rimLightPanel.view.isHidden = tool != .rimLight
+        lightingPanel.view.isHidden = tool != .lighting
         presetsPanel.view.isHidden = tool != .presets
         cropPanel.view.isHidden = tool != .crop
         lensPanel.view.isHidden = tool != .lens
@@ -422,11 +422,11 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     }
 
     @objc private func toolButtonClicked(_ sender: NSButton) {
-        state.developTool = sender === rimLightToolButton ? .rimLight : sender === presetsToolButton ? .presets : sender === cropToolButton ? .crop : sender === lensToolButton ? .lens : sender === maskToolButton ? .mask : sender === retouchToolButton ? .retouch : sender === historyToolButton ? .history : .adjust
+        state.developTool = sender === lightingToolButton ? .lighting : sender === presetsToolButton ? .presets : sender === cropToolButton ? .crop : sender === lensToolButton ? .lens : sender === maskToolButton ? .mask : sender === retouchToolButton ? .retouch : sender === historyToolButton ? .history : .adjust
     }
 
     private func updateToolButtons() {
-        for (button, tool) in [(adjustToolButton, DevelopTool.adjust), (rimLightToolButton, .rimLight), (presetsToolButton, .presets), (cropToolButton, .crop), (lensToolButton, .lens), (maskToolButton, .mask), (retouchToolButton, .retouch), (historyToolButton, .history)] {
+        for (button, tool) in [(adjustToolButton, DevelopTool.adjust), (lightingToolButton, .lighting), (presetsToolButton, .presets), (cropToolButton, .crop), (lensToolButton, .lens), (maskToolButton, .mask), (retouchToolButton, .retouch), (historyToolButton, .history)] {
             let active = state.developTool == tool
             button.contentTintColor = active ? Accent.color : .systemGray
             button.setAccessibilityValue(active ? "active" : "inactive")
@@ -434,7 +434,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     }
 
     /// The softbox (Design/RimLight-Softbox.svg), a template so it's tinted like the symbols beside it, at their size.
-    private static func rimLightIcon(_ title: String) -> NSImage? {
+    private static func lightingIcon(_ title: String) -> NSImage? {
         guard let image = NSImage(named: "RimLight")?.copy() as? NSImage else { return nil }
         image.size = NSSize(width: 26, height: 26)
         image.isTemplate = true
@@ -520,8 +520,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     }
 
     private func configureRimLight() {
-        rimLightPanel.display(adjustments.rimLight)
-        rimLightPanel.onChange = { [weak self] rimLight, isFinal, actionName in
+        lightingPanel.rimLight.display(adjustments.rimLight)
+        lightingPanel.rimLight.onChange = { [weak self] rimLight, isFinal, actionName in
             guard let self, let source else { return }
             var newValue = adjustments
             newValue.rimLight = rimLight
@@ -534,7 +534,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
 
     /// Tells the Rim Light panel whether the photo's subject has been found (it's found when the light first renders).
     private func refreshRimLightStatus() {
-        rimLightPanel.subjectStatus = source.map { $0.subjectMattes.status(for: $0, adjustments: adjustments, refined: true) }
+        lightingPanel.rimLight.subjectStatus = source.map { $0.subjectMattes.status(for: $0, adjustments: adjustments, refined: true) }
     }
 
     private func configureLens() {
@@ -815,8 +815,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         updateToolButtons()
         let cropping = state.developTool == .crop
         panel.view.isHidden = state.developTool != .adjust
-        rimLightPanel.view.isHidden = state.developTool != .rimLight
-        if state.developTool == .rimLight { refreshRimLightStatus() }
+        lightingPanel.view.isHidden = state.developTool != .lighting
+        if state.developTool == .lighting { refreshRimLightStatus() }
         presetsPanel.view.isHidden = state.developTool != .presets
         if state.developTool != .presets { endPresetPreview() }
         cropPanel.view.isHidden = !cropping
@@ -1486,8 +1486,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             lensContext = nil
             lensPanel.isEditingEnabled = false
             lensPanel.display(.init(), status: .unavailable, catalog: LensCatalog())
-            rimLightPanel.isEditingEnabled = false
-            rimLightPanel.subjectStatus = nil
+            lightingPanel.isEditingEnabled = false
+            lightingPanel.rimLight.subjectStatus = nil
             endFringePicking()
             histogramView.isEditingEnabled = false
             histogramView.histogram = nil
@@ -1522,8 +1522,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         endFringePicking()
         lensContext = nil
         lensPanel.isEditingEnabled = false
-        rimLightPanel.isEditingEnabled = false
-        rimLightPanel.subjectStatus = nil
+        lightingPanel.isEditingEnabled = false
+        lightingPanel.rimLight.subjectStatus = nil
         showLens()
         panel.cameraModel = photo.cameraModel
         presetsPanel.photo = .init(cameraModel: photo.cameraModel)
@@ -1572,7 +1572,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             presetsPanel.isEditingEnabled = true
             histogramView.isEditingEnabled = true
             lensPanel.isEditingEnabled = true
-            rimLightPanel.isEditingEnabled = true
+            lightingPanel.isEditingEnabled = true
             refreshRimLightStatus()
             if state.developTool == .lens { loadLensContext() }
             metalView.needsDisplay = true
@@ -1629,7 +1629,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         zoomClickView.isActive = { [weak self] in
             guard let self, source != nil else { return false }
             // Crop, Masking and Spot Removal use clicks on the photo themselves.
-            return [.adjust, .rimLight, .presets, .lens, .history].contains(state.developTool)
+            return [.adjust, .lighting, .presets, .lens, .history].contains(state.developTool)
         }
         zoomClickView.isZoomed = { [weak self] in self?.state.zoom.isZoomed ?? false }
         zoomClickView.onClick = { [weak self] point in
