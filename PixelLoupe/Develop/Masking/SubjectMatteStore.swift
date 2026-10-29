@@ -4,7 +4,8 @@ import CryptoKit
 import Foundation
 import Vision
 
-/// The subject Vision finds in a photo, for Subject and Background masks (see ADR 0003).
+/// The subject Vision finds in a photo, for Subject and Background masks (see ADR 0003), and the people in it, for
+/// Portrait Lighting (RAW-213).
 ///
 /// Finding it takes a moment, so it is found once per photo and kept: in memory, and on disk in the app's
 /// caches, never in the catalog. It is found on the photo after Lens Corrections, Rotate/Flip and Transform
@@ -54,8 +55,14 @@ nonisolated final class SubjectMatteStore: @unchecked Sendable {
         case finding, found, noSubject
     }
 
+    /// What's found: every foreground subject (people, pets, things) or only the people.
+    enum Kind: Sendable {
+        case subject, person
+    }
+
     let directory: URL
     private let detect: @Sendable (CGImage) -> Matte?
+    private let detectPeople: @Sendable (CGImage) -> Matte?
     private let lock = NSLock()
     private var mattes: [String: Matte] = [:]
     /// Keys most recently used last, to keep memory to a few dozen photos.
@@ -63,19 +70,21 @@ nonisolated final class SubjectMatteStore: @unchecked Sendable {
     private var finding: [String: DispatchGroup] = [:]
     private static let memoryLimit = 24
 
-    /// `detect` finds the subject in an image, or returns nil when it couldn't look (which isn't kept, so
-    /// it's tried again); Vision's by default.
-    init(directory: URL, detect: @escaping @Sendable (CGImage) -> Matte? = SubjectMatteStore.detectWithVision) {
+    /// `detect` finds the subject in an image and `detectPeople` the people, or return nil when they couldn't look
+    /// (which isn't kept, so it's tried again); Vision's by default.
+    init(directory: URL, detect: @escaping @Sendable (CGImage) -> Matte? = SubjectMatteStore.detectWithVision,
+         detectPeople: @escaping @Sendable (CGImage) -> Matte? = SubjectMatteStore.detectPeopleWithVision) {
         self.directory = directory
         self.detect = detect
+        self.detectPeople = detectPeople
     }
 
     // MARK: - Asking
 
     /// The subject of `source`'s photo with `adjustments`' geometry. Waiting finds it now if it must (off the
     /// main thread); otherwise nil until it's found in the background.
-    func matte(for source: DevelopSource, adjustments: PhotoAdjustments, waiting: Bool) -> Matte? {
-        let request = Request(source: source, adjustments: adjustments)
+    func matte(for source: DevelopSource, adjustments: PhotoAdjustments, kind: Kind = .subject, waiting: Bool) -> Matte? {
+        let request = Request(source: source, adjustments: adjustments, kind: kind)
         if let matte = remembered(request.key) { return matte }
         if waiting { return find(request) }
         Task.detached(priority: .userInitiated) { [self] in
@@ -87,8 +96,8 @@ nonisolated final class SubjectMatteStore: @unchecked Sendable {
 
     /// The subject pulled onto the photo's own edges (``GuidedMatte``), for Rim Light (RAW-203), so hair and fine
     /// edges are lit rather than the blur around them. Found after the plain matte, and kept the same way.
-    func refinedMatte(for source: DevelopSource, adjustments: PhotoAdjustments, waiting: Bool) -> Matte? {
-        let request = Request(source: source, adjustments: adjustments)
+    func refinedMatte(for source: DevelopSource, adjustments: PhotoAdjustments, kind: Kind = .subject, waiting: Bool) -> Matte? {
+        let request = Request(source: source, adjustments: adjustments, kind: kind)
         if let matte = remembered(Self.refinedKey(request)) { return matte }
         if waiting { return findRefined(request) }
         Task.detached(priority: .userInitiated) { [self] in
@@ -98,9 +107,9 @@ nonisolated final class SubjectMatteStore: @unchecked Sendable {
         return nil
     }
 
-    /// Whether the subject is known yet, for the Masking and Rim Light panels (doesn't wait, or start finding it).
-    func status(for source: DevelopSource, adjustments: PhotoAdjustments, refined: Bool = false) -> Status {
-        let request = Request(source: source, adjustments: adjustments)
+    /// Whether the subject is known yet, for the Masking and Lighting panels (doesn't wait, or start finding it).
+    func status(for source: DevelopSource, adjustments: PhotoAdjustments, kind: Kind = .subject, refined: Bool = false) -> Status {
+        let request = Request(source: source, adjustments: adjustments, kind: kind)
         guard let matte = remembered(refined ? Self.refinedKey(request) : request.key) else { return .finding }
         return matte.hasSubject ? .found : .noSubject
     }
@@ -127,13 +136,15 @@ nonisolated final class SubjectMatteStore: @unchecked Sendable {
 
     // MARK: - Finding
 
-    /// What identifies a subject: the file and the geometry it's found on.
+    /// What identifies a subject: the file, the geometry it's found on, and what's looked for.
     struct Request: Sendable {
         var url: URL
         var isSmartPreview: Bool
         var geometry: PhotoAdjustments
+        var kind: Kind
 
-        init(source: DevelopSource, adjustments: PhotoAdjustments) {
+        init(source: DevelopSource, adjustments: PhotoAdjustments, kind: Kind = .subject) {
+            self.kind = kind
             url = source.url
             isSmartPreview = source.isSmartPreview
             var geometry = PhotoAdjustments()
@@ -151,11 +162,14 @@ nonisolated final class SubjectMatteStore: @unchecked Sendable {
                 var lens: PhotoAdjustments.LensCorrections
                 var orientation: PhotoAdjustments.Orientation
                 var transform: PhotoAdjustments.Transform
+                /// Only for people, so subjects keep the keys (and files) they had before people were found.
+                var kind: String?
             }
             let encoder = JSONEncoder()
             encoder.outputFormatting = .sortedKeys
             let identity = Identity(path: url.path(percentEncoded: false), isSmartPreview: isSmartPreview,
-                                    lens: geometry.lens, orientation: geometry.orientation, transform: geometry.transform)
+                                    lens: geometry.lens, orientation: geometry.orientation, transform: geometry.transform,
+                                    kind: kind == .person ? "person" : nil)
             let data = (try? encoder.encode(identity)) ?? Data(url.path(percentEncoded: false).utf8)
             return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         }
@@ -165,7 +179,7 @@ nonisolated final class SubjectMatteStore: @unchecked Sendable {
     private func find(_ request: Request) -> Matte? {
         find(key: request.key) { [self] in
             guard let image = Self.detectionImage(for: request) else { return nil }
-            return detect(image)
+            return request.kind == .person ? detectPeople(image) : detect(image)
         }
     }
 
@@ -246,6 +260,47 @@ nonisolated final class SubjectMatteStore: @unchecked Sendable {
               let buffer = try? observation.generateScaledMaskForImage(forInstances: observation.allInstances, from: handler)
         else { return .noSubject }
         return matte(from: buffer)
+    }
+
+    /// Vision's person segmentation (the model behind Core Image's person segmentation), at its most accurate,
+    /// scaled to the image. A mask with hardly anyone in it is no person.
+    @Sendable static func detectPeopleWithVision(_ image: CGImage) -> Matte? {
+        let request = VNGeneratePersonSegmentationRequest()
+        request.qualityLevel = .accurate
+        request.outputPixelFormat = kCVPixelFormatType_OneComponent32Float
+        let handler = VNImageRequestHandler(cgImage: image)
+        do { try handler.perform([request]) } catch { return nil }
+        guard let buffer = request.results?.first?.pixelBuffer, let mask = matte(from: buffer),
+              let matte = scaled(mask, width: image.width, height: image.height) else { return nil }
+        return hasPerson(matte) ? matte : .noSubject
+    }
+
+    /// The share of the frame a person must cover to count as found.
+    static let minimumPersonShare = 0.001
+
+    /// Whether at least `minimumPersonShare` of `matte` is more person than not.
+    static func hasPerson(_ matte: Matte) -> Bool {
+        guard matte.hasSubject else { return false }
+        let covered = matte.bytes.reduce(0) { $0 + ($1 >= 128 ? 1 : 0) }
+        return Double(covered) >= Double(matte.bytes.count) * minimumPersonShare
+    }
+
+    /// `matte` resampled to `width` × `height`.
+    static func scaled(_ matte: Matte, width: Int, height: Int) -> Matte? {
+        guard matte.hasSubject, width > 0, height > 0 else { return nil }
+        if matte.width == width, matte.height == height { return matte }
+        var input = matte.bytes
+        var output = Data(count: width * height)
+        let error = input.withUnsafeMutableBytes { inputBytes in
+            output.withUnsafeMutableBytes { outputBytes in
+                var source = vImage_Buffer(data: inputBytes.baseAddress, height: vImagePixelCount(matte.height),
+                                           width: vImagePixelCount(matte.width), rowBytes: matte.width)
+                var destination = vImage_Buffer(data: outputBytes.baseAddress, height: vImagePixelCount(height),
+                                                width: vImagePixelCount(width), rowBytes: width)
+                return vImageScale_Planar8(&source, &destination, nil, vImage_Flags(kvImageHighQualityResampling))
+            }
+        }
+        return error == kvImageNoError ? Matte(width: width, height: height, bytes: output) : nil
     }
 
     /// A one-component float mask (rows from the top) as 8-bit gray.
