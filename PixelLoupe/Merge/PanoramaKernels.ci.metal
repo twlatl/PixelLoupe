@@ -31,12 +31,6 @@ float2 panoramaWarp(float3 r0, float3 r1, float3 r2, float4 camera, float4 pano,
     return float2(camera.y + offset.x, camera.w - (camera.z + offset.y));
 }
 
-/// One level of the blend: adds a photo's band of detail (its level minus the next level up,
-/// enlarged) where its mask (red) chooses it.
-float4 panoramaAddBand(sample_t total, sample_t level, sample_t coarser, sample_t mask) {
-    return total + (level - coarser) * mask.r;
-}
-
 /// The coarsest level of the blend: adds a photo's level where its mask chooses it.
 float4 panoramaAddLevel(sample_t total, sample_t level, sample_t mask) {
     return total + level * mask.r;
@@ -57,6 +51,38 @@ float4 panoramaFinish(sample_t blended, sample_t coverage, float3 fill) {
     float3 color = blended.a > 1e-4 ? max(blended.rgb / blended.a, float3(0.0)) : fill;
     float covered = clamp(coverage.r, 0.0, 1.0);
     return float4(mix(fill, color, covered), 1.0);
+}
+
+/// Halves a level of the blend pyramid: each pixel is the 6 × 6 of the finer level's around it, weighted
+/// 1 5 10 10 5 1 / 32 each way (a blur of about a pixel, then the 2 × 2 averaged). Pairs of taps are read as one
+/// bilinear sample between them, so it's 9 reads. The kernel places its own taps, so it draws the same in any graph
+/// (Core Image's blur and scaling transform didn't: the blend changed with what was drawn after it).
+float4 panoramaHalve(sampler image, destination dest) {
+    float2 center = dest.coord() * 2.0;
+    const float offsets[3] = { -5.0 / 3.0, 0.0, 5.0 / 3.0 };
+    const float weights[3] = { 6.0, 20.0, 6.0 };
+    float4 sum = float4(0.0);
+    for (int j = 0; j < 3; j++) {
+        for (int i = 0; i < 3; i++) {
+            sum += weights[i] * weights[j] * image.sample(image.transform(center + float2(offsets[i], offsets[j])));
+        }
+    }
+    return sum / 1024.0;
+}
+
+/// One level of the blend: adds a photo's band of detail (its level minus the next level up, enlarged here, bilinear
+/// at each pixel's center, rather than by a transform, which Core Image drew differently in different graphs) where
+/// its mask (red) chooses it.
+float4 panoramaAddBandUp(sampler total, sampler level, sampler coarser, sampler mask, destination dest) {
+    float2 p = dest.coord();
+    float4 detail = level.sample(level.transform(p)) - coarser.sample(coarser.transform(p * 0.5));
+    return total.sample(total.transform(p)) + detail * mask.sample(mask.transform(p)).r;
+}
+
+/// Collapsing the blend: a band plus the level above it enlarged (bilinear at each pixel's center).
+float4 panoramaAddUp(sampler coarser, sampler band, destination dest) {
+    float2 p = dest.coord();
+    return coarser.sample(coarser.transform(p * 0.5)) + band.sample(band.transform(p));
 }
 
 /// Boundary Warp: each pixel takes the panorama's pixel the warp's map (red, green: fractions of the
