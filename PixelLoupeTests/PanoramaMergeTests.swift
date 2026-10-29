@@ -288,6 +288,45 @@ struct PanoramaMergeTests {
 
     // MARK: Seams, gains, crops and warps
 
+    @Test func theBlendDoesntDependOnWhatsDrawnAfterIt() {
+        // Two textured photos overlapping in the middle, on a canvas whose size halves to fractions. Drawn as it is
+        // and through a kernel that changes nothing (adding a clear image), the blend must be the same.
+        let width = 355, height = 114
+        let canvas = CGRect(x: 0, y: 0, width: width, height: height)
+        func image(_ value: (Int, Int) -> SIMD4<Float>) -> CIImage {
+            var pixels = [Float](repeating: 0, count: width * height * 4)
+            for y in 0..<height {
+                for x in 0..<width {
+                    let v = value(x, y)
+                    for c in 0..<4 { pixels[(y * width + x) * 4 + c] = v[c] }
+                }
+            }
+            return CIImage(bitmapData: pixels.withUnsafeBytes { Data($0) }, bytesPerRow: width * 16,
+                           size: canvas.size, format: .RGBAf, colorSpace: nil)
+        }
+        func texture(_ x: Int, _ y: Int) -> Float { 0.2 + 0.6 * Float((x * 7 + y * 13) % 17) / 17 }
+        let photos = [(0, 230), (120, width)].map { range in
+            let covers = { (x: Int, y: Int) in x >= range.0 && x < range.1 && y > 6 && y < height - 9 }
+            return PanoramaMerger.BlendPhoto(
+                image: image { x, y in covers(x, y) ? SIMD4(texture(x, y), texture(y, x), 0.5, 1) : .zero },
+                mask: image { x, _ in SIMD4(x >= range.0 && x < range.1 && (range.0 == 0 ? x < 175 : x >= 175) ? 1 : 0, 0, 0, 1) },
+                feather: image { x, _ in SIMD4(range.0 == 0 ? Float(230 - x) / 230 : Float(x - 120) / 235, 0, 0, 1) }
+            )
+        }
+        let blended = PanoramaMerger.blend(photos, canvas: canvas, levels: 6)
+        let passedOn = PanoramaKernels.add.apply(extent: canvas, arguments: [blended, PanoramaMerger.blank(canvas)])!
+        let context = CIContext(options: [.workingColorSpace: PanoramaMerger.colorSpace, .cacheIntermediates: false])
+        func render(_ image: CIImage) -> [Float] {
+            var pixels = [Float](repeating: 0, count: width * height * 4)
+            context.render(image, toBitmap: &pixels, rowBytes: width * 16, bounds: canvas, format: .RGBAf, colorSpace: nil)
+            return pixels
+        }
+        let direct = render(blended), after = render(passedOn)
+        let worst = zip(direct, after).map { abs($0 - $1) }.max() ?? 0
+        // To a step or so of the half floats Core Image keeps its intermediates in.
+        #expect(worst < 1e-3, "worst difference \(worst)")
+    }
+
     @Test func seamsGoAroundWhatMoved() {
         // Two photos overlapping in the middle third; something sits in the overlap in the first only.
         let width = 90, height = 30

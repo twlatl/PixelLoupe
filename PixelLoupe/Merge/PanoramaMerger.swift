@@ -734,13 +734,16 @@ nonisolated final class PanoramaMerger {
         var extents = [canvas]
         for _ in 0..<levels {
             let last = extents[extents.count - 1]
-            extents.append(CGRect(x: last.minX / 2, y: last.minY / 2, width: last.width / 2, height: last.height / 2))
+            extents.append(CGRect(x: last.minX / 2, y: last.minY / 2, width: last.width / 2, height: last.height / 2).integral)
         }
-        func down(_ image: CIImage, to extent: CGRect) -> CIImage {
-            image.applyingGaussianBlur(sigma: 1).transformed(by: CGAffineTransform(scaleX: 0.5, y: 0.5)).cropped(to: extent)
-        }
-        func up(_ image: CIImage, to extent: CGRect) -> CIImage {
-            image.transformed(by: CGAffineTransform(scaleX: 2, y: 2)).cropped(to: extent)
+        func down(_ image: CIImage, to extent: CGRect) -> CIImage { halved(image).cropped(to: extent) }
+        // Kernels reading a coarser level at half the coordinates: its rect is half the output's, and a pixel more.
+        func upROI(coarserIndex: Int32) -> CIKernelROICallback {
+            { index, rect in
+                index == coarserIndex
+                    ? CGRect(x: rect.minX / 2, y: rect.minY / 2, width: rect.width / 2, height: rect.height / 2).insetBy(dx: -1, dy: -1)
+                    : rect
+            }
         }
         var bands = extents.map { blank($0) }
         for photo in photos {
@@ -748,8 +751,10 @@ nonisolated final class PanoramaMerger {
             var mask = photo.mask
             for level in 0..<levels {
                 let next = down(image, to: extents[level + 1])
-                let detail = up(next, to: extents[level])
-                bands[level] = PanoramaKernels.addBand.apply(extent: extents[level], arguments: [bands[level], image, detail, mask]) ?? bands[level]
+                bands[level] = PanoramaKernels.addBandUp.apply(
+                    extent: extents[level], roiCallback: upROI(coarserIndex: 2),
+                    arguments: [bands[level], image, next, mask]
+                ) ?? bands[level]
                 image = next
                 if level + 1 < levels { mask = down(mask, to: extents[level + 1]) }
             }
@@ -759,9 +764,21 @@ nonisolated final class PanoramaMerger {
         }
         var result = bands[levels]
         for level in stride(from: levels - 1, through: 0, by: -1) {
-            result = PanoramaKernels.add.apply(extent: extents[level], arguments: [up(result, to: extents[level]), bands[level]]) ?? result
+            result = PanoramaKernels.addUp.apply(
+                extent: extents[level], roiCallback: upROI(coarserIndex: 0), arguments: [result, bands[level]]
+            ) ?? result
         }
         return result
+    }
+
+    /// `image` at half size for the blend's pyramid (see `panoramaHalve`). Beyond its edges it repeats them, so every
+    /// level is defined wherever a kernel reads.
+    static func halved(_ image: CIImage) -> CIImage {
+        let extent = image.extent
+        let half = CGRect(x: extent.minX / 2, y: extent.minY / 2, width: extent.width / 2, height: extent.height / 2).integral
+        return PanoramaKernels.halve.apply(extent: half, roiCallback: { _, rect in
+            CGRect(x: rect.minX * 2, y: rect.minY * 2, width: rect.width * 2, height: rect.height * 2).insetBy(dx: -3, dy: -3)
+        }, arguments: [image.clampedToExtent()]) ?? image
     }
 
     /// `image` bent by Boundary Warp's map.
@@ -866,11 +883,13 @@ nonisolated final class PanoramaMerger {
 /// The Core Image kernels in PanoramaKernels.ci.metal.
 nonisolated enum PanoramaKernels {
     static let warp = load(name: "panoramaWarp") { try CIWarpKernel(functionName: $0, fromMetalLibraryData: $1) }
-    static let addBand = color("panoramaAddBand")
     static let addLevel = color("panoramaAddLevel")
     static let add = color("panoramaAdd")
     static let coverage = color("panoramaCoverage")
     static let finish = color("panoramaFinish")
+    static let halve = load(name: "panoramaHalve") { try CIKernel(functionName: $0, fromMetalLibraryData: $1) }
+    static let addBandUp = load(name: "panoramaAddBandUp") { try CIKernel(functionName: $0, fromMetalLibraryData: $1) }
+    static let addUp = load(name: "panoramaAddUp") { try CIKernel(functionName: $0, fromMetalLibraryData: $1) }
     static let boundaryWarp = load(name: "panoramaBoundaryWarp") { try CIKernel(functionName: $0, fromMetalLibraryData: $1) }
 
     private static let library: Data? = Bundle.main.url(forResource: "default", withExtension: "metallib")
