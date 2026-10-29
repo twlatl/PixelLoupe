@@ -12,15 +12,18 @@ nonisolated struct ShootingInfo: Equatable, Sendable {
     var focalLength35mm: Double?
     /// Focus distance in meters.
     var subjectDistance: Double?
+    /// Exposure compensation in EV (a bracket's offsets, for HDR Panorama).
+    var exposureBias: Double?
 
     init(iso: Int? = nil, focalLength: Double? = nil, aperture: Double? = nil, exposureTime: Double? = nil,
-         focalLength35mm: Double? = nil, subjectDistance: Double? = nil) {
+         focalLength35mm: Double? = nil, subjectDistance: Double? = nil, exposureBias: Double? = nil) {
         self.iso = iso
         self.focalLength = focalLength
         self.aperture = aperture
         self.exposureTime = exposureTime
         self.focalLength35mm = focalLength35mm
         self.subjectDistance = subjectDistance
+        self.exposureBias = exposureBias
     }
 
     /// The camera's crop factor, when the file records both focal lengths.
@@ -38,6 +41,7 @@ nonisolated struct ShootingInfo: Equatable, Sendable {
         exposureTime = exif[kCGImagePropertyExifExposureTime] as? Double
         focalLength35mm = (exif[kCGImagePropertyExifFocalLenIn35mmFilm] as? Double).flatMap { $0 > 0 ? $0 : nil }
         subjectDistance = (exif[kCGImagePropertyExifSubjectDistance] as? Double).flatMap { $0 > 0 ? $0 : nil }
+        exposureBias = exif[kCGImagePropertyExifExposureBiasValue] as? Double
     }
 
     /// Reads the settings without decoding the photo.
