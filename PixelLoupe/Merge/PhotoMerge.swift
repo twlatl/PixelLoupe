@@ -1,18 +1,20 @@
 import CoreData
 import Foundation
 
-/// Photo ▸ Photo Merge's kinds of merge. What the catalog does with the result is the same for both;
-/// these are the differences.
+/// Photo ▸ Photo Merge's kinds of merge. What the catalog does with the result is the same for all of
+/// them; these are the differences.
 nonisolated enum PhotoMergeKind: Sendable {
     case hdr
     case panorama
+    case hdrPanorama
 
     /// What the merged file adds to the earliest photo's name, as Lightroom names them:
-    /// `IMG_0001-HDR.dng`, `IMG_0001-Pano.dng`.
+    /// `IMG_0001-HDR.dng`, `IMG_0001-Pano.dng`, `IMG_0001-HDR-Pano.dng`.
     var suffix: String {
         switch self {
         case .hdr: "HDR"
         case .panorama: "Pano"
+        case .hdrPanorama: "HDR-Pano"
         }
     }
 
@@ -21,6 +23,7 @@ nonisolated enum PhotoMergeKind: Sendable {
         switch self {
         case .hdr: "Merging HDR"
         case .panorama: "Merging Panorama"
+        case .hdrPanorama: "Merging HDR Panorama"
         }
     }
 
@@ -28,6 +31,7 @@ nonisolated enum PhotoMergeKind: Sendable {
         switch self {
         case .hdr: "Cancel HDR Merge"
         case .panorama: "Cancel Panorama Merge"
+        case .hdrPanorama: "Cancel HDR Panorama Merge"
         }
     }
 }
@@ -145,15 +149,17 @@ nonisolated enum PanoramaMergeRunner {
     /// Merges `sources` and writes the DNG to `destination` and its thumbnail, with the merged
     /// photo's starting Develop settings. Perspective falls back to Spherical for photos it can't
     /// show. `progress` gets the fraction done. Cancelling stops it before anything is written.
+    /// With `brackets` (HDR Panorama: `sources` as ``HDRBrackets`` sets) each set is merged as one photo,
+    /// and the counts are of sets.
     @concurrent
     static func run(
-        sources: [PhotoMergeSource], options: PanoramaMergeOptions, destination: URL, thumbnailDirectory: URL,
-        progress: @escaping @Sendable (Double) -> Void = { _ in }
+        sources: [PhotoMergeSource], brackets: [[PhotoMergeSource]]? = nil, options: PanoramaMergeOptions,
+        destination: URL, thumbnailDirectory: URL, progress: @escaping @Sendable (Double) -> Void = { _ in }
     ) async throws -> Result {
         let result: PanoramaMergeResult, adjustments: PhotoAdjustments, metadata: DNGMetadata
         let mergedCount: Int, referenceURL: URL
         do {
-            let merger = try PanoramaMerger(sources: sources)
+            let merger = try brackets.map { try PanoramaMerger(brackets: $0) } ?? PanoramaMerger(sources: sources)
             try Task.checkCancellation()
             progress(0.1)
             var options = options
@@ -182,7 +188,7 @@ nonisolated enum PanoramaMergeRunner {
             id: id, url: destination, referenceURL: referenceURL, stackOrder: taken.map(\.element.url),
             pixelWidth: result.image.width, pixelHeight: result.image.height, fileSize: fileSize, adjustments: adjustments
         )
-        return Result(output: output, mergedCount: mergedCount, photoCount: sources.count)
+        return Result(output: output, mergedCount: mergedCount, photoCount: brackets?.count ?? sources.count)
     }
 }
 

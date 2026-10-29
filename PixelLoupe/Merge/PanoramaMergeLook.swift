@@ -38,12 +38,13 @@ actor PanoramaMergePreviewer {
     private var cached: (key: Key, url: URL, result: PanoramaMergeResult, scale: CGFloat)?
     private var settings: [SettingsKey: PhotoAdjustments] = [:]
 
-    init(sources: [PhotoMergeSource]) throws {
-        merger = try PanoramaMerger(sources: sources)
+    /// With `brackets` (HDR Panorama), each set is merged as one photo, and the counts are of sets.
+    init(sources: [PhotoMergeSource], brackets: [[PhotoMergeSource]]? = nil) throws {
+        merger = try brackets.map { try PanoramaMerger(brackets: $0) } ?? PanoramaMerger(sources: sources)
         lensWarning = merger.lensWarning
         allowsPerspective = merger.allowsPerspective
         mergedCount = merger.mergedCount
-        photoCount = sources.count
+        photoCount = brackets?.count ?? sources.count
         directory = FileManager.default.temporaryDirectory
             .appending(path: "PixelLoupe-PanoramaPreview-\(UUID().uuidString)", directoryHint: .isDirectory)
     }

@@ -654,8 +654,8 @@ struct PanoramaCatalogTests {
         let ids: [NSManagedObjectID]
         var editing: PhotoEditing { PhotoEditing(store: store) }
 
-        init(stops: [Double]? = nil) async throws {
-            panorama = try SyntheticPanorama(stops: stops)
+        init(stops: [Double]? = nil, bracket: [Double]? = nil) async throws {
+            panorama = try SyntheticPanorama(stops: stops, bracket: bracket, brightness: bracket == nil ? 1 : 4)
             store = try CatalogStore.inMemory(
                 info: Fixtures.referencedInfo, packageURL: panorama.directory.url.appending(path: "Test.pixelloupe")
             )
@@ -737,6 +737,83 @@ struct PanoramaCatalogTests {
         let stack = try #require(merged.stack)
         #expect(stack.isCollapsed)
         #expect(stack.orderedPhotos.map(\.fileName) == ["PANO_0-Pano.dng", "PANO_0.dng", "PANO_1.dng", "PANO_2.dng", "PANO_3.dng"])
+    }
+
+    // MARK: HDR Panorama
+
+    /// Every label's text in `view`, for reading an alert.
+    private static func text(in view: NSView) -> String {
+        ((view as? NSTextField)?.stringValue ?? "") + view.subviews.map { text(in: $0) }.joined(separator: "\n")
+    }
+
+    private static func button(_ title: String, in view: NSView) -> NSButton? {
+        if let button = view as? NSButton, button.title == title { return button }
+        return view.subviews.lazy.compactMap { button(title, in: $0) }.first
+    }
+
+    @Test func hdrPanoramaMergesBracketSetsFromTheSheet() async throws {
+        let setup = try await Setup(bracket: [-2, 0, 2])
+        let controller = CatalogWindowController(store: setup.store)
+        defer { controller.close() }
+        controller.showWindow(nil)
+        let window = try #require(controller.window)
+        var options = PanoramaMergeOptions()
+        options.createsStack = true
+        options.autoSettings = false
+        options.save()
+        defer { Defaults.store.removeObject(forKey: "PanoramaMergeOptions") }
+
+        controller.state.selectedPhotoIDs = setup.ids
+        controller.photoMergeHDRPanorama(nil)
+        await controller.bracketTask?.value
+        let sheet = try #require(controller.mergeSheet as? PanoramaMergeSheetController)
+        #expect(window.attachedSheet === sheet.window)
+        #expect(sheet.window?.title == "HDR Panorama Merge Preview")
+        #expect(sheet.brackets?.count == 4 && sheet.brackets?.allSatisfy { $0.count == 3 } == true)
+        for _ in 0..<600 where !sheet.mergeButton.isEnabled { try await Task.sleep(for: .milliseconds(100)) }
+        #expect(sheet.statusLabel.stringValue == "All 4 bracket sets merged")
+
+        sheet.merge(nil)
+        #expect(controller.state.mergeKind == .hdrPanorama)
+        let task = try #require(controller.mergeTask)
+        await task.value
+        let mergedID = try #require(controller.state.selectedPhotoIDs.first)
+        let merged = setup.photo(mergedID)
+        #expect(merged.fileName == "PANO_0_0-HDR-Pano.dng")
+        // Every photo stacks under it, in the order they were taken.
+        let stack = try #require(merged.stack)
+        let photos = (0..<4).flatMap { i in (0..<3).map { "PANO_\(i)_\($0).dng" } }
+        #expect(stack.orderedPhotos.map(\.fileName) == ["PANO_0_0-HDR-Pano.dng"] + photos)
+        #expect(setup.editing.mergeDestination(for: setup.ids, kind: .hdrPanorama)?.lastPathComponent == "PANO_0_0-HDR-Pano-2.dng")
+    }
+
+    @Test func photosThatArentBracketSetsOfferAPlainPanorama() async throws {
+        let setup = try await Setup()
+        let controller = CatalogWindowController(store: setup.store)
+        defer { controller.close() }
+        controller.showWindow(nil)
+        let window = try #require(controller.window)
+        controller.state.selectedPhotoIDs = setup.ids
+        controller.photoMergeHDRPanorama(nil)
+        await controller.bracketTask?.value
+        // Lightroom's alert: one exposure per position isn't a bracket.
+        let alert = try #require(window.attachedSheet?.contentView)
+        let text = Self.text(in: alert)
+        #expect(text.contains("Unable To Detect HDR Exposure Bracket Size") && text.contains("Merge To Non-HDR Panorama Instead?"))
+        #expect(controller.mergeSheet == nil)
+        try #require(Self.button("Yes", in: alert)).performClick(nil)
+        for _ in 0..<50 where controller.mergeSheet == nil { try await Task.sleep(for: .milliseconds(20)) }
+        let sheet = try #require(controller.mergeSheet as? PanoramaMergeSheetController)
+        #expect(sheet.window?.title == "Panorama Merge Preview" && sheet.brackets == nil)
+        sheet.cancel(nil)
+
+        // Cancel does nothing.
+        controller.photoMergeHDRPanorama(nil)
+        await controller.bracketTask?.value
+        let again = try #require(window.attachedSheet?.contentView)
+        try #require(Self.button("Cancel", in: again)).performClick(nil)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(controller.mergeSheet == nil && controller.mergeTask == nil && window.attachedSheet == nil)
     }
 
     @Test func sheetShowsTheOptionsAndHowManyPhotosMerged() async throws {
