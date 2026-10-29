@@ -45,10 +45,19 @@ nonisolated struct PhotoMergeSource: Sendable, Equatable {
     var lensModel: String? = nil
     var focalLength = 0.0
     var captureDate: Date? = nil
+    /// Exposure compensation in EV, or nil when unknown (see ``readingExposureBias()``).
+    var exposureBias: Double? = nil
     /// The photo's Lens Corrections in Develop: a panorama applies their lens profile before merging.
     var lensCorrections = PhotoAdjustments.LensCorrections()
 
     var name: String { url.lastPathComponent }
+
+    /// The source with its exposure compensation read from the file (which the catalog doesn't keep).
+    func readingExposureBias() -> PhotoMergeSource {
+        var source = self
+        source.exposureBias = ShootingInfo.read(from: url).exposureBias
+        return source
+    }
 
     /// The camera, as the merges compare it.
     var camera: String { "\(make ?? "")|\(model ?? "")".lowercased() }

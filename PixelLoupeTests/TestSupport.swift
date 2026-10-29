@@ -45,7 +45,8 @@ enum Fixtures {
         model: String? = "EOS R5",
         lens: String? = "RF24-70mm F2.8 L IS USM",
         keywords: [String] = [],
-        gps: (latitude: Double, longitude: Double, altitude: Double?)? = nil
+        gps: (latitude: Double, longitude: Double, altitude: Double?)? = nil,
+        exif extraEXIF: [CFString: Any] = [:]
     ) throws -> URL {
         let context = CGContext(
             data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
@@ -60,6 +61,7 @@ enum Fixtures {
         if let captureDate { exif[kCGImagePropertyExifDateTimeOriginal] = captureDate }
         if let offset { exif[kCGImagePropertyExifOffsetTimeOriginal] = offset }
         if let lens { exif[kCGImagePropertyExifLensModel] = lens }
+        exif.merge(extraEXIF) { $1 }
         var tiff: [CFString: Any] = [:]
         if let make { tiff[kCGImagePropertyTIFFMake] = make }
         if let model { tiff[kCGImagePropertyTIFFModel] = model }
