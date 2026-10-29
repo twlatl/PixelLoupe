@@ -97,5 +97,31 @@ float4 panoramaBoundaryWarp(sampler panorama, sampler map, float4 size, destinat
     return panorama.sample(panorama.transform(source));
 }
 
+/// Fill Edges at any resolution (see PanoramaFill.Field): each pixel takes what the matches of the solved pixels
+/// around it copy there from `color`, offsets scaled to `color`'s resolution, weighted by how well they match and
+/// how near they are. `field` holds each solved pixel's match: the copied patch's center (in solved pixels, from the
+/// bottom left), its weight, and 1 where there is one. `scale` is (output pixels per solved pixel in x and y, the
+/// field's width and height); `origin` is the output's origin.
+float4 panoramaFillReconstruct(sampler color, sampler field, float4 scale, float2 origin, destination dest) {
+    float2 local = (dest.coord() - origin) / scale.xy;
+    float2 base = floor(local);
+    float3 sum = float3(0.0);
+    float total = 0.0;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            float2 center = base + float2(dx, dy) + 0.5;
+            if (center.x < 0.0 || center.y < 0.0 || center.x > scale.z || center.y > scale.w) { continue; }
+            float4 entry = field.sample(field.transform(center));
+            if (entry.a < 0.5) { continue; }
+            float2 offset = local - center;
+            float w = entry.b * exp(-dot(offset, offset) / 0.72);
+            float2 source = dest.coord() + (entry.rg - center) * scale.xy;
+            sum += w * color.sample(color.transform(source)).rgb;
+            total += w;
+        }
+    }
+    return float4(total > 0.0 ? sum / total : float3(0.0), 1.0);
+}
+
 }
 }
