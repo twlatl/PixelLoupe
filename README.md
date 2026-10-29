@@ -596,6 +596,15 @@ Feather and Highlights, and Highlight Priority, Color Priority and Paint Overlay
 Amount, Size and Roughness; each photo has its own grain pattern, and the size is in full-size pixels, so it looks the same
 fitted or at 100%.
 
+## Portrait Lighting (Develop)
+
+The **Lighting** tool's top section is **Portrait Lighting**: switch it on and pick an effect, with **Intensity** for
+how strong it is. **Stage** puts the people in the photo on black (Intensity takes the background from the photo to
+black) and **Stage Mono** does the same with them in black and white. It works on the people Vision finds (not pets or
+things, as Subject masks do), pulled onto the photo's own edges; until they're found the panel says so, and a photo with
+no one in it is left alone. Portrait Lighting is applied before Rim Light, so a rim can light someone on a Stage. It's
+copied by Copy and Sync Settings and saved in presets (as PixelLoupe's own setting, which Lightroom ignores).
+
 ## Rim Light (Develop)
 
 The softbox beside Adjust opens **Lighting**, whose **Rim Light** section has up to three colored lights behind the subject that catch its edges, from
