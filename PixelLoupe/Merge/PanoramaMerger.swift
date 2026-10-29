@@ -891,6 +891,7 @@ nonisolated enum PanoramaKernels {
     static let addBandUp = load(name: "panoramaAddBandUp") { try CIKernel(functionName: $0, fromMetalLibraryData: $1) }
     static let addUp = load(name: "panoramaAddUp") { try CIKernel(functionName: $0, fromMetalLibraryData: $1) }
     static let boundaryWarp = load(name: "panoramaBoundaryWarp") { try CIKernel(functionName: $0, fromMetalLibraryData: $1) }
+    static let fillReconstruct = load(name: "panoramaFillReconstruct") { try CIKernel(functionName: $0, fromMetalLibraryData: $1) }
 
     private static let library: Data? = Bundle.main.url(forResource: "default", withExtension: "metallib")
         .flatMap { try? Data(contentsOf: $0) }
