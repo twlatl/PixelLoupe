@@ -45,6 +45,8 @@ nonisolated final class DevelopSource {
     private var redEyeFilters: (scale: CGFloat, filters: [CIFilter])?
     /// Where Subject and Background masks find the photo's subject.
     var subjectMattes = SubjectMatteStore.shared
+    /// Where Portrait Lighting's Studio and Contour find the photo's faces.
+    var faces = FaceStore.shared
 
     private struct RawDefaults {
         var neutralTemperature: Float
@@ -339,6 +341,22 @@ nonisolated enum AdjustmentPipeline {
             ? source.subjectMattes.matte(for: source, adjustments: adjustments, waiting: !Thread.isMainThread)?.image
             : nil
         image = LocalAdjustmentRenderer.apply(adjustments.masks, to: image, subject: subject, scale: scale)
+
+        // Portrait Lighting needs the people (refined onto the photo's edges), found and waited for the same way; before
+        // Rim Light, so a rim lights the people after Stage has darkened what's behind them.
+        // Studio and Contour light the faces, found the same way; someone with no face found is lit from the top of them.
+        let portraitLighting = adjustments.portraitLighting
+        if portraitLighting.isActive {
+            let waiting = !Thread.isMainThread
+            let people = source.subjectMattes.refinedMatte(for: source, adjustments: adjustments, kind: .person, waiting: waiting)
+            var faces: [FaceStore.Face] = []
+            // Until the faces are found (the preview doesn't wait) nothing is lit, rather than the stand-in first.
+            if portraitLighting.effect.usesFaces, let people,
+               let found = source.faces.faces(for: source, adjustments: adjustments, waiting: waiting) {
+                faces = found.isEmpty ? PortraitLightingRenderer.standIn(for: people).map { [$0] } ?? [] : found
+            }
+            image = PortraitLightingRenderer.apply(portraitLighting, to: image, people: people?.image, faces: faces)
+        }
 
         // Rim Light lights the subject's edges, so it needs the subject too (refined onto the photo's edges), found and
         // waited for the same way; on the whole frame, before the crop.

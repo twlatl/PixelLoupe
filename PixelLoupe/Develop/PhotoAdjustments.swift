@@ -27,6 +27,7 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
     var transform = Transform()
     var profile = Profile()
     var calibration = Calibration()
+    var portraitLighting = PortraitLighting()
     var rimLight = RimLight()
     /// Local adjustments, in the order they are applied.
     var masks: [LocalAdjustment] = []
@@ -262,6 +263,41 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
             return Light(angle: last.angle > 0 ? last.angle - 180 : last.angle + 180, red: color.0, green: color.1, blue: color.2,
                          strength: 0.5, width: last.width, choke: last.choke)
         }
+    }
+
+    /// Portrait Lighting (RAW-211): studio-style lighting on the people in the photo. Off on a new photo; turning it
+    /// off keeps the effect and Intensity for turning it back on.
+    struct PortraitLighting: Codable, Equatable, Sendable {
+        enum Effect: String, Codable, CaseIterable, Sendable {
+            /// A soft key light on each face, from above the camera.
+            case studio
+            /// A key light from one side of each face and a shadow on the other.
+            case contour
+            /// The people on black.
+            case stage
+            /// The people in black and white on black.
+            case stageMono
+
+            var title: String {
+                switch self {
+                case .studio: "Studio"
+                case .contour: "Contour"
+                case .stage: "Stage"
+                case .stageMono: "Stage Mono"
+                }
+            }
+
+            /// Whether the effect needs the faces as well as the people (RAW-215).
+            var usesFaces: Bool { self == .studio || self == .contour }
+        }
+
+        var isEnabled = false
+        var effect = Effect.studio
+        /// How strong the effect is, 0…1; for Stage, how dark the background goes.
+        var intensity = 1.0
+
+        /// Stage Mono still turns the people black and white at Intensity 0.
+        var isActive: Bool { isEnabled && (intensity > 0 || effect == .stageMono) }
     }
 
     struct RedEye: Codable, Equatable, Sendable {
@@ -556,7 +592,7 @@ nonisolated extension PhotoAdjustments {
 
     private enum CodingKeys: String, CodingKey {
         case light, color, blackAndWhite, redEye, whiteBalance, curves, levels, definition
-        case selectiveColor, noiseReduction, sharpen, vignette, crop, orientation, lens, presence, effects, transform, profile, calibration, rimLight
+        case selectiveColor, noiseReduction, sharpen, vignette, crop, orientation, lens, presence, effects, transform, profile, calibration, portraitLighting, rimLight
         case masks, spots, redEyes
     }
 
@@ -587,6 +623,7 @@ nonisolated extension PhotoAdjustments {
         transform = try decode(.transform, transform)
         profile = try decode(.profile, profile)
         calibration = try decode(.calibration, calibration)
+        portraitLighting = try decode(.portraitLighting, portraitLighting)
         rimLight = try decode(.rimLight, rimLight)
         masks = try decode(.masks, masks)
         spots = try decode(.spots, spots)
@@ -613,6 +650,19 @@ nonisolated extension PhotoAdjustments {
         // Stable output, so unchanged settings compare equal and don't dirty the photo.
         encoder.outputFormatting = .sortedKeys
         return try? encoder.encode(self)
+    }
+}
+
+/// Portrait Lighting's fields missing from saved settings, or an effect this version doesn't know, decode as defaults.
+nonisolated extension PhotoAdjustments.PortraitLighting {
+    private enum CodingKeys: String, CodingKey { case isEnabled, effect, intensity }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? isEnabled
+        effect = (try? container.decodeIfPresent(String.self, forKey: .effect)).flatMap { $0.flatMap(Effect.init(rawValue:)) } ?? effect
+        intensity = try container.decodeIfPresent(Double.self, forKey: .intensity) ?? intensity
     }
 }
 

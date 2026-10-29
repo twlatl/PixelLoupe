@@ -3,7 +3,7 @@ import Foundation
 /// The parts of the settings a preset can hold, as Lightroom's New Develop Preset dialog lists them.
 nonisolated enum PresetSection: String, CaseIterable, Codable, Sendable {
     case whiteBalance, basicTone, presence, toneCurve, colorMixer, colorGrading, blackAndWhite, detail, effects, lens, transform,
-         calibration, profile, rimLight
+         calibration, profile, portraitLighting, rimLight
 
     var title: String {
         switch self {
@@ -20,6 +20,7 @@ nonisolated enum PresetSection: String, CaseIterable, Codable, Sendable {
         case .transform: "Transform"
         case .calibration: "Calibration"
         case .profile: "Profile"
+        case .portraitLighting: "Portrait Lighting"
         case .rimLight: "Rim Light"
         }
     }
@@ -46,6 +47,21 @@ nonisolated enum RimLightPreset {
 
     static func rimLight(_ text: String?) -> PhotoAdjustments.RimLight? {
         text.flatMap { try? JSONDecoder().decode(PhotoAdjustments.RimLight.self, from: Data($0.utf8)) }
+    }
+}
+
+/// Portrait Lighting in a preset (RAW-214): PixelLoupe's own setting, written as JSON like ``RimLightPreset``.
+nonisolated enum PortraitLightingPreset {
+    static let key = "PixelLoupePortraitLighting"
+
+    static func text(_ portraitLighting: PhotoAdjustments.PortraitLighting) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return (try? encoder.encode(portraitLighting)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    static func portraitLighting(_ text: String?) -> PhotoAdjustments.PortraitLighting? {
+        text.flatMap { try? JSONDecoder().decode(PhotoAdjustments.PortraitLighting.self, from: Data($0.utf8)) }
     }
 }
 
@@ -222,6 +238,9 @@ nonisolated enum PresetWriter {
                 }
                 out["Look"] = .look(name: name, amount: profile.amount, uuid: nil)
             }
+        }
+        if sections.contains(.portraitLighting), let text = PortraitLightingPreset.text(a.portraitLighting) {
+            out[PortraitLightingPreset.key] = .text(text)
         }
         if sections.contains(.rimLight), let text = RimLightPreset.text(a.rimLight) {
             out[RimLightPreset.key] = .text(text)

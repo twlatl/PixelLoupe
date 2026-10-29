@@ -32,7 +32,7 @@ struct DevelopSidebarTests {
 
         let icons = window.contentView!.descendants.compactMap { $0 as? NSButton }
             .filter { $0.accessibilityIdentifier().hasPrefix("developTool.") }
-        #expect(icons.map { $0.accessibilityIdentifier() } == ["developTool.adjust", "developTool.rimLight", "developTool.presets", "developTool.crop", "developTool.lens", "developTool.mask", "developTool.retouch", "developTool.history"])
+        #expect(icons.map { $0.accessibilityIdentifier() } == ["developTool.adjust", "developTool.lighting", "developTool.presets", "developTool.crop", "developTool.lens", "developTool.mask", "developTool.retouch", "developTool.history"])
         let header = try #require(icons.first?.superview)
         let line = try #require(header.superview?.subviews.compactMap { $0 as? NSBox }.first)
         // Measured from the icons' alignment rects (their frames add padding around the symbols)
