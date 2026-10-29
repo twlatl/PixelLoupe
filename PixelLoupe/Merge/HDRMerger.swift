@@ -116,7 +116,10 @@ nonisolated final class HDRMerger {
     /// Something worth knowing before merging (the exposures barely differ), or nil.
     let warning: String?
 
-    private let neutral: (temperature: Float, tint: Float)
+    /// The white balance every exposure is decoded with: the reference's, or a panorama's (see ``radiance(scale:)``).
+    var neutral: (temperature: Float, tint: Float)
+    /// Whether the RAW engine applies the camera's built-in lens profile, when it has one (nil leaves its default).
+    var builtInLensCorrection: Bool?
     private let cameraBaselineExposure: Double
     private let context = CIContext(options: [
         .workingColorSpace: HDRMerger.colorSpace, .cacheIntermediates: false,
@@ -125,6 +128,8 @@ nonisolated final class HDRMerger {
     private var offsets: [CGVector]?
     /// Auto Settings' tone mapping, once measured, with and without Auto Align.
     private var toneMaps: [Bool: ToneMap] = [:]
+    /// The exposures decoded at one scale, as pixels (see ``prepare(scale:)``).
+    private var prepared: (scale: CGFloat, images: [CIImage])?
 
     static let colorSpace = CGColorSpace(name: CGColorSpace.extendedLinearITUR_2020)!
 
@@ -181,7 +186,58 @@ nonisolated final class HDRMerger {
         )
     }
 
+    /// Whether the RAW engine has a built-in lens profile for these photos.
+    var isLensCorrectionSupported: Bool { frames[referenceIndex].filter.isLensCorrectionSupported }
+
     // MARK: - Merging
+
+    /// Decodes every exposure at `scale` side by side (the RAW engine decodes several photos at once much
+    /// faster than one after another) and keeps the pixels, for ``radiance(scale:)`` at that scale and for
+    /// Auto Align, until ``forgetPrepared()``.
+    func prepare(scale: CGFloat) {
+        let images = PreparedImages(count: frames.count, filters: frames.map(\.filter))
+        let neutral = neutral, lens = builtInLensCorrection, context = context
+        DispatchQueue.concurrentPerform(iterations: frames.count) { index in
+            // Each frame's own filter: no two threads share one.
+            let image = Self.decoded(images.filters[index], scale: scale, neutral: neutral, lensCorrection: lens)
+            let extent = CGRect(origin: image.extent.origin, size: image.extent.integral.size)
+            let rowBytes = Int(extent.width) * 8
+            var data = Data(count: rowBytes * Int(extent.height))
+            data.withUnsafeMutableBytes { buffer in
+                context.render(image, toBitmap: buffer.baseAddress!, rowBytes: rowBytes, bounds: extent, format: .RGBAh, colorSpace: nil)
+            }
+            let pixels = CIImage(bitmapData: data, bytesPerRow: rowBytes, size: extent.size, format: .RGBAh, colorSpace: nil)
+                .transformed(by: CGAffineTransform(translationX: extent.minX, y: extent.minY))
+            images.store(pixels, at: index)
+        }
+        prepared = (scale, images.values.map { $0 ?? CIImage.empty() })
+    }
+
+    /// Lets go of the pixels ``prepare(scale:)`` kept.
+    func forgetPrepared() {
+        prepared = nil
+    }
+
+    /// The decoding side by side: each frame's filter, and what it produced.
+    private final class PreparedImages: @unchecked Sendable {
+        let filters: [CIRAWFilter]
+        private let lock = NSLock()
+        private(set) var values: [CIImage?]
+
+        init(count: Int, filters: [CIRAWFilter]) {
+            self.filters = filters
+            values = Array(repeating: nil, count: count)
+        }
+
+        func store(_ image: CIImage, at index: Int) { lock.withLock { values[index] = image } }
+    }
+
+    /// The exposures merged at `scale`, for a panorama of bracket sets: aligned (Auto Align), without
+    /// deghosting or tone mapping, at the reference exposure's brightness (not scaled to fit its peak, so
+    /// sets merged this way stay comparable), origin at zero. Nothing is rendered but the alignment.
+    func radiance(scale: CGFloat) -> CIImage {
+        radiance(of: alignedImages(scale: scale, offsets: alignmentOffsets()))
+    }
 
     /// Merges the exposures at `scale` (1 = full resolution), on the GPU. With Auto Settings the
     /// result is tone mapped (``ToneMap``). `region` (pixels at that scale, from the top left) limits
@@ -333,9 +389,23 @@ nonisolated final class HDRMerger {
 
     // MARK: - Decoding
 
-    /// The frame decoded linearly at `scale`, with the reference's white balance.
-    private func image(of index: Int, scale: CGFloat) -> CIImage {
-        let filter = frames[index].filter
+    /// The frame decoded linearly at `scale`, with the reference's white balance (from the prepared pixels when
+    /// they're at that scale, or larger and this is for Auto Align).
+    private func image(of index: Int, scale: CGFloat, forAlignment: Bool = false) -> CIImage {
+        if let prepared {
+            if prepared.scale == scale { return prepared.images[index] }
+            if forAlignment, prepared.scale > scale {
+                return prepared.images[index].applyingFilter("CILanczosScaleTransform", parameters: [
+                    kCIInputScaleKey: scale / prepared.scale, kCIInputAspectRatioKey: 1,
+                ])
+            }
+        }
+        return Self.decoded(frames[index].filter, scale: scale, neutral: neutral, lensCorrection: builtInLensCorrection)
+    }
+
+    private static func decoded(
+        _ filter: CIRAWFilter, scale: CGFloat, neutral: (temperature: Float, tint: Float), lensCorrection: Bool?
+    ) -> CIImage {
         filter.scaleFactor = Float(scale)
         filter.exposure = 0
         filter.baselineExposure = 0
@@ -344,6 +414,7 @@ nonisolated final class HDRMerger {
         filter.isGamutMappingEnabled = false
         filter.neutralTemperature = neutral.temperature
         filter.neutralTint = neutral.tint
+        if let lensCorrection, filter.isLensCorrectionSupported { filter.isLensCorrectionEnabled = lensCorrection }
         return filter.outputImage ?? CIImage.empty()
     }
 
@@ -409,40 +480,91 @@ nonisolated final class HDRMerger {
     // MARK: - Alignment
 
     /// Each frame's translation onto the reference, in full-resolution pixels (Core Image's axes),
-    /// found by Vision on downscaled copies. Found once and reused.
+    /// found by Vision on downscaled copies. Each frame is registered to its neighbor toward the
+    /// reference (the next exposure, which shows the most of the same detail) and the shifts add up:
+    /// a frame six stops from the reference shares too little with it to register directly. A shift
+    /// beyond `largestShift` of the long side is a failed registration and counts as none (handheld
+    /// brackets move by far less). Each frame is decoded once and the pairs registered side by side.
+    /// Found once and reused.
     func alignmentOffsets() -> [CGVector] {
         if let offsets { return offsets }
         let scale = min(1, 1024 / max(nativeSize.width, nativeSize.height, 1))
-        var result = Array(repeating: CGVector.zero, count: frames.count)
-        for index in frames.indices where index != referenceIndex {
+        let limit = Self.largestShift * max(nativeSize.width, nativeSize.height)
+        let grays = frames.indices.map { gray($0, scale: scale) }
+        let pairs = frames.indices.filter { $0 != referenceIndex }.map { index in
+            (index: index, neighbor: index < referenceIndex ? index + 1 : index - 1)
+        }
+        let shifts = AlignmentShifts(count: frames.count)
+        let gains = frames.map(\.gain)
+        DispatchQueue.concurrentPerform(iterations: pairs.count) { position in
+            let (index, neighbor) = pairs[position]
+            guard let target = grays[neighbor], let floating = grays[index] else { return }
             // Compared up to the brightness where the brighter of the two clips, so both show the
             // same detail.
-            let ceiling = min(1, 1 / frames[index].gain)
-            guard let reference = alignmentImage(referenceIndex, scale: scale, ceiling: ceiling),
-                  let floating = alignmentImage(index, scale: scale, ceiling: ceiling) else { continue }
-            let request = VNTranslationalImageRegistrationRequest(targetedCGImage: floating)
-            let handler = VNImageRequestHandler(cgImage: reference)
-            guard (try? handler.perform([request])) != nil,
-                  let transform = request.results?.first?.alignmentTransform else { continue }
-            result[index] = CGVector(dx: transform.tx / scale, dy: transform.ty / scale)
+            let ceiling = Float(min(1, 1 / max(gains[index], gains[neighbor])))
+            guard let targetImage = target.image(gain: Float(gains[neighbor]), ceiling: ceiling),
+                  let floatingImage = floating.image(gain: Float(gains[index]), ceiling: ceiling) else { return }
+            let request = VNTranslationalImageRegistrationRequest(targetedCGImage: floatingImage)
+            let handler = VNImageRequestHandler(cgImage: targetImage)
+            guard (try? handler.perform([request])) != nil, let transform = request.results?.first?.alignmentTransform,
+                  hypot(transform.tx / scale, transform.ty / scale) <= limit else { return }
+            shifts.set(CGVector(dx: transform.tx / scale, dy: transform.ty / scale), at: index)
+        }
+        var result = Array(repeating: CGVector.zero, count: frames.count)
+        // Outward from the reference, so each neighbor's offset is known first.
+        for index in preferenceOrder where index != referenceIndex {
+            let neighbor = index < referenceIndex ? index + 1 : index - 1
+            let shift = shifts.values[index]
+            result[index] = CGVector(dx: result[neighbor].dx + shift.dx, dy: result[neighbor].dy + shift.dy)
         }
         offsets = result
         return result
     }
 
-    /// The frame's radiance as gray, scaled so `ceiling` is white and clipped there, for registration.
-    private func alignmentImage(_ index: Int, scale: CGFloat, ceiling: Double) -> CGImage? {
-        let k = CGFloat(1 / (frames[index].gain * ceiling) / 3)
-        let image = image(of: index, scale: scale)
-            .applyingFilter("CIColorMatrix", parameters: [
-                "inputRVector": CIVector(x: k, y: k, z: k, w: 0),
-                "inputGVector": CIVector(x: k, y: k, z: k, w: 0),
-                "inputBVector": CIVector(x: k, y: k, z: k, w: 0),
-            ])
-            .applyingFilter("CIColorClamp")
-        return context.createCGImage(
-            image, from: image.extent.integral, format: .L8, colorSpace: CGColorSpace(name: CGColorSpace.genericGrayGamma2_2)
-        )
+    /// The most a frame registers as moving from the next exposure, as a fraction of the long side.
+    static let largestShift: CGFloat = 0.03
+
+    /// Registration results, written from several threads.
+    private final class AlignmentShifts: @unchecked Sendable {
+        private let lock = NSLock()
+        private(set) var values: [CGVector]
+
+        init(count: Int) { values = Array(repeating: .zero, count: count) }
+
+        func set(_ shift: CGVector, at index: Int) { lock.withLock { values[index] = shift } }
+    }
+
+    /// A frame's brightness (the mean of its channels, as it was exposed) at a small size, for registration.
+    private struct Gray: @unchecked Sendable {
+        let width: Int
+        let height: Int
+        let values: [Float]
+
+        /// Radiance up to `ceiling` as gamma-encoded gray, clipped there.
+        func image(gain: Float, ceiling: Float) -> CGImage? {
+            let k = 1 / (gain * ceiling)
+            var bytes = [UInt8](repeating: 0, count: width * height)
+            for i in values.indices {
+                bytes[i] = UInt8(pow(min(max(values[i] * k, 0), 1), 1 / 2.2) * 255 + 0.5)
+            }
+            guard let provider = CGDataProvider(data: Data(bytes) as CFData) else { return nil }
+            return CGImage(
+                width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 8, bytesPerRow: width,
+                space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),
+                provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent
+            )
+        }
+    }
+
+    private func gray(_ index: Int, scale: CGFloat) -> Gray? {
+        let image = image(of: index, scale: scale, forAlignment: true)
+        let extent = image.extent.integral
+        let width = Int(extent.width), height = Int(extent.height)
+        guard width > 0, height > 0 else { return nil }
+        var pixels = [Float](repeating: 0, count: width * height * 4)
+        context.render(image, toBitmap: &pixels, rowBytes: width * 16, bounds: extent, format: .RGBAf, colorSpace: Self.colorSpace)
+        let values = (0..<(width * height)).map { (pixels[$0 * 4] + pixels[$0 * 4 + 1] + pixels[$0 * 4 + 2]) / 3 }
+        return Gray(width: width, height: height, values: values)
     }
 
     // MARK: - Deghosting

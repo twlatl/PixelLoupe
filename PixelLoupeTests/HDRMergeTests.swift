@@ -160,6 +160,22 @@ struct HDRMergeTests {
         #expect(aligned < unaligned / 2)
     }
 
+    @Test func alignsWideBracketsThroughTheirNeighbors() throws {
+        // A 7-shot bracket 2 EV apart, as on Ted's 10-29 panorama: the ends share little with the middle
+        // exposure, so each frame registers to the next one in and the shifts add up.
+        let shifts = [(5, 3), (4, -2), (3, 1), (0, 0), (-3, 2), (-4, -3), (-5, 4)]
+        let bracket = try Bracket(width: 640, height: 400, stops: [-6, -4, -2, 0, 2, 4, 6], shifts: shifts)
+        let merger = try HDRMerger(sources: bracket.sources)
+        let offsets = merger.alignmentOffsets()
+        for index in 0..<6 {
+            let (dx, dy) = shifts[index]
+            // Back onto the reference, in Core Image's axes (y up).
+            #expect(abs(offsets[index].dx + CGFloat(dx)) < 1.5 && abs(offsets[index].dy - CGFloat(dy)) < 1.5, "\(index): \(offsets[index])")
+        }
+        // The brightest is nearly all clipped: whatever it registers as, never a wild shift.
+        #expect(hypot(offsets[6].dx, offsets[6].dy) <= HDRMerger.largestShift * 640, "\(offsets[6])")
+    }
+
     @Test func deghostingKeepsTheReferenceWhereFramesDisagree() throws {
         // A dark square appears only in the brightest frame, over the midtones.
         let bracket = try Bracket(ghostIn: 2)

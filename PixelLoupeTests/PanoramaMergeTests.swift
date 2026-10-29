@@ -16,12 +16,17 @@ struct SyntheticPanorama {
     /// Each photo's camera-to-world rotation.
     let rotations: [simd_double3x3]
     let stops: [Double]
+    /// Every photo, in capture order.
     var sources: [PhotoMergeSource] = []
+    /// The photos as bracket sets, one per position (each one photo without a `bracket`).
+    var sets: [[PhotoMergeSource]] = []
 
     /// Photos turned by `yaws` (degrees, right positive) at `pitch` (degrees, up positive), each
-    /// exposed `stops` from the first (recorded in its metadata), in capture order.
-    init(yaws: [Double] = [-36, -12, 12, 36], pitch: Double = 4, stops: [Double]? = nil,
-         width: Int = 360, height: Int = 240, focal: Double = 300, name: String = "PANO") throws {
+    /// exposed `stops` from the first (recorded in its metadata), in capture order. With a `bracket`
+    /// (EV, recorded as exposure compensation) each position is a bracket set around its stops; the
+    /// scene is `brightness` times as bright, and clips at 1.
+    init(yaws: [Double] = [-36, -12, 12, 36], pitch: Double = 4, stops: [Double]? = nil, bracket: [Double]? = nil,
+         brightness: Float = 1, width: Int = 360, height: Int = 240, focal: Double = 300, name: String = "PANO") throws {
         directory = try TemporaryDirectory()
         self.width = width
         self.height = height
@@ -32,26 +37,37 @@ struct SyntheticPanorama {
         // A focal length in millimeters that gives `focal` pixels on a full-frame camera.
         let millimeters = focal / hypot(Double(width), Double(height)) * hypot(36, 24)
         for (index, rotation) in rotations.enumerated() {
-            let gain = Float(pow(2, stops[index]))
-            let image = DNGFixtures.image(width: width, height: height) { x, y in
-                // 2 × 2 samples per pixel, so the photos agree where they overlap.
+            // The scene seen once, at 2 × 2 samples per pixel, so the photos agree where they overlap.
+            let seen = (0..<(width * height)).map { i in
+                let x = i % width, y = i / width
                 var total: Float = 0
                 for (dx, dy) in [(0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)] {
                     total += Self.scene(rotation * simd_normalize(SIMD3(Double(x) + dx - Double(width) / 2, Double(y) + dy - Double(height) / 2, focal)))
                 }
-                return SIMD3(repeating: min(total / 4 * gain, 1))
+                return total / 4 * brightness
             }
-            let url = directory.url.appending(path: "\(name)_\(index).dng")
-            var metadata = DNGMetadata(make: "Canon", model: "EOS R5", captureDate: Date(timeIntervalSince1970: 1_791_000_000 + Double(index)))
-            metadata.exposureTime = pow(2, stops[index]) / 100
-            metadata.aperture = 8
-            metadata.iso = 100
-            metadata.focalLength = millimeters
-            try LinearDNGWriter.write(image, metadata: metadata, to: url)
-            sources.append(PhotoMergeSource(
-                url: url, exposureTime: metadata.exposureTime, aperture: 8, iso: 100, make: "Canon", model: "EOS R5",
-                focalLength: millimeters, captureDate: metadata.captureDate
-            ))
+            var set: [PhotoMergeSource] = []
+            for (shot, step) in (bracket ?? [0]).enumerated() {
+                let exposure = stops[index] + step
+                let gain = Float(pow(2, exposure))
+                let image = DNGFixtures.image(width: width, height: height) { x, y in
+                    SIMD3(repeating: min(seen[y * width + x] * gain, 1))
+                }
+                let url = directory.url.appending(path: bracket == nil ? "\(name)_\(index).dng" : "\(name)_\(index)_\(shot).dng")
+                let time = 1_791_000_000 + Double(index) * 8 + Double(shot) * 0.2
+                var metadata = DNGMetadata(make: "Canon", model: "EOS R5", captureDate: Date(timeIntervalSince1970: time))
+                metadata.exposureTime = pow(2, exposure) / 100
+                metadata.aperture = 8
+                metadata.iso = 100
+                metadata.focalLength = millimeters
+                try LinearDNGWriter.write(image, metadata: metadata, to: url)
+                set.append(PhotoMergeSource(
+                    url: url, exposureTime: metadata.exposureTime, aperture: 8, iso: 100, make: "Canon", model: "EOS R5",
+                    focalLength: millimeters, captureDate: metadata.captureDate, exposureBias: bracket == nil ? nil : step
+                ))
+            }
+            sources += set
+            sets.append(set)
         }
     }
 
@@ -486,6 +502,112 @@ struct PanoramaMergeTests {
         let none = warp.map(amount: 0, step: 1)
         let center = try #require(none.points[40 * width + 100])
         #expect(abs(center.x * Float(width) - 100.5) < 0.5 && abs(center.y * Float(height) - 40.5) < 0.5)
+    }
+
+    // MARK: HDR Panorama
+
+    /// How far the merge is from the scene (relative, at points the first photo that sees them shows
+    /// well inside it): the median error and the brightness ratio over all points. `exposure` is the
+    /// stops the scene is shown at.
+    private static func errors(_ image: LinearDNGImage, panorama: SyntheticPanorama, merger: PanoramaMerger,
+                               brightness: Float, exposure: Float = 0) throws -> (median: Float, brightness: Float, worstTruth: Float) {
+        let scale = Float(pow(2, image.headroom ?? 0))
+        let size = CGSize(width: panorama.width, height: panorama.height)
+        let layout = try #require(PanoramaLayout(
+            alignment: merger.alignment, alignedSizes: Array(repeating: size, count: panorama.rotations.count),
+            photoSizes: Array(repeating: size, count: panorama.rotations.count), projection: .spherical
+        ))
+        var errors: [Float] = []
+        var mergedTotal: Float = 0, truthTotal: Float = 0, brightest: Float = 0
+        for y in stride(from: 20, to: image.height - 20, by: 7) {
+            for x in stride(from: 20, to: image.width - 20, by: 7) {
+                let ray = layout.ray(at: SIMD2(Double(x) + 0.5, Double(y) + 0.5))
+                guard let (index, point) = layout.cameras.enumerated().lazy.compactMap({ index, camera -> (Int, SIMD2<Double>)? in
+                    guard let p = camera?.project(ray), abs(p.x) < Double(panorama.width) / 2 - 8, abs(p.y) < Double(panorama.height) / 2 - 8 else { return nil }
+                    return (index, p)
+                }).first else { continue }
+                let truth = SyntheticPanorama.scene(panorama.rotations[index] * simd_normalize(SIMD3(point.x, point.y, panorama.focal)))
+                    * brightness * pow(2, exposure)
+                let merged = Float(image.pixels[(y * image.width + x) * 3 + 1]) * scale
+                errors.append(abs(merged - truth) / truth)
+                mergedTotal += merged
+                truthTotal += truth
+                brightest = max(brightest, truth)
+            }
+        }
+        errors.sort()
+        try #require(errors.count > 500)
+        return (errors[errors.count / 2], mergedTotal / truthTotal, brightest)
+    }
+
+    @Test func hdrPanoramaKeepsWhatTheMiddleExposureClips() throws {
+        // 16 times as bright (up to 3.8): the 0 EV photos clip most of the scene, the −2 EV ones none of it.
+        let panorama = try SyntheticPanorama(bracket: [-2, 0, 2], brightness: 16)
+        let merger = try PanoramaMerger(brackets: panorama.sets)
+        #expect(merger.frames.count == 4 && merger.mergedCount == 4)
+        #expect(merger.reference.name == "PANO_0_1.dng", "the earliest set's middle exposure")
+        let hdr = try merger.merge(options: PanoramaMergeOptions(), scale: 1).image
+        let found = try Self.errors(hdr, panorama: panorama, merger: merger, brightness: 16)
+        #expect(found.worstTruth > 3, "the scene is brighter than the middle exposure holds")
+        #expect(abs(found.brightness - 1) < 0.03, "brightness \(found.brightness)")
+        #expect(found.median < 0.1, "median error \(found.median)")
+
+        // The middle exposures alone, as a plain panorama: clipped.
+        let plain = try PanoramaMerger(sources: panorama.sets.map { $0[1] })
+        let clipped = try plain.merge(options: PanoramaMergeOptions(), scale: 1).image
+        let lost = try Self.errors(clipped, panorama: panorama, merger: plain, brightness: 16)
+        #expect(lost.brightness < 0.7 && lost.median > 0.3, "brightness \(lost.brightness), median \(lost.median)")
+    }
+
+    @Test func bracketSetsMeteredDifferentlyMatchAcrossSeams() throws {
+        // Each position metered its own base exposure (as on Ted's 10-29 shoot): the sets still join
+        // up, at the sets' average exposure (+0.5 stop here).
+        let panorama = try SyntheticPanorama(stops: [0, 1, 0, 1], bracket: [-2, 0, 2], brightness: 4)
+        let merger = try PanoramaMerger(brackets: panorama.sets)
+        let image = try merger.merge(options: PanoramaMergeOptions(), scale: 1).image
+        let found = try Self.errors(image, panorama: panorama, merger: merger, brightness: 4, exposure: 0.5)
+        #expect(abs(found.brightness - 1) < 0.03, "brightness \(found.brightness)")
+        #expect(found.median < 0.1, "median error \(found.median)")
+    }
+
+    @Test func hdrPanoramaPreviewAndFullMergeMatch() throws {
+        let panorama = try SyntheticPanorama(stops: [0, 1, 0, 1], bracket: [-2, 0, 2], brightness: 4)
+        let merger = try PanoramaMerger(brackets: panorama.sets)
+        let options = PanoramaMergeOptions()
+        let full = try merger.merge(options: options, scale: 1).image
+        let preview = try merger.merge(options: options, scale: 0.5).image
+        #expect(full.headroom == preview.headroom)
+        var difference: Float = 0, count: Float = 0
+        for y in stride(from: 30, to: preview.height - 30, by: 9) {
+            for x in stride(from: 30, to: preview.width - 30, by: 9) {
+                var sum: Float = 0
+                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    sum += Float(full.pixels[((y * 2 + dy) * full.width + x * 2 + dx) * 3 + 1])
+                }
+                difference += abs(sum / 4 - Float(preview.pixels[(y * preview.width + x) * 3 + 1]))
+                count += 1
+            }
+        }
+        #expect(difference / count < 0.02, "mean difference \(difference / count)")
+    }
+
+    @Test func cancellingStopsAnHDRPanoramaMerge() async throws {
+        let panorama = try SyntheticPanorama(bracket: [-2, 0, 2], brightness: 4)
+        let sets = panorama.sets
+        let task = Task.detached {
+            let merger = try PanoramaMerger(brackets: sets)
+            return try merger.merge(options: PanoramaMergeOptions(), scale: 1)
+        }
+        task.cancel()
+        await #expect(throws: CancellationError.self) { _ = try await task.value }
+        withExtendedLifetime(panorama) {}
+    }
+
+    @Test func bracketSetsFromDifferentCamerasDontMerge() throws {
+        let panorama = try SyntheticPanorama(bracket: [-2, 0, 2])
+        var sets = panorama.sets
+        sets[1][2].model = "EOS R6"
+        #expect(throws: PhotoMergeError.differentCameras) { try PanoramaMerger(brackets: sets) }
     }
 
     // MARK: Options

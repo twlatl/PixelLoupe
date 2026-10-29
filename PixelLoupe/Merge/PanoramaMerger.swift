@@ -78,7 +78,8 @@ nonisolated enum PanoramaMergeError: LocalizedError, Equatable {
     }
 }
 
-/// Merges overlapping photos into a panorama, as Lightroom's Photo Merge ▸ Panorama.
+/// Merges overlapping photos into a panorama, as Lightroom's Photo Merge ▸ Panorama (or, for HDR Panorama,
+/// overlapping bracket sets, each merged by ``HDRMerger`` and treated as one photo; see ``init(brackets:)``).
 ///
 /// Each photo is decoded linearly by the RAW engine with the reference photo's white balance (the
 /// earliest photo's, whose settings and metadata the panorama takes), its lens profile applied, and
@@ -94,12 +95,24 @@ nonisolated enum PanoramaMergeError: LocalizedError, Equatable {
 /// Not thread-safe: use one instance per task.
 nonisolated final class PanoramaMerger {
     struct Frame {
+        /// The photo, or a bracket set's reference (middle) exposure.
         let source: PhotoMergeSource
         fileprivate let filter: CIRAWFilter
+        /// A bracket set's exposures, merged into one HDR frame (HDR Panorama), or nil for a single photo.
+        fileprivate let bracket: HDRMerger?
         fileprivate let lens: LensSetup
         /// How much the photo's values are scaled to match the photos' average exposure (from
         /// shutter speed, aperture and ISO).
         let exposureGain: Double
+    }
+
+    private final class OpenedBrackets: @unchecked Sendable {
+        private let lock = NSLock()
+        private(set) var results: [Result<HDRMerger, Error>?]
+
+        init(count: Int) { results = Array(repeating: nil, count: count) }
+
+        func store(_ result: Result<HDRMerger, Error>, at index: Int) { lock.withLock { results[index] = result } }
     }
 
     /// The photos decoded side by side (each with its own RAW filter), and what each produced.
@@ -168,8 +181,27 @@ nonisolated final class PanoramaMerger {
     private var warpMaps: [WarpKey: WarpMap] = [:]
     private var fills: [FillKey: PanoramaFill.Solution] = [:]
 
-    init(sources: [PhotoMergeSource]) throws {
+    convenience init(sources: [PhotoMergeSource]) throws {
         if let problem = PhotoMergeSource.problem(merging: sources) { throw problem }
+        try self.init(frames: sources, brackets: Array(repeating: nil, count: sources.count))
+    }
+
+    /// HDR Panorama: each bracket set (``HDRBrackets``) is one frame, its exposures merged by ``HDRMerger``
+    /// (Auto Align, no deghosting or tone mapping) as Core Image needs them, at the scale each render needs.
+    /// The set's reference exposure stands for it: its exposure, lens and metadata. The merged sets keep
+    /// their brightness, and the panorama is stored scaled to its own peak, so they all match.
+    convenience init(brackets: [[PhotoMergeSource]]) throws {
+        if let problem = PhotoMergeSource.problem(merging: brackets.flatMap { $0 }) { throw problem }
+        // Opened side by side: reading each set's files is most of it.
+        let opened = OpenedBrackets(count: brackets.count)
+        DispatchQueue.concurrentPerform(iterations: brackets.count) { index in
+            opened.store(Result { try HDRMerger(sources: brackets[index]) }, at: index)
+        }
+        let mergers = try opened.results.map { try ($0 ?? .failure(PhotoMergeError.tooFewPhotos)).get() }
+        try self.init(frames: mergers.map(\.reference), brackets: mergers)
+    }
+
+    private init(frames sources: [PhotoMergeSource], brackets: [HDRMerger?]) throws {
         var filters: [CIRAWFilter] = []
         var size: CGSize?
         for source in sources {
@@ -198,7 +230,7 @@ nonisolated final class PanoramaMerger {
         let shooting = sources.map { ShootingInfo.read(from: $0.url) }
         frames = sources.indices.map { index in
             let gain = averageExposure.flatMap { average in exposure(sources[index]).map { average / $0 } } ?? 1
-            return Frame(source: sources[index], filter: filters[index],
+            return Frame(source: sources[index], filter: filters[index], bracket: brackets[index],
                          lens: Self.lensSetup(for: sources[index], filter: filters[index], shooting: shooting[index]),
                          exposureGain: gain)
         }
@@ -214,6 +246,12 @@ nonisolated final class PanoramaMerger {
         let neutral = neutral, context = context
         DispatchQueue.concurrentPerform(iterations: frames.count) { index in
             let frame = job.frames[index]
+            // A bracket set's exposures decoded side by side, once, for its alignment and this copy.
+            if let bracket = frame.bracket {
+                Self.configure(bracket, for: frame, neutral: neutral)
+                bracket.prepare(scale: scale)
+            }
+            defer { frame.bracket?.forgetPrepared() }
             let image = Self.decoded(frame, scale: scale, neutral: neutral)
             let extent = CGRect(origin: .zero, size: image.extent.integral.size)
             let rowBytes = Int(extent.width) * 8
@@ -293,9 +331,16 @@ nonisolated final class PanoramaMerger {
         return equivalent / hypot(36, 24) * hypot(Double(size.width), Double(size.height))
     }
 
-    /// The photo decoded linearly at `scale` with the reference's white balance, its lens profile
-    /// applied, origin at zero.
+    /// The photo (or bracket set, merged) decoded linearly at `scale` with the reference's white balance,
+    /// its lens profile applied, origin at zero.
     fileprivate static func decoded(_ frame: Frame, scale: CGFloat, neutral: (temperature: Float, tint: Float)) -> CIImage {
+        if let bracket = frame.bracket {
+            configure(bracket, for: frame, neutral: neutral)
+            var image = bracket.radiance(scale: scale)
+            if case .profile(let lens) = frame.lens { image = LensCorrector.apply(lens, to: image) }
+            let extent = image.extent
+            return image.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
+        }
         let filter = frame.filter
         filter.scaleFactor = Float(scale)
         filter.exposure = 0
@@ -312,6 +357,13 @@ nonisolated final class PanoramaMerger {
         if case .profile(let lens) = frame.lens { image = LensCorrector.apply(lens, to: image) }
         let extent = image.extent
         return image.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
+    }
+
+    /// A bracket set decodes with the panorama's white balance, and the camera's built-in lens profile only when
+    /// that's the frame's lens correction.
+    fileprivate static func configure(_ bracket: HDRMerger, for frame: Frame, neutral: (temperature: Float, tint: Float)) {
+        bracket.neutral = neutral
+        if case .builtIn = frame.lens { bracket.builtInLensCorrection = true } else { bracket.builtInLensCorrection = false }
     }
 
     /// A photo's brightness for the aligner: luminance scaled by its exposure gain, gamma encoded.
