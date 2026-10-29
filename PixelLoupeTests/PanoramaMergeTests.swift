@@ -591,6 +591,35 @@ struct PanoramaMergeTests {
         #expect(difference / count < 0.02, "mean difference \(difference / count)")
     }
 
+    @Test func fullResolutionBracketSetsAreReadFromFiles() throws {
+        // Full resolution merges each set once into a file and reads it back in tiles (RAW-225); the small
+        // synthetic photos normally merge from their copies, so the two ways must draw the same.
+        let panorama = try SyntheticPanorama(stops: [0, 1, 0, 1], bracket: [-2, 0, 2], brightness: 4)
+        let merger = try PanoramaMerger(brackets: panorama.sets)
+        var plain = PanoramaMergeOptions()
+        plain.autoSettings = false
+        var filled = plain
+        filled.fillEdges = true
+        filled.boundaryWarp = 50
+        let region = CGRect(x: 130, y: 40, width: 200, height: 120)
+        let fromCopies = try [plain, filled].map { try merger.merge(options: $0, scale: 1).image }
+        let regionFromCopies = try merger.merge(options: plain, scale: 1, region: region).image
+        merger.largestSnapshotScale = 0.1
+        let fromFiles = try [plain, filled].map { try merger.merge(options: $0, scale: 1).image }
+        let regionFromFiles = try merger.merge(options: plain, scale: 1, region: region).image
+        for (copies, files) in zip(fromCopies + [regionFromCopies], fromFiles + [regionFromFiles]) {
+            #expect(copies.width == files.width && copies.height == files.height && copies.headroom == files.headroom)
+            var total: Float = 0, worst: Float = 0
+            for (a, b) in zip(copies.pixels, files.pixels) {
+                let difference = abs(Float(a) - Float(b))
+                total += difference
+                worst = max(worst, difference)
+            }
+            let mean = total / Float(copies.pixels.count)
+            #expect(mean < 0.001 && worst < 0.02, "mean \(mean), worst \(worst)")
+        }
+    }
+
     @Test func cancellingStopsAnHDRPanoramaMerge() async throws {
         let panorama = try SyntheticPanorama(bracket: [-2, 0, 2], brightness: 4)
         let sets = panorama.sets
@@ -806,6 +835,7 @@ struct PanoramaCatalogTests {
         let sheet = try #require(controller.mergeSheet as? PanoramaMergeSheetController)
         #expect(sheet.window?.title == "Panorama Merge Preview" && sheet.brackets == nil)
         sheet.cancel(nil)
+        for _ in 0..<100 where window.attachedSheet != nil { try await Task.sleep(for: .milliseconds(20)) }
 
         // Cancel does nothing.
         controller.photoMergeHDRPanorama(nil)
