@@ -57,7 +57,7 @@ actor PanoramaMergePreviewer {
         let full = try merger.size(for: options.projection)
         let crop = adjustments.crop.rect
         let shown = CGSize(width: full.width * crop.width, height: full.height * crop.height)
-        let image = try draw(merged.url, adjustments: adjustments, coverage: options.autoCrop ? nil : merged.result.coverage)
+        let image = try draw(merged.url, adjustments: adjustments, coverage: options.cropsToCovered ? nil : merged.result.coverage)
         return PanoramaMergePreview(image: image, photoSize: shown)
     }
 
@@ -85,7 +85,7 @@ actor PanoramaMergePreviewer {
         // The part is already cut out: its settings without the crop.
         var uncropped = adjustments
         uncropped.crop = PhotoAdjustments.Crop()
-        let image = try draw(url, adjustments: uncropped, coverage: options.autoCrop ? nil : result.coverage)
+        let image = try draw(url, adjustments: uncropped, coverage: options.cropsToCovered ? nil : result.coverage)
         return PanoramaMergePreview(image: image, photoSize: shown.size)
     }
 

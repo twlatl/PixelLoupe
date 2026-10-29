@@ -274,6 +274,96 @@ struct PanoramaMergeTests {
         #expect(difference / count < 0.02, "mean difference \(difference / count)")
     }
 
+    @Test func fillEdgesFillsWhereThePhotosDontReach() throws {
+        let panorama = try SyntheticPanorama()
+        let merger = try PanoramaMerger(sources: panorama.sources)
+        var options = PanoramaMergeOptions()
+        let plain = try merger.merge(options: options, scale: 0.5)
+        let coverage = try #require(plain.coverage)
+        options.fillEdges = true
+        options.autoCrop = true
+        let filled = try merger.merge(options: options, scale: 0.5)
+        // It covers the whole rectangle, so there's nothing to crop or show through.
+        #expect(filled.crop == nil && filled.coverage == nil)
+        #expect(filled.image.width == plain.image.width && filled.image.height == plain.image.height)
+        var holeSum: Float = 0, holeCount: Float = 0, coveredSum: Float = 0, coveredCount: Float = 0, white = 0
+        var coveredChange: Float = 0, worstChange: Float = 0
+        for (index, value) in coverage.values.enumerated() {
+            let green = Float(filled.image.pixels[index * 3 + 1])
+            if value >= 1 {
+                let change = abs(green - Float(plain.image.pixels[index * 3 + 1]))
+                coveredChange += change
+                worstChange = max(worstChange, change)
+                coveredSum += green
+                coveredCount += 1
+            } else if value < 0.01 {
+                holeSum += green
+                holeCount += 1
+                if green > 0.98 { white += 1 }
+            }
+        }
+        // The photos' pixels are kept, but Core Image draws the blend's pyramid a little differently once the fill is
+        // laid under it (its Gaussian blur depends on the region asked for), most near the panorama's edges.
+        #expect(coveredChange / coveredCount < 0.002 && worstChange < 0.05, "mean \(coveredChange / coveredCount), worst \(worstChange)")
+        #expect(holeCount > 100)
+        #expect(Float(white) / holeCount < 0.05, "\(white) of \(holeCount) hole pixels are still white")
+        // The fill is made of the scene, so it's about as bright.
+        #expect(abs(holeSum / holeCount - coveredSum / coveredCount) < 0.15)
+    }
+
+    @Test func fillEdgesPreviewAndFullMergeMatch() throws {
+        // The full merge copies the preview-sized solve's matches up (a small solve forces that here).
+        let panorama = try SyntheticPanorama()
+        let merger = try PanoramaMerger(sources: panorama.sources)
+        let coverage = try #require(try merger.merge(options: PanoramaMergeOptions(), scale: 0.5).coverage)
+        var options = PanoramaMergeOptions()
+        options.fillEdges = true
+        let preview = try merger.merge(options: options, scale: 0.5).image
+        merger.fillPixels = preview.width * preview.height
+        let full = try merger.merge(options: options, scale: 1).image
+        func downsampled(_ x: Int, _ y: Int) -> Float {
+            var sum: Float = 0
+            for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                sum += Float(full.pixels[((y * 2 + dy) * full.width + x * 2 + dx) * 3 + 1])
+            }
+            return sum / 4
+        }
+        var coveredDifference: Float = 0, coveredCount: Float = 0
+        var holeFull: Float = 0, holePreview: Float = 0, holeCount: Float = 0, white = 0
+        for y in 0..<min(preview.height, full.height / 2) {
+            for x in 0..<min(preview.width, full.width / 2) {
+                let value = coverage.values[y * coverage.width + x]
+                let small = Float(preview.pixels[(y * preview.width + x) * 3 + 1])
+                if value >= 1, x > 30, y > 30, x < preview.width - 30, y < preview.height - 30 {
+                    coveredDifference += abs(downsampled(x, y) - small)
+                    coveredCount += 1
+                } else if value < 0.01 {
+                    holeFull += downsampled(x, y)
+                    holePreview += small
+                    holeCount += 1
+                    if downsampled(x, y) > 0.98 { white += 1 }
+                }
+            }
+        }
+        #expect(coveredDifference / coveredCount < 0.02, "covered: mean difference \(coveredDifference / coveredCount)")
+        #expect(holeCount > 100 && Float(white) / holeCount < 0.05)
+        #expect(abs(holeFull - holePreview) / holeCount < 0.05, "filled: mean difference \(abs(holeFull - holePreview) / holeCount)")
+    }
+
+    @Test func cancellingStopsAFilledMerge() async throws {
+        let panorama = try SyntheticPanorama()
+        let sources = panorama.sources
+        let task = Task.detached {
+            let merger = try PanoramaMerger(sources: sources)
+            var options = PanoramaMergeOptions()
+            options.fillEdges = true
+            return try merger.merge(options: options, scale: 1)
+        }
+        task.cancel()
+        await #expect(throws: CancellationError.self) { _ = try await task.value }
+        withExtendedLifetime(panorama) {}
+    }
+
     @Test func cancellingStopsTheMerge() async throws {
         let panorama = try SyntheticPanorama()
         let sources = panorama.sources
@@ -413,6 +503,20 @@ struct PanoramaMergeTests {
         changed.save(to: defaults)
         #expect(PanoramaMergeOptions.load(from: defaults) == changed)
     }
+
+    @Test func fillEdgesStartsOffAndOlderSettingsStillLoad() throws {
+        #expect(!PanoramaMergeOptions().fillEdges)
+        // Saved before Fill Edges existed.
+        let old = Data(#"{"projection":"cylindrical","boundaryWarp":40,"autoCrop":true,"autoSettings":false,"createsStack":true}"#.utf8)
+        let options = try JSONDecoder().decode(PanoramaMergeOptions.self, from: old)
+        #expect(options.projection == .cylindrical && options.boundaryWarp == 40 && options.autoCrop)
+        #expect(!options.autoSettings && options.createsStack && !options.fillEdges)
+        #expect(options.cropsToCovered)
+        var filled = options
+        filled.fillEdges = true
+        #expect(!filled.cropsToCovered && filled.autoCrop, "Fill Edges turns Auto Crop off but keeps the choice")
+        #expect(try JSONDecoder().decode(PanoramaMergeOptions.self, from: JSONEncoder().encode(filled)) == filled)
+    }
 }
 
 @Suite("Panorama merge in the catalog", .serialized)
@@ -485,6 +589,17 @@ struct PanoramaCatalogTests {
         #expect(adjustments.crop.rect.width < 1 && adjustments.crop.rect.height < 1)
         #expect(adjustments.crop.aspect == .custom && !adjustments.crop.isAspectLocked)
         #expect(merged.isCropped)
+    }
+
+    @Test func fillEdgesLeavesTheMergeUncropped() async throws {
+        let setup = try await Setup()
+        var options = PanoramaMergeOptions()
+        options.autoCrop = true
+        options.fillEdges = true
+        options.autoSettings = false
+        let (merged, _) = try await setup.merge(options: options)
+        #expect(!merged.isCropped)
+        #expect(merged.adjustments.crop.rect == CGRect(x: 0, y: 0, width: 1, height: 1))
     }
 
     @Test func createStackPutsThePanoramaOnTopOfThePhotosInOrder() async throws {

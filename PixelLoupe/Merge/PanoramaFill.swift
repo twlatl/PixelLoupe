@@ -174,10 +174,7 @@ nonisolated enum PanoramaFill {
 
     /// `color` where `coverage` (red) says the photos cover, `fill` where they don't, mixed across partial coverage.
     static func composite(_ color: CIImage, coverage: CIImage, fill: CIImage) -> CIImage {
-        color.applyingFilter("CIBlendWithRedMask", parameters: [
-            kCIInputBackgroundImageKey: fill.cropped(to: color.extent),
-            kCIInputMaskImageKey: coverage,
-        ]).cropped(to: color.extent)
+        PanoramaKernels.fillMix.apply(extent: color.extent, arguments: [color, coverage, fill]) ?? color
     }
 
     /// `color` and `coverage` scaled to `width` × `height`, as RGBA floats top row first, coverage in alpha.

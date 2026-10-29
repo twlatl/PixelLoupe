@@ -97,6 +97,14 @@ float4 panoramaBoundaryWarp(sampler panorama, sampler map, float4 size, destinat
     return panorama.sample(panorama.transform(source));
 }
 
+/// Fill Edges' fill laid under the panorama: the panorama where the photos cover (red), the fill where they don't,
+/// mixed across partial coverage. Fully covered pixels are the panorama's as they are.
+float4 panoramaFillMix(sample_t panorama, sample_t coverage, sample_t fill) {
+    float covered = clamp(coverage.r, 0.0, 1.0);
+    if (covered >= 1.0) { return float4(panorama.rgb, 1.0); }
+    return float4(mix(fill.rgb, panorama.rgb, covered), 1.0);
+}
+
 /// Fill Edges at any resolution (see PanoramaFill.Field): each pixel takes what the matches of the solved pixels
 /// around it copy there from `color`, offsets scaled to `color`'s resolution, weighted by how well they match and
 /// how near they are. `field` holds each solved pixel's match: the copied patch's center (in solved pixels, from the

@@ -10,10 +10,30 @@ nonisolated struct PanoramaMergeOptions: Codable, Equatable, Sendable {
     /// 0…100: how far the panorama's edge is bent to fill the rectangle (see ``PanoramaBoundaryWarp``).
     var boundaryWarp = 0
     var autoCrop = false
+    /// Fills where the photos don't reach with content-aware fill (``PanoramaFill``), so nothing has to be
+    /// cropped away. Turns Auto Crop off while on, as in Lightroom.
+    var fillEdges = false
     var autoSettings = true
     var createsStack = false
 
+    /// Whether the merge is cropped to the rectangle the photos cover: Auto Crop, unless Fill Edges fills it.
+    var cropsToCovered: Bool { autoCrop && !fillEdges }
+
     private static let defaultsKey = "PanoramaMergeOptions"
+
+    init() {}
+
+    /// Settings saved before an option existed load with that option's default.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = PanoramaMergeOptions()
+        projection = try container.decodeIfPresent(PanoramaProjection.self, forKey: .projection) ?? defaults.projection
+        boundaryWarp = try container.decodeIfPresent(Int.self, forKey: .boundaryWarp) ?? defaults.boundaryWarp
+        autoCrop = try container.decodeIfPresent(Bool.self, forKey: .autoCrop) ?? defaults.autoCrop
+        fillEdges = try container.decodeIfPresent(Bool.self, forKey: .fillEdges) ?? defaults.fillEdges
+        autoSettings = try container.decodeIfPresent(Bool.self, forKey: .autoSettings) ?? defaults.autoSettings
+        createsStack = try container.decodeIfPresent(Bool.self, forKey: .createsStack) ?? defaults.createsStack
+    }
 
     static func load(from defaults: UserDefaults = Defaults.store) -> PanoramaMergeOptions {
         guard let data = defaults.data(forKey: defaultsKey),
@@ -34,14 +54,16 @@ nonisolated struct PanoramaCoverage: Sendable {
 }
 
 nonisolated struct PanoramaMergeResult: Sendable {
-    /// The panorama, scene-linear at the photos' average exposure, white where the photos don't reach.
+    /// The panorama, scene-linear at the photos' average exposure, white where the photos don't reach (or filled,
+    /// with Fill Edges).
     var image: LinearDNGImage
-    /// Auto Crop's crop (Develop's unit rectangle, origin bottom left), or nil with Auto Crop off.
+    /// Auto Crop's crop (Develop's unit rectangle, origin bottom left), or nil with Auto Crop off (or Fill Edges on).
     var crop: CGRect?
     /// The largest rectangle the photos cover entirely (unit, origin bottom left): what Auto Settings
     /// measures, and Auto Crop's crop.
     var coveredRect: CGRect
-    /// Where the photos cover the result, for the merge sheet's preview (nil at full resolution).
+    /// Where the photos cover the result, for the merge sheet's preview (nil at full resolution, and with Fill Edges,
+    /// which covers it all).
     var coverage: PanoramaCoverage?
 }
 
@@ -144,6 +166,7 @@ nonisolated final class PanoramaMerger {
     private var analyses: [PanoramaProjection: Analysis] = [:]
     private var warps: [PanoramaProjection: PanoramaBoundaryWarp] = [:]
     private var warpMaps: [WarpKey: WarpMap] = [:]
+    private var fills: [FillKey: PanoramaFill.Solution] = [:]
 
     init(sources: [PhotoMergeSource]) throws {
         if let problem = PhotoMergeSource.problem(merging: sources) { throw problem }
@@ -534,6 +557,10 @@ nonisolated final class PanoramaMerger {
         var extent = canvas
         var image = composite.image
         var coverageImage = composite.coverage
+        if options.fillEdges {
+            image = try filled(composite, analysis: analysis, warp: warp, options: options, scale: scale, canvas: canvas)
+            progress(0.1)
+        }
         if let region {
             // Core Image's origin is the bottom left.
             let part = CGRect(x: region.minX, y: canvas.height - region.maxY, width: region.width, height: region.height)
@@ -554,10 +581,49 @@ nonisolated final class PanoramaMerger {
             width: Int(extent.width), height: Int(extent.height), pixels: pixels,
             headroom: LinearDNGWriter.headroom(peak: peakValue)
         )
-        let shownCoverage = scale < 1 || region != nil ? renderCoverage(coverageImage, extent: extent) : nil
+        let shownCoverage = (scale < 1 || region != nil) && !options.fillEdges ? renderCoverage(coverageImage, extent: extent) : nil
         return PanoramaMergeResult(
-            image: result, crop: options.autoCrop ? coveredRect : nil, coveredRect: coveredRect, coverage: shownCoverage
+            image: result, crop: options.cropsToCovered ? coveredRect : nil, coveredRect: coveredRect, coverage: shownCoverage
         )
+    }
+
+    // MARK: - Fill Edges
+
+    private struct FillKey: Hashable {
+        var projection: PanoramaProjection
+        var amount: Int
+        var width: Int
+        var height: Int
+    }
+
+    /// The most pixels Fill Edges is solved at; larger merges copy the solve's matches up (``PanoramaFill/Field``).
+    var fillPixels = 4_000_000
+
+    /// The composite with Fill Edges' fill where the photos don't reach (after Boundary Warp). The fill is solved on
+    /// a merge of at most `fillPixels` (this one, if it's that small; cached per projection, warp and size) and
+    /// copied up to `scale` from this merge's pixels.
+    private func filled(_ composite: (image: CIImage, coverage: CIImage), analysis: Analysis, warp: WarpMap?,
+                        options: PanoramaMergeOptions, scale: CGFloat, canvas: CGRect) throws -> CIImage {
+        let layout = analysis.layout
+        let fullPixels = Double(layout.size.width * layout.size.height)
+        let solveScale = min(scale, CGFloat(sqrt(Double(fillPixels) / fullPixels)))
+        let solveCanvas = CGRect(x: 0, y: 0, width: max(1, Int((layout.size.width * solveScale).rounded())),
+                                 height: max(1, Int((layout.size.height * solveScale).rounded())))
+        let key = FillKey(projection: options.projection, amount: min(max(options.boundaryWarp, 0), 100),
+                          width: Int(solveCanvas.width), height: Int(solveCanvas.height))
+        let solution: PanoramaFill.Solution
+        if let cached = fills[key] {
+            solution = cached
+        } else {
+            let source = solveCanvas == canvas ? composite : self.composite(analysis, scale: solveScale, canvas: solveCanvas, warp: warp)
+            solution = try PanoramaFill.solve(color: source.image, coverage: source.coverage, context: context,
+                                              maxPixels: fillPixels, isCancelled: { Task.isCancelled })
+            // Kept for the settings the sheet goes back and forth between, within reason.
+            if fills.count > 8 { fills.removeAll() }
+            fills[key] = solution
+        }
+        let fill = solveCanvas == canvas ? solution.fill : solution.field.fill(from: composite.image)
+        return PanoramaFill.composite(composite.image, coverage: composite.coverage, fill: fill)
     }
 
     /// Auto Crop's rectangle for these options (Develop's unit crop rectangle, origin bottom left):
@@ -587,7 +653,7 @@ nonisolated final class PanoramaMerger {
                 adjustments = auto
             }
         }
-        if options.autoCrop {
+        if options.cropsToCovered {
             adjustments.crop.rect = covered
             adjustments.crop.aspect = .custom
             adjustments.crop.isAspectLocked = false
@@ -891,6 +957,7 @@ nonisolated enum PanoramaKernels {
     static let addBandUp = load(name: "panoramaAddBandUp") { try CIKernel(functionName: $0, fromMetalLibraryData: $1) }
     static let addUp = load(name: "panoramaAddUp") { try CIKernel(functionName: $0, fromMetalLibraryData: $1) }
     static let boundaryWarp = load(name: "panoramaBoundaryWarp") { try CIKernel(functionName: $0, fromMetalLibraryData: $1) }
+    static let fillMix = color("panoramaFillMix")
     static let fillReconstruct = load(name: "panoramaFillReconstruct") { try CIKernel(functionName: $0, fromMetalLibraryData: $1) }
 
     private static let library: Data? = Bundle.main.url(forResource: "default", withExtension: "metallib")
