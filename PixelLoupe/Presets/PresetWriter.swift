@@ -114,14 +114,14 @@ nonisolated enum PresetWriter {
         if sections.contains(.basicTone) {
             number("Exposure2012", a.light.exposure, places: 2)
             number("Contrast2012", a.light.contrast * 100)
-            number("Highlights2012", a.light.highlights * 100)
-            number("Shadows2012", a.light.shadows * 100)
+            number("Highlights2012", LightroomScales.lightroom(fromHighlights: a.light.highlights))
+            number("Shadows2012", LightroomScales.lightroom(fromShadows: a.light.shadows))
             number("Whites2012", a.light.whites * 100)
             number("Blacks2012", -a.light.blackPoint * 100)
         }
         if sections.contains(.presence) {
             number("Texture", a.presence.texture * 100)
-            number("Clarity2012", a.presence.clarity * 100)
+            number("Clarity2012", LightroomScales.lightroom(fromClarity: a.presence.clarity))
             number("Dehaze", a.presence.dehaze * 100)
             number("Vibrance", a.presence.vibrance * 100)
             number("Saturation", a.presence.saturation * 100)
@@ -135,10 +135,10 @@ nonisolated enum PresetWriter {
             out["ToneCurvePV2012Green"] = curve(a.curves.green)
             out["ToneCurvePV2012Blue"] = curve(a.curves.blue)
             let parametric = a.curves.parametric
-            number("ParametricShadows", parametric.shadows * 100)
-            number("ParametricDarks", parametric.darks * 100)
-            number("ParametricLights", parametric.lights * 100)
-            number("ParametricHighlights", parametric.highlights * 100)
+            number("ParametricShadows", LightroomScales.lightroom(fromParametric: parametric.shadows))
+            number("ParametricDarks", LightroomScales.lightroom(fromParametric: parametric.darks))
+            number("ParametricLights", LightroomScales.lightroom(fromParametric: parametric.lights))
+            number("ParametricHighlights", LightroomScales.lightroom(fromParametric: parametric.highlights))
             number("ParametricShadowSplit", parametric.shadowSplit * 100)
             number("ParametricMidtoneSplit", parametric.midtoneSplit * 100)
             number("ParametricHighlightSplit", parametric.highlightSplit * 100)

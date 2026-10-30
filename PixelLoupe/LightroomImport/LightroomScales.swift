@@ -10,10 +10,51 @@ nonisolated enum LightroomScales {
         round2(lightroom.clamped(to: -5...5))
     }
 
-    /// Slider values that run −100…+100 in Lightroom and −1…+1 here: contrast, highlights, shadows,
-    /// whites, texture, clarity, dehaze, vibrance and saturation. Linear until tuned.
+    /// Slider values that run −100…+100 in Lightroom and −1…+1 here: contrast, whites, texture, dehaze,
+    /// vibrance and saturation (vibrance measured linear in RAW-229). Linear until tuned.
     static func percent(_ lightroom: Double) -> Double {
         round3(lightroom.clamped(to: -100...100) / 100)
+    }
+
+    /// Lightroom value → PixelLoupe value, measured from Lightroom's exports of slider sweeps (RAW-229):
+    /// each point is the PixelLoupe value whose render matched Lightroom's best, linear in between.
+    typealias Table = [(lightroom: Double, pixelLoupe: Double)]
+
+    /// PixelLoupe's Shadows lifts harder than Lightroom's: +50 matches 0.4. Lowering them is linear.
+    static let shadowsTable: Table = [(-100, -1), (0, 0), (50, 0.395), (100, 0.802)]
+    /// Pulling highlights down is stronger here (−50 matches −0.3); raising them is linear.
+    static let highlightsTable: Table = [(-100, -0.729), (-50, -0.302), (0, 0), (100, 1)]
+    /// Positive Clarity is stronger here (+100 matches 0.69); negative is linear.
+    static let clarityTable: Table = [(-100, -1), (0, 0), (50, 0.41), (100, 0.692)]
+
+    static func shadows(_ lightroom: Double) -> Double { round3(evaluate(shadowsTable, lightroom.clamped(to: -100...100))) }
+    static func highlights(_ lightroom: Double) -> Double { round3(evaluate(highlightsTable, lightroom.clamped(to: -100...100))) }
+    static func clarity(_ lightroom: Double) -> Double { round3(evaluate(clarityTable, lightroom.clamped(to: -100...100))) }
+
+    /// Lightroom's parametric curve regions are gentler than PixelLoupe's at the same number: fitted
+    /// against Lightroom's export of a preset that sets all four (RAW-229).
+    static let parametricStrength = 0.6
+
+    static func parametric(_ lightroom: Double) -> Double {
+        round3(lightroom.clamped(to: -100...100) / 100 * parametricStrength)
+    }
+
+    /// The other way, for presets PixelLoupe writes: the Lightroom value for a PixelLoupe one (values
+    /// past the table's ends, which Lightroom can't reach, become its end).
+    static func lightroom(fromShadows value: Double) -> Double { evaluate(shadowsTable.map { ($1, $0) }, value) }
+    static func lightroom(fromHighlights value: Double) -> Double { evaluate(highlightsTable.map { ($1, $0) }, value) }
+    static func lightroom(fromClarity value: Double) -> Double { evaluate(clarityTable.map { ($1, $0) }, value) }
+    static func lightroom(fromParametric value: Double) -> Double { (value / parametricStrength * 100).clamped(to: -100...100) }
+
+    /// The table's value at `x`, interpolated linearly, held at the ends.
+    private static func evaluate(_ table: Table, _ x: Double) -> Double {
+        guard let first = table.first, let last = table.last else { return x }
+        if x <= first.lightroom { return first.pixelLoupe }
+        if x >= last.lightroom { return last.pixelLoupe }
+        for (a, b) in zip(table, table.dropFirst()) where x <= b.lightroom {
+            return a.pixelLoupe + (b.pixelLoupe - a.pixelLoupe) * (x - a.lightroom) / (b.lightroom - a.lightroom)
+        }
+        return last.pixelLoupe
     }
 
     /// `Blacks2012`: positive lightens the blacks in Lightroom; PixelLoupe's Black Point is a levels

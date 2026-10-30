@@ -114,7 +114,7 @@ struct FidelityTests {
         #expect(table["ToneCurvePV2012"]?.table?.array.compactMap(\.number) == [0, 0, 128, 140, 255, 255])
         var adjustments = PhotoAdjustments()
         let differences = LightroomDevelopMapper.apply(.init(settings: table, processVersion: "11.0", whiteBalance: nil, isRaw: true, imageSize: CGSize(width: 3000, height: 2000)), to: &adjustments)
-        #expect(adjustments.light.exposure == 0.5 && adjustments.light.contrast == 0.1 && adjustments.light.highlights == -0.25)
+        #expect(adjustments.light.exposure == 0.5 && adjustments.light.contrast == 0.1 && adjustments.light.highlights == -0.151)
         #expect(adjustments.whiteBalance.temperature == 4350 && adjustments.curves.rgb.points.count == 3 && adjustments.crop.isActive)
         #expect(differences.allSatisfy { $0.key != "unknown-settings" }, "XMP-only keys such as HasCrop are known: \(differences)")
         #expect(XMPDevelopSettings.parse(Data("not xml".utf8)) == nil)

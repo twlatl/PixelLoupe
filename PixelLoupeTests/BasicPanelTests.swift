@@ -205,8 +205,31 @@ struct BasicPanelTests {
         let differences = LightroomDevelopMapper.apply(
             .init(settings: try #require(try LuaTableParser.parse(text).table), processVersion: "11.0", whiteBalance: nil, isRaw: true), to: &adjustments)
         #expect(differences.isEmpty)
-        #expect(adjustments.light == .init(exposure: 0.5, highlights: -0.6, shadows: 0.4, whites: 0.15, contrast: 0.25, blackPoint: 0.2))
+        // Highlights and Shadows follow the measured tables (RAW-229), the rest are linear.
+        #expect(adjustments.light == .init(exposure: 0.5, highlights: -0.387, shadows: 0.316, whites: 0.15, contrast: 0.25, blackPoint: 0.2))
         #expect(adjustments.presence == .init(texture: 0.1, clarity: -0.3, dehaze: 0.12, vibrance: 0.35, saturation: -0.05))
         #expect(LightroomScales.percent(250) == 1 && LightroomScales.blackPoint(fromBlacks: 100) == -1)
+    }
+
+    @Test("Shadows, Highlights, Clarity and the parametric curve follow the values measured against Lightroom's exports")
+    func measuredScales() {
+        // The sweep points themselves (RAW-229).
+        #expect(LightroomScales.shadows(50) == 0.395 && LightroomScales.shadows(100) == 0.802 && LightroomScales.shadows(-50) == -0.5)
+        #expect(LightroomScales.highlights(-50) == -0.302 && LightroomScales.highlights(-100) == -0.729 && LightroomScales.highlights(50) == 0.5)
+        #expect(LightroomScales.clarity(50) == 0.41 && LightroomScales.clarity(100) == 0.692 && LightroomScales.clarity(-50) == -0.5)
+        #expect(LightroomScales.parametric(25) == 0.15 && LightroomScales.shadows(300) == 0.802, "held at Lightroom's ends")
+        // Monotone, so a stronger Lightroom slider is never a weaker PixelLoupe one.
+        for scale in [LightroomScales.shadows, LightroomScales.highlights, LightroomScales.clarity] {
+            let values = stride(from: -100.0, through: 100, by: 5).map(scale)
+            #expect(zip(values, values.dropFirst()).allSatisfy { $0 < $1 })
+        }
+        // The preset writer's inverse brings each value back.
+        for lightroom in stride(from: -100.0, through: 100, by: 10) {
+            #expect(abs(LightroomScales.lightroom(fromShadows: LightroomScales.shadows(lightroom)) - lightroom) < 0.2)
+            #expect(abs(LightroomScales.lightroom(fromHighlights: LightroomScales.highlights(lightroom)) - lightroom) < 0.2)
+            #expect(abs(LightroomScales.lightroom(fromClarity: LightroomScales.clarity(lightroom)) - lightroom) < 0.2)
+            #expect(abs(LightroomScales.lightroom(fromParametric: LightroomScales.parametric(lightroom)) - lightroom) < 0.2)
+        }
+        #expect(LightroomScales.lightroom(fromShadows: 1) == 100, "past what Lightroom reaches")
     }
 }

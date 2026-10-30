@@ -88,7 +88,7 @@ nonisolated struct DevelopPreset: Identifiable, Equatable, Sendable {
         if photo.isMonochrome, settings["SupportsMonochrome"]?.bool == false { return .incompatible("Not for monochrome cameras.") }
         if !photo.isMonochrome, settings["SupportsColor"]?.bool == false { return .incompatible("Only for monochrome cameras.") }
         if settings["SupportsNormalDynamicRange"]?.bool == false { return .incompatible("Only for HDR editing.") }
-        let look = settings["Look"]?.table
+        let look = settings["Look"]?.table.flatMap { $0["Name"]?.string?.isEmpty == false ? $0 : nil }
         if let name = look?["Name"]?.string ?? settings["CameraProfile"]?.string {
             // Adobe's standard looks have PixelLoupe stand-ins; any other profile has to be imported.
             if LightroomDevelopMapper.profileMapping(for: name) == .unknown,
@@ -275,6 +275,10 @@ nonisolated enum PresetMerge {
                 $1.blackAndWhite.isEnabled = true
                 $1.blackAndWhite.intensity = $0.blackAndWhite.intensity
             }
+        }
+        // A preset's masks (a radial vignette, a graduated sky) are added to the photo's own, as Lightroom does.
+        add(["MaskGroupBasedCorrections", "GradientBasedCorrections", "CircularGradientBasedCorrections"], "masks") {
+            $1.masks += $0.masks
         }
         add(["ShadowTint", "RedHue", "RedSaturation", "GreenHue", "GreenSaturation", "BlueHue", "BlueSaturation"], "calibration") {
             $1.calibration = $0.calibration
