@@ -49,7 +49,13 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
         /// Lifts shadows and protects highlights together, -1…1.
         var brilliance = 0.0
         var highlights = 0.0
-        var shadows = 0.0
+        /// Lifts (positive) or deepens the dark tones, -1…1. Back at 0 it takes the current process.
+        var shadows = 0.0 {
+            didSet { if shadows == 0 { shadowsProcess = .current } }
+        }
+        /// How ``shadows`` renders. Edits made before RAW-230 keep the original process, so their look
+        /// doesn't change.
+        var shadowsProcess = ShadowsProcess.current
         /// Moves the white point: positive brightens the lightest tones, negative pulls them down, -1…1.
         var whites = 0.0
         var brightness = 0.0
@@ -57,6 +63,26 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
         var blackPoint = 0.0
 
         var isActive: Bool { isEnabled && self != Light(isEnabled: true) }
+
+        enum ShadowsProcess: Int, Codable, Sendable {
+            /// Core Image's highlight and shadow filter.
+            case highlightShadowFilter = 1
+            /// A gain in stops that fades out toward white, like Lightroom's (RAW-230).
+            case perPixelGain = 2
+
+            static let current = perPixelGain
+        }
+
+        /// `amount` of Shadows under `process` as the amount that looks about the same under
+        /// `target`, by way of the Lightroom value each matches.
+        static func shadows(_ amount: Double, from process: ShadowsProcess, to target: ShadowsProcess) -> Double {
+            guard process != target else { return amount }
+            let lightroom = LightroomScales.lightroom(fromShadows: amount, process: process)
+            switch target {
+            case .perPixelGain: return LightroomScales.shadows(lightroom)
+            case .highlightShadowFilter: return LightroomScales.filterShadows(lightroom)
+            }
+        }
     }
 
     /// Lightroom's Presence sliders: local contrast at two scales, haze, and color strength.
@@ -696,10 +722,11 @@ nonisolated extension PhotoAdjustments.RimLight.Light {
     }
 }
 
-/// Saved settings from before `whites` existed still decode: missing fields keep their defaults.
+/// Saved settings from before `whites` existed still decode: missing fields keep their defaults. Shadows
+/// saved without a process predate RAW-230, so they keep the original one.
 nonisolated extension PhotoAdjustments.Light {
     private enum CodingKeys: String, CodingKey {
-        case isEnabled, exposure, brilliance, highlights, shadows, whites, brightness, contrast, blackPoint
+        case isEnabled, exposure, brilliance, highlights, shadows, shadowsProcess, whites, brightness, contrast, blackPoint
     }
 
     init(from decoder: Decoder) throws {
@@ -710,6 +737,11 @@ nonisolated extension PhotoAdjustments.Light {
         brilliance = try container.decodeIfPresent(Double.self, forKey: .brilliance) ?? brilliance
         highlights = try container.decodeIfPresent(Double.self, forKey: .highlights) ?? highlights
         shadows = try container.decodeIfPresent(Double.self, forKey: .shadows) ?? shadows
+        if shadows != 0 {
+            // A process this version doesn't know renders with the current one.
+            let stored = (try? container.decodeIfPresent(Int.self, forKey: .shadowsProcess)) ?? ShadowsProcess.highlightShadowFilter.rawValue
+            shadowsProcess = ShadowsProcess(rawValue: stored) ?? .current
+        }
         whites = try container.decodeIfPresent(Double.self, forKey: .whites) ?? whites
         brightness = try container.decodeIfPresent(Double.self, forKey: .brightness) ?? brightness
         contrast = try container.decodeIfPresent(Double.self, forKey: .contrast) ?? contrast

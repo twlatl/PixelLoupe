@@ -1,7 +1,7 @@
 import Foundation
 import os
 
-/// Folds every per-pixel tone and color adjustment (Light tone curve, Levels, Curves, color grading
+/// Folds every per-pixel tone and color adjustment (Light tone curve and Shadows, Levels, Curves, color grading
 /// wheels, Selective Color and Black & White) into one 3D lookup table, applied on the GPU with
 /// `CIColorCubeWithColorSpace`. One table lookup per pixel keeps slider drags fluid no matter how
 /// many of these sections are in use.
@@ -32,8 +32,7 @@ nonisolated enum ColorLUT {
     /// `nil` when no table-based adjustment is active.
     static func key(for adjustments: PhotoAdjustments) -> Key? {
         let light = adjustments.light
-        let lightUsesTable = light.isEnabled
-            && (light.brightness != 0 || light.contrast != 0 || light.blackPoint != 0 || light.whites != 0 || light.highlights > 0)
+        let lightUsesTable = light.isEnabled && (Transform.hasToneCurve(light) || Transform.hasGainShadows(light))
         let key = Key(
             light: lightUsesTable ? light : nil,
             levels: adjustments.levels.isActive ? adjustments.levels : nil,
@@ -99,6 +98,8 @@ nonisolated enum ColorLUT {
     struct Transform {
         private let key: Key
         private let tone: [Double]?
+        /// Shadows under the per-pixel process, -1…1.
+        private let shadows: Double?
         private let red: [Double]?
         private let green: [Double]?
         private let blue: [Double]?
@@ -108,8 +109,9 @@ nonisolated enum ColorLUT {
         init(key: Key) {
             self.key = key
             primaries = key.calibration.map(Self.primariesMatrix)
+            shadows = key.light.flatMap { Self.hasGainShadows($0) ? $0.shadows : nil }
             var base: [Double]?
-            if let light = key.light {
+            if let light = key.light, Self.hasToneCurve(light) {
                 base = (0..<ColorLUT.tableSize).map {
                     Self.lightTone(Double($0) / Double(ColorLUT.tableSize - 1), light)
                 }
@@ -138,6 +140,7 @@ nonisolated enum ColorLUT {
             var (r, g, b) = (r, g, b)
             if let profile = key.profile { (r, g, b) = Self.look(r, g, b, profile) }
             if let primaries, let calibration = key.calibration { (r, g, b) = Self.calibrate(r, g, b, primaries, calibration) }
+            if let shadows { (r, g, b) = Self.shadows(r, g, b, shadows) }
             if let tone { (r, g, b) = (Self.lookup(tone, r), Self.lookup(tone, g), Self.lookup(tone, b)) }
             if let red { r = Self.lookup(red, r) }
             if let green { g = Self.lookup(green, g) }
@@ -162,6 +165,41 @@ nonisolated enum ColorLUT {
             let upper = min(lower + 1, table.count - 1)
             let t = position - Double(lower)
             return table[lower] * (1 - t) + table[upper] * t
+        }
+
+        /// Whether Light needs ``lightTone``.
+        static func hasToneCurve(_ light: PhotoAdjustments.Light) -> Bool {
+            light.brightness != 0 || light.contrast != 0 || light.blackPoint != 0 || light.whites != 0 || light.highlights > 0
+        }
+
+        /// Whether Light's Shadows renders here (the per-pixel process) rather than with Core Image's filter.
+        static func hasGainShadows(_ light: PhotoAdjustments.Light) -> Bool {
+            light.shadows != 0 && light.shadowsProcess == .perPixelGain
+        }
+
+        /// Stops of gain at full Shadows, lifting and deepening, and how fast it fades toward white:
+        /// fitted to Lightroom's exports of Shadows sweeps on two photos (RAW-230).
+        static let shadowsLift = 3.0
+        static let shadowsDeepen = 3.75
+        static let shadowsFalloff = 1.75
+
+        /// Shadows' per-pixel process on sRGB-encoded color: a gain in stops of
+        /// `amount × strength × (1 − v)^falloff`, where `v` is the pixel's encoded luminance. A gain keeps
+        /// the color's ratios, and white is left alone.
+        static func shadows(_ r: Double, _ g: Double, _ b: Double, _ amount: Double) -> (Double, Double, Double) {
+            let (lr, lg, lb) = (decodeSRGB(r), decodeSRGB(g), decodeSRGB(b))
+            let v = encodeSRGB(luminance(lr, lg, lb).clamped(to: 0...1))
+            let strength = amount > 0 ? shadowsLift : shadowsDeepen
+            let gain = pow(2, amount * strength * pow(1 - v, shadowsFalloff))
+            return (encodeSRGB(lr * gain), encodeSRGB(lg * gain), encodeSRGB(lb * gain))
+        }
+
+        static func decodeSRGB(_ x: Double) -> Double {
+            x <= 0.04045 ? x / 12.92 : pow((x + 0.055) / 1.055, 2.4)
+        }
+
+        static func encodeSRGB(_ x: Double) -> Double {
+            x <= 0.0031308 ? 12.92 * x : 1.055 * pow(x, 1 / 2.4) - 0.055
         }
 
         static func lightTone(_ x: Double, _ light: PhotoAdjustments.Light) -> Double {

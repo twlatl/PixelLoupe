@@ -115,7 +115,7 @@ nonisolated enum PresetWriter {
             number("Exposure2012", a.light.exposure, places: 2)
             number("Contrast2012", a.light.contrast * 100)
             number("Highlights2012", LightroomScales.lightroom(fromHighlights: a.light.highlights))
-            number("Shadows2012", LightroomScales.lightroom(fromShadows: a.light.shadows))
+            number("Shadows2012", LightroomScales.lightroom(fromShadows: a.light.shadows, process: a.light.shadowsProcess))
             number("Whites2012", a.light.whites * 100)
             number("Blacks2012", -a.light.blackPoint * 100)
         }

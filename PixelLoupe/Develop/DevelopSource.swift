@@ -395,10 +395,12 @@ nonisolated enum AdjustmentPipeline {
         }
 
         let light = adjustments.light
-        if light.isEnabled, light.brilliance != 0 || light.highlights < 0 || light.shadows != 0 {
+        // Shadows under the per-pixel process renders in the color table instead (RAW-230).
+        let filterShadows = light.shadowsProcess == .highlightShadowFilter ? light.shadows : 0
+        if light.isEnabled, light.brilliance != 0 || light.highlights < 0 || filterShadows != 0 {
             let filter = CIFilter.highlightShadowAdjust()
             filter.inputImage = image
-            filter.shadowAmount = Float((light.shadows + 0.5 * light.brilliance).clamped(to: -1...1))
+            filter.shadowAmount = Float((filterShadows + 0.5 * light.brilliance).clamped(to: -1...1))
             filter.highlightAmount = Float((1 + min(light.highlights, 0) - 0.3 * max(light.brilliance, 0)).clamped(to: 0...1))
             image = filter.outputImage ?? image
         }
@@ -502,7 +504,9 @@ nonisolated enum AdjustmentPipeline {
         for filter in image.autoAdjustmentFilters(options: [.enhance: true, .redEye: false])
         where filter.name == "CIHighlightShadowAdjust" {
             if let shadows = filter.value(forKey: "inputShadowAmount") as? Double {
-                light.shadows = (shadows * 100).rounded() / 100
+                // The filter's amount, as the current process's.
+                let amount = PhotoAdjustments.Light.shadows(shadows, from: .highlightShadowFilter, to: light.shadowsProcess)
+                light.shadows = (amount * 100).rounded() / 100
             }
             if let highlights = filter.value(forKey: "inputHighlightAmount") as? Double {
                 light.highlights = ((highlights - 1) * 100).rounded() / 100
@@ -525,7 +529,7 @@ nonisolated enum AdobeProfileLook {
         result.light.exposure += hidden.light.exposure * k
         result.light.contrast += hidden.light.contrast * k
         result.light.highlights += hidden.light.highlights * k
-        result.light.shadows += hidden.light.shadows * k
+        result.light.shadows += PhotoAdjustments.Light.shadows(hidden.light.shadows, from: hidden.light.shadowsProcess, to: result.light.shadowsProcess) * k
         result.light.whites += hidden.light.whites * k
         result.light.blackPoint += hidden.light.blackPoint * k
         result.presence.texture += hidden.presence.texture * k

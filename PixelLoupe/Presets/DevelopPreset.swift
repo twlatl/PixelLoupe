@@ -196,7 +196,7 @@ nonisolated enum PresetMerge {
         add(["Exposure2012"], "exposure") { $1.light.exposure = $0.light.exposure }
         add(["Contrast2012"], "contrast") { $1.light.contrast = $0.light.contrast }
         add(["Highlights2012"], "highlights") { $1.light.highlights = $0.light.highlights }
-        add(["Shadows2012"], "shadows") { $1.light.shadows = $0.light.shadows }
+        add(["Shadows2012"], "shadows") { $1.light.shadows = $0.light.shadows; $1.light.shadowsProcess = $0.light.shadowsProcess }
         add(["Whites2012"], "whites") { $1.light.whites = $0.light.whites }
         add(["Blacks2012"], "blacks") { $1.light.blackPoint = $0.light.blackPoint }
         add(["Texture"], "texture") { $1.presence.texture = $0.presence.texture }

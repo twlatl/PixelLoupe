@@ -97,6 +97,24 @@ something like the photo's median brightness or the share of it in shadow) would
 two photos can't fit a rule like that. It needs three or four more Shadows sweeps of different kinds of photos (a low-key
 interior, a bright beach or snow scene, a flat overcast landscape) and is better as a follow-up after option 2.
 
+## Built (RAW-230): measured in the real pipeline
+
+RAW-230 builds option 2: the gain runs in the color table, after the profile and calibration and before the tone curve,
+for photos on the new Shadows process. Rendered from the RAWs at the shared constants, against Lightroom's sweeps
+(mean ΔE00, including each photo's baseline difference: 0.59 for Busy City, 1.69 for `5D3_5129`):
+
+| Shadows | Busy City, original process with RAW-229's table | Busy City, per-pixel | `5D3_5129`, original process | `5D3_5129`, per-pixel |
+| --- | --- | --- | --- | --- |
+| −100 | 2.72 | 3.68 | 7.73 | 2.83 |
+| −50 | 1.88 | 2.74 | 4.83 | 2.23 |
+| +50 | 1.70 | 1.58 | 3.59 | 2.66 |
+| +100 | 3.75 | 3.97 | 5.34 | 4.39 |
+| Mean | 2.52 | 2.99 | 5.37 | 3.03 |
+
+Across both photos that's 3.95 → 3.01. Busy City gets worse when darkening, because one strength can't suit both
+photos; that's the adaptive-strength follow-up. Refitting the three constants in the pipeline instead of on Lightroom's
+export moved the mean by less than 0.01, so they stay as fitted: lift 3.0, deepen 3.75, falloff 1.75.
+
 ## Caveats and what to do before building
 
 - **Two photos.** Both are portraits from one camera. More sweeps (above) would show how far the shared constants
