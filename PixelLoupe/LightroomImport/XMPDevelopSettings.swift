@@ -28,68 +28,79 @@ nonisolated enum XMPDevelopSettings {
 
     private final class Parser: NSObject, XMLParserDelegate {
         var table = LuaTable()
-        /// The `crs:` element being read, with the items of its sequence so far.
-        private var element: String?
-        private var items: [LuaValue] = []
-        /// Attributes of a description nested in the element (a look's name, for example).
-        private var nested = LuaTable()
-        /// A `crs:` element inside that description (a look's sort name or group): part of the setting.
-        private var inner: String?
-        private var text = ""
+
+        /// A `crs:` element being read, or an `rdf:li` item of one. Masks nest these: a sequence of
+        /// corrections, each a description with its own sequence of mask shapes.
+        private struct Frame {
+            var key: String?
+            /// Attributes, of the element itself or of a description inside it.
+            var table = LuaTable()
+            var items: [LuaValue] = []
+            var text = ""
+            /// Its items are alternatives (`rdf:Alt`, such as a localized name), not a list.
+            var isAlternative = false
+        }
+
+        private var stack: [Frame] = []
+
+        private static func settings(_ attributes: [String: String]) -> [(String, LuaValue)] {
+            attributes.filter { $0.key.hasPrefix("crs:") }.map { (String($0.key.dropFirst(4)), XMPDevelopSettings.value(for: $0.value)) }
+        }
 
         func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName: String?, attributes: [String: String] = [:]) {
             if elementName == "rdf:Description" {
-                for (name, value) in attributes where name.hasPrefix("crs:") {
-                    // Inside a settings element, the attributes belong to that setting.
-                    if element != nil { nested.hash[String(name.dropFirst(4))] = XMPDevelopSettings.value(for: value) }
-                    else { table.hash[String(name.dropFirst(4))] = XMPDevelopSettings.value(for: value) }
+                // Inside a setting or an item, the attributes belong to it; otherwise they're settings.
+                for (key, value) in Self.settings(attributes) {
+                    if stack.isEmpty { table.hash[key] = value } else { stack[stack.count - 1].table.hash[key] = value }
                 }
             } else if elementName.hasPrefix("crs:") {
-                if element != nil {
-                    // Belongs to the setting being read; don't start a new one.
-                    inner = String(elementName.dropFirst(4))
-                    text = ""
-                    return
-                }
-                element = String(elementName.dropFirst(4))
-                items = []
-                nested = LuaTable()
-                text = ""
-            } else if elementName == "rdf:li" {
-                text = ""
+                var frame = Frame(key: String(elementName.dropFirst(4)))
+                for (key, value) in Self.settings(attributes) { frame.table.hash[key] = value }
+                stack.append(frame)
+            } else if elementName == "rdf:li", !stack.isEmpty {
+                var frame = Frame()
+                for (key, value) in Self.settings(attributes) { frame.table.hash[key] = value }
+                stack.append(frame)
+            } else if elementName == "rdf:Alt", !stack.isEmpty {
+                stack[stack.count - 1].isAlternative = true
             }
         }
 
         func parser(_ parser: XMLParser, foundCharacters string: String) {
-            text += string
+            if !stack.isEmpty { stack[stack.count - 1].text += string }
         }
 
         func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName: String?) {
-            if let inner {
-                if elementName == "rdf:li", nested.hash[inner] == nil {
-                    nested.hash[inner] = XMPDevelopSettings.value(for: text)
-                } else if elementName == "crs:\(inner)" {
-                    self.inner = nil
+            let isItem = elementName == "rdf:li"
+            guard isItem || elementName.hasPrefix("crs:"), let frame = stack.popLast() else { return }
+            if isItem {
+                guard !stack.isEmpty else { return }
+                if !frame.table.isEmpty {
+                    stack[stack.count - 1].items.append(.table(frame.table))
+                } else {
+                    // A curve point "x, y" is two numbers; anything else is one value.
+                    let parts = frame.text.split(separator: ",").map { String($0) }
+                    if parts.count == 2 {
+                        stack[stack.count - 1].items.append(contentsOf: parts.map { XMPDevelopSettings.value(for: $0) })
+                    } else {
+                        stack[stack.count - 1].items.append(XMPDevelopSettings.value(for: frame.text))
+                    }
                 }
-                text = ""
                 return
             }
-            if elementName == "rdf:li", element != nil {
-                // A curve point "x, y" is two numbers; anything else is one value.
-                let parts = text.split(separator: ",").map { String($0) }
-                if parts.count == 2 { items.append(contentsOf: parts.map { XMPDevelopSettings.value(for: $0) }) } else { items.append(XMPDevelopSettings.value(for: text)) }
-                text = ""
-            } else if elementName.hasPrefix("crs:"), element == String(elementName.dropFirst(4)) {
-                let key = String(elementName.dropFirst(4))
-                if !items.isEmpty {
-                    table.hash[key] = .table(LuaTable(array: items))
-                } else if !nested.isEmpty {
-                    table.hash[key] = .table(nested)
-                } else if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    table.hash[key] = XMPDevelopSettings.value(for: text)
-                }
-                element = nil
+            guard let key = frame.key else { return }
+            let value: LuaValue
+            if !frame.items.isEmpty {
+                // Within a setting (a look's group), a localized name is its text; a list stays a list.
+                value = !stack.isEmpty && frame.isAlternative ? frame.items[0] : .table(LuaTable(array: frame.items))
+            } else if !frame.table.isEmpty {
+                value = .table(frame.table)
+            } else if !frame.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                value = XMPDevelopSettings.value(for: frame.text)
+            } else {
+                return
             }
+            if stack.isEmpty { table.hash[key] = value } else { stack[stack.count - 1].table.hash[key] = value }
         }
     }
 }

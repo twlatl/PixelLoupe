@@ -134,12 +134,12 @@ nonisolated enum LightroomDevelopMapper {
         func value(_ key: String) -> Double? { settings[key].flatMap(number).flatMap { $0 != 0 ? $0 : nil } }
         if let exposure = value("Exposure2012") { adjustments.light.exposure = LightroomScales.exposure(exposure) }
         if let contrast = value("Contrast2012") { adjustments.light.contrast = LightroomScales.percent(contrast) }
-        if let highlights = value("Highlights2012") { adjustments.light.highlights = LightroomScales.percent(highlights) }
-        if let shadows = value("Shadows2012") { adjustments.light.shadows = LightroomScales.percent(shadows) }
+        if let highlights = value("Highlights2012") { adjustments.light.highlights = LightroomScales.highlights(highlights) }
+        if let shadows = value("Shadows2012") { adjustments.light.shadows = LightroomScales.shadows(shadows) }
         if let whites = value("Whites2012") { adjustments.light.whites = LightroomScales.percent(whites) }
         if let blacks = value("Blacks2012") { adjustments.light.blackPoint = LightroomScales.blackPoint(fromBlacks: blacks) }
         if let texture = value("Texture") { adjustments.presence.texture = LightroomScales.percent(texture) }
-        if let clarity = value("Clarity2012") { adjustments.presence.clarity = LightroomScales.percent(clarity) }
+        if let clarity = value("Clarity2012") { adjustments.presence.clarity = LightroomScales.clarity(clarity) }
         if let dehaze = value("Dehaze") { adjustments.presence.dehaze = LightroomScales.percent(dehaze) }
         if let vibrance = value("Vibrance") { adjustments.presence.vibrance = LightroomScales.percent(vibrance) }
         if let saturation = value("Saturation") { adjustments.presence.saturation = LightroomScales.percent(saturation) }
@@ -522,8 +522,9 @@ nonisolated enum LightroomDevelopMapper {
         calibration.blueSaturation = LightroomScales.percent(value("BlueSaturation") ?? 0)
         if calibration.isActive { adjustments.calibration = calibration }
 
-        // The look (newer catalogs) names the profile; otherwise the camera profile does.
-        let look = settings["Look"]?.table
+        // The look (newer catalogs) names the profile; otherwise the camera profile does. A preset's
+        // empty look (`<crs:Look crs:Name=""/>`) names none.
+        let look = settings["Look"]?.table.flatMap { $0["Name"]?.string?.isEmpty == false ? $0 : nil }
         guard let name = look?["Name"]?.string ?? settings["CameraProfile"]?.string else { return [] }
         let amount = look?["Amount"]?.number ?? 1
         let mapping = profileMapping(for: name)
@@ -657,7 +658,7 @@ nonisolated enum LightroomDevelopMapper {
         if let green = curve("ToneCurvePV2012Green") { adjustments.curves.green = green }
         if let blue = curve("ToneCurvePV2012Blue") { adjustments.curves.blue = blue }
 
-        func amount(_ key: String) -> Double? { settings[key].flatMap(number).flatMap { $0 != 0 ? LightroomScales.percent($0) : nil } }
+        func amount(_ key: String) -> Double? { settings[key].flatMap(number).flatMap { $0 != 0 ? LightroomScales.parametric($0) : nil } }
         var parametric = ParametricCurve()
         parametric.shadows = amount("ParametricShadows") ?? 0
         parametric.darks = amount("ParametricDarks") ?? 0

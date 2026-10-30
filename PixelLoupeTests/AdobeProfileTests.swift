@@ -234,7 +234,8 @@ struct AdobeProfileLibraryTests {
         photo.profile = .init(kind: .standard, amount: 0.5, importedName: "Adobe Vivid", adobeID: "UUID-VIVID")
         photo.presence.clarity = 0.1
         let rendered = AdobeProfileLook.withProfileSettings(photo, library: library)
-        #expect(abs(rendered.presence.clarity - (0.1 + 0.2 * 0.5)) < 1e-9, "added at the profile's amount")
+        // The profile's Clarity +20 is 0.164 (RAW-229's measured scale).
+        #expect(abs(rendered.presence.clarity - (0.1 + 0.164 * 0.5)) < 1e-9, "added at the profile's amount")
         #expect(photo.presence.clarity == 0.1, "the photo's own setting is unchanged")
         photo.profile.adobeID = nil
         #expect(AdobeProfileLook.withProfileSettings(photo, library: library) == photo, "nothing without the profile")

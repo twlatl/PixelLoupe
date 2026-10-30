@@ -88,7 +88,7 @@ nonisolated struct DevelopPreset: Identifiable, Equatable, Sendable {
         if photo.isMonochrome, settings["SupportsMonochrome"]?.bool == false { return .incompatible("Not for monochrome cameras.") }
         if !photo.isMonochrome, settings["SupportsColor"]?.bool == false { return .incompatible("Only for monochrome cameras.") }
         if settings["SupportsNormalDynamicRange"]?.bool == false { return .incompatible("Only for HDR editing.") }
-        let look = settings["Look"]?.table
+        let look = settings["Look"]?.table.flatMap { $0["Name"]?.string?.isEmpty == false ? $0 : nil }
         if let name = look?["Name"]?.string ?? settings["CameraProfile"]?.string {
             // Adobe's standard looks have PixelLoupe stand-ins; any other profile has to be imported.
             if LightroomDevelopMapper.profileMapping(for: name) == .unknown,
@@ -196,7 +196,7 @@ nonisolated enum PresetMerge {
         add(["Exposure2012"], "exposure") { $1.light.exposure = $0.light.exposure }
         add(["Contrast2012"], "contrast") { $1.light.contrast = $0.light.contrast }
         add(["Highlights2012"], "highlights") { $1.light.highlights = $0.light.highlights }
-        add(["Shadows2012"], "shadows") { $1.light.shadows = $0.light.shadows }
+        add(["Shadows2012"], "shadows") { $1.light.shadows = $0.light.shadows; $1.light.shadowsProcess = $0.light.shadowsProcess }
         add(["Whites2012"], "whites") { $1.light.whites = $0.light.whites }
         add(["Blacks2012"], "blacks") { $1.light.blackPoint = $0.light.blackPoint }
         add(["Texture"], "texture") { $1.presence.texture = $0.presence.texture }
@@ -275,6 +275,10 @@ nonisolated enum PresetMerge {
                 $1.blackAndWhite.isEnabled = true
                 $1.blackAndWhite.intensity = $0.blackAndWhite.intensity
             }
+        }
+        // A preset's masks (a radial vignette, a graduated sky) are added to the photo's own, as Lightroom does.
+        add(["MaskGroupBasedCorrections", "GradientBasedCorrections", "CircularGradientBasedCorrections"], "masks") {
+            $1.masks += $0.masks
         }
         add(["ShadowTint", "RedHue", "RedSaturation", "GreenHue", "GreenSaturation", "BlueHue", "BlueSaturation"], "calibration") {
             $1.calibration = $0.calibration

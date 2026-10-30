@@ -116,13 +116,42 @@ struct PresetApplyTests {
         #expect(result.color.highlights == PhotoAdjustments.ColorWheel(), "other wheels untouched")
     }
 
+    /// A preset's radial filter (Busy City darkens and warms the edges with one) is added to the photo's own masks.
+    @Test func aPresetsMasksAreAddedToThePhotos() throws {
+        let data = Data("""
+            <x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+            <rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:PresetType="Normal"
+              crs:ProcessVersion="6.7" crs:CameraProfile="Adobe Standard" crs:HasSettings="True">
+            <crs:Name><rdf:Alt><rdf:li xml:lang="x-default">Edges</rdf:li></rdf:Alt></crs:Name>
+            <crs:CircularGradientBasedCorrections><rdf:Seq><rdf:li><rdf:Description crs:What="Correction" crs:CorrectionAmount="1.000000"
+              crs:CorrectionActive="true" crs:LocalExposure2012="-0.300000" crs:LocalTemperature="0.088663">
+              <crs:CorrectionMasks><rdf:Seq><rdf:li crs:What="Mask/CircularGradient" crs:MaskValue="1.000000" crs:Top="0.1" crs:Left="0.05"
+                crs:Bottom="0.9" crs:Right="0.95" crs:Angle="0" crs:Midpoint="+50" crs:Roundness="0" crs:Feather="+50" crs:Flipped="false"
+                crs:Version="+2"/></rdf:Seq></crs:CorrectionMasks>
+              <crs:CorrectionRangeMask crs:Version="+2" crs:Type="0" crs:LumMin="0.000000" crs:LumMax="1.000000"/>
+            </rdf:Description></rdf:li></rdf:Seq></crs:CircularGradientBasedCorrections>
+            <crs:Look crs:Name=""/>
+            </rdf:Description></rdf:RDF></x:xmpmeta>
+            """.utf8)
+        let preset = try #require(DevelopPreset.parse(data, url: URL(filePath: "/p/edges.xmp"), defaultGroup: "x"))
+        var photo = PhotoAdjustments()
+        photo.masks = [PhotoAdjustments.LocalAdjustment()]
+        let result = preset.applied(to: photo, isRaw: true)
+        #expect(result.masks.count == 2, "the photo's mask stays and the preset's is added")
+        let added = try #require(result.masks.last)
+        #expect(added.settings.exposure == -0.3 && added.settings.temperature > 0)
+        // The older radial filter works outside its ellipse unless Flipped.
+        #expect(added.components.first?.isInverted == true)
+        // An empty look names no profile: the camera profile does.
+        #expect(preset.compatibility(with: .init(cameraModel: "Canon EOS 5D Mark III")) == .compatible)
+    }
+
     /// Every setting the Lightroom import maps can also come from a preset (except those that belong to
-    /// one photo: crop, masks, spots, red eye).
+    /// one photo: crop, brush strokes, spots, red eye).
     @Test func everyMappedSettingCanBeAppliedFromAPreset() {
         let perPhoto: Set<String> = [
             "CropLeft", "CropRight", "CropTop", "CropBottom", "CropAngle", "CropConstrainAspectRatio", "CropConstrainToWarp",
-            "MaskGroupBasedCorrections", "GradientBasedCorrections", "CircularGradientBasedCorrections", "PaintBasedCorrections",
-            "RetouchInfo", "RetouchAreas", "RedEyeInfo",
+            "PaintBasedCorrections", "RetouchInfo", "RetouchAreas", "RedEyeInfo",
         ]
         let mapped = Set(LightroomDevelopCoverage.table.filter { $0.value == .mapped }.map(\.key)).subtracting(perPhoto)
         let missing = mapped.subtracting(PresetMerge.supportedKeys)

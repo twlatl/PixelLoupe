@@ -101,7 +101,7 @@ nonisolated enum DevelopSetting: String, CaseIterable, Codable, Sendable {
             case .exposure: copy(\.light.exposure)
             case .contrast: copy(\.light.contrast)
             case .highlights: copy(\.light.highlights)
-            case .shadows: copy(\.light.shadows)
+            case .shadows: copy(\.light.shadows); copy(\.light.shadowsProcess)
             case .whites: copy(\.light.whites)
             case .blacks: copy(\.light.blackPoint)
             case .brilliance: copy(\.light.brilliance)
