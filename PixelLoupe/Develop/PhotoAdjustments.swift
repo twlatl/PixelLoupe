@@ -40,6 +40,12 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
 
     var isDefault: Bool { self == .default }
 
+    /// Whether Shadows renders with the per-pixel process anywhere: the photo's or a mask's.
+    var usesGainShadows: Bool {
+        (light.isEnabled && ColorLUT.Transform.hasGainShadows(light))
+            || masks.contains { $0.isActive && $0.settings.light.isEnabled && ColorLUT.Transform.hasGainShadows($0.settings.light) }
+    }
+
     // MARK: - Sections
 
     struct Light: Codable, Equatable, Sendable {

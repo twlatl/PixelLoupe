@@ -125,3 +125,49 @@ export moved the mean by less than 0.01, so they stay as fitted: lift 3.0, deepe
   system (see `GuidedMatte`). The base would come from a small copy on the CPU, as Rim Light's matte does, or from a
   `.ci.metal` box-filter kernel like the panorama merge's. Either way it's an extra pass, so check slider responsiveness
   on a large catalog.
+
+## Adaptive strength (RAW-231)
+
+Ted exported Shadows sweeps of eight more photos (A–H: Sony ARW, Fuji RAF, Nikon NEF; portraits, interiors, landscapes,
+one monochrome), so ten in all. C's +50 was exported at −3 and is left out. Each operator was scored on Lightroom's own
+unedited export, as in the spike, at 320 px on the long edge.
+
+**Lightroom's Shadows strength varies about tenfold between photos**, from about 0.5 to 5–7 stops at full Shadows, and
+one number predicts it: the photo's bright end, the 95th percentile of its encoded luminance (`p95`). That correlates at
++0.9 with the fitted strength both ways. What counts as a shadow is relative to the same bright end, too. The model:
+
+- `v' = min(v / p95, 1)`, so the photo's brightest tones are left alone;
+- `stops = amount × k × (1 − v')^1.75`, with `k = min(exp(a + b × p95), cap)`;
+- lifting `a = −1.682, b = 3.271`, cap 4; deepening `a = −1.888, b = 3.585`, cap 5. The cap stops a clipped photo
+  (`p95` = 1) from overshooting.
+
+Mean ΔE00 over the ten photos on Lightroom's export, each photo's rule fitted on the other nine:
+
+| Model | Lift | Deepen |
+| --- | --- | --- |
+| RAW-230: fixed strength 3.0 / 3.75 | 5.03 | 3.98 |
+| Best fixed strength | 4.59 | 2.78 |
+| Relative to `p95`, fixed strength | 3.18 | 2.16 |
+| Strength from `p95` | 2.49 | 1.58 |
+| **Both, capped** | **2.11** | **1.36** |
+
+Against RAW-230's fixed strength, the worst regressions are Busy City's lift (+0.87, the photo RAW-230 was tuned on) and
+F's deepening (+0.15). Every other photo improves, most of them a lot (B's lift 10.4 → 0.8, D's 8.1 → 1.0).
+
+**In PixelLoupe** the reference is measured once per photo (`DevelopSource.shadowsReference(exposure:)`): the decoded
+photo at its defaults, at 256 px, then moved by the photo's exposure. It goes into the color table's key, rounded to
+0.01, and masks use the photo's. From the RAWs against Lightroom's sweeps:
+
+| Photo | PixelLoupe baseline | Original process | Adaptive per-pixel |
+| --- | --- | --- | --- |
+| Busy City | 0.44 | 2.42 | 2.69 |
+| `5D3_5129` | 1.80 | 5.42 | 2.53 |
+| F | 2.32 | 4.55 | 3.33 |
+| H | 1.53 | 4.51 | 2.31 |
+
+A–E and G aren't comparable this way: they use Lightroom's camera-matching profiles (Camera VV2, Classic Chrome,
+Monochrome), which PixelLoupe doesn't have yet, so they start 5–13 ΔE00 off. PixelLoupe's decode of them is also darker
+at the bright end than Lightroom's, so their measured reference is lower (E 0.49 against 0.67) and the lift too gentle.
+That should resolve with the profiles.
+
+Not known: whether Lightroom's reference moves with Exposure. PixelLoupe's does, scaled in linear light.

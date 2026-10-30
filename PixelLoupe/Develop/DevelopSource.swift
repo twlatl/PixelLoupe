@@ -195,6 +195,10 @@ nonisolated final class DevelopSource {
 
     /// Renders the photo at `scale` (1 = full resolution) with `adjustments` applied.
     func image(with adjustments: PhotoAdjustments, scale: CGFloat, geometry: CropRendering = .cropped) -> CIImage {
+        // Measured before decoding for the render, which it shares the RAW engine with.
+        let shadowsReference = adjustments.usesGainShadows
+            ? self.shadowsReference(exposure: adjustments.light.isEnabled ? adjustments.light.exposure : 0)
+            : ColorLUT.Transform.defaultShadowsReference
         let corrected = LensCorrector.apply(
             adjustments.lens, to: baseImage(with: adjustments, scale: scale),
             builtInApplied: isBuiltInLensProfileApplied(adjustments)
@@ -202,8 +206,33 @@ nonisolated final class DevelopSource {
         let oriented = Self.orient(corrected, adjustments.orientation)
         // Perspective correction works on the photo as shown, so after orientation and before the crop.
         let base = TransformRenderer.apply(adjustments.transform, to: oriented)
-        return AdjustmentPipeline.apply(adjustments, to: base, source: self, scale: scale, geometry: geometry)
+        return AdjustmentPipeline.apply(adjustments, to: base, source: self, scale: scale, geometry: geometry, shadowsReference: shadowsReference)
     }
+
+    /// The photo's bright end at `exposure` (stops), for per-pixel Shadows (RAW-231): the 95th
+    /// percentile of its encoded luminance, measured once on the photo as decoded and moved by the
+    /// exposure, so it's the same at every zoom and for every mask.
+    func shadowsReference(exposure: Double) -> Double {
+        let linear = ColorLUT.Transform.decodeSRGB(decodedBrightEnd) * pow(2, exposure)
+        return ColorLUT.Transform.encodeSRGB(min(linear, 1)).clamped(to: ColorLUT.Transform.shadowsReferenceRange)
+    }
+
+    private lazy var decodedBrightEnd: Double = {
+        let image = baseImage(with: PhotoAdjustments(), scale: scale(toFit: 256))
+        let extent = image.extent.integral
+        guard !extent.isEmpty, !extent.isInfinite, extent.width * extent.height < 1_000_000 else { return ColorLUT.Transform.defaultShadowsReference }
+        let width = Int(extent.width), height = Int(extent.height)
+        var pixels = [Float](repeating: 0, count: width * height * 4)
+        Self.measuringContext.render(image, toBitmap: &pixels, rowBytes: width * 16, bounds: extent, format: .RGBAf,
+                                     colorSpace: CGColorSpace(name: CGColorSpace.linearSRGB))
+        var brightness = (0..<(width * height)).map { i in
+            ColorLUT.Transform.encodeSRGB(Double(0.2126 * pixels[i * 4] + 0.7152 * pixels[i * 4 + 1] + 0.0722 * pixels[i * 4 + 2]).clamped(to: 0...1))
+        }
+        brightness.sort()
+        return brightness.isEmpty ? ColorLUT.Transform.defaultShadowsReference : brightness[min(brightness.count - 1, brightness.count * 95 / 100)]
+    }()
+
+    private static let measuringContext = CIContext(options: [.cacheIntermediates: false])
 
     /// The decoded image before Lens Corrections and the shared pipeline: RAW decoding settings
     /// applied for RAW files, a downscaled original otherwise.
@@ -295,7 +324,7 @@ nonisolated final class DevelopSource {
 nonisolated enum AdjustmentPipeline {
     static func apply(
         _ adjustments: PhotoAdjustments, to base: CIImage, source: DevelopSource, scale: CGFloat,
-        geometry: CropRendering = .cropped
+        geometry: CropRendering = .cropped, shadowsReference: Double = ColorLUT.Transform.defaultShadowsReference
     ) -> CIImage {
         var extent = base.extent
         guard !extent.isEmpty, !extent.isInfinite else { return base }
@@ -330,7 +359,8 @@ nonisolated enum AdjustmentPipeline {
         }
         // Noise reduction where the RAW engine doesn't do it (on a Smart Preview of a RAW file the camera's
         // default is already in the pixels; this approximates the original's more), then tone and color.
-        image = applyTone(adjustments, to: image, longEdge: max(extent.width, extent.height), reducesNoise: source.reducesNoiseInPipeline)
+        image = applyTone(adjustments, to: image, longEdge: max(extent.width, extent.height), reducesNoise: source.reducesNoiseInPipeline,
+                          shadowsReference: shadowsReference)
 
         image = SharpenRenderer.apply(adjustments.sharpen, to: image, scale: scale)
 
@@ -340,7 +370,7 @@ nonisolated enum AdjustmentPipeline {
         let subject = adjustments.masks.contains(where: \.usesSubject)
             ? source.subjectMattes.matte(for: source, adjustments: adjustments, waiting: !Thread.isMainThread)?.image
             : nil
-        image = LocalAdjustmentRenderer.apply(adjustments.masks, to: image, subject: subject, scale: scale)
+        image = LocalAdjustmentRenderer.apply(adjustments.masks, to: image, subject: subject, scale: scale, shadowsReference: shadowsReference)
 
         // Portrait Lighting needs the people (refined onto the photo's edges), found and waited for the same way; before
         // Rim Light, so a rim lights the people after Stage has darkened what's behind them.
@@ -383,7 +413,9 @@ nonisolated enum AdjustmentPipeline {
     /// The tone and color sections, from noise reduction through Definition, in the pipeline's order: for the
     /// photo, and for a mask's own sections (``LocalAdjustmentRenderer``). Noise reduction runs here only when
     /// the RAW engine hasn't done it (`reducesNoise`).
-    static func applyTone(_ adjustments: PhotoAdjustments, to input: CIImage, longEdge: CGFloat, reducesNoise: Bool) -> CIImage {
+    /// `shadowsReference` is the photo's bright end, for per-pixel Shadows (``DevelopSource/shadowsReference(exposure:)``).
+    static func applyTone(_ adjustments: PhotoAdjustments, to input: CIImage, longEdge: CGFloat, reducesNoise: Bool,
+                          shadowsReference: Double = ColorLUT.Transform.defaultShadowsReference) -> CIImage {
         var image = input
         let noise = adjustments.noiseReduction
         if reducesNoise, noise.isActive {
@@ -418,7 +450,7 @@ nonisolated enum AdjustmentPipeline {
             }
         }
 
-        if let key = ColorLUT.key(for: adjustments) {
+        if let key = ColorLUT.key(for: adjustments, shadowsReference: shadowsReference) {
             let filter = CIFilter.colorCubeWithColorSpace()
             filter.inputImage = image
             filter.cubeDimension = Float(ColorLUT.dimension)
