@@ -305,3 +305,33 @@ struct PresetISOTests {
         #expect(result.light.exposure == 0 && abs(result.noiseReduction.amount - 0.15) < 1e-9)
     }
 }
+
+/// RAW-228.
+@Suite("New Preset sheet")
+struct NewPresetSheetTests {
+    /// With a setting checkbox per section, the controls are tall enough for the alert to put its icon
+    /// beside the text; they must still line up with the text, not sit at the alert's edge.
+    @Test func theControlsLineUpWithTheAlertsText() throws {
+        for count in [2, PresetSection.allCases.count] {
+            let checks = NSStackView(views: (0..<count).map { NSButton(checkboxWithTitle: "Section \($0)", target: nil, action: nil) })
+            checks.orientation = .vertical
+            checks.alignment = .leading
+            let name = NSTextField(string: "")
+            name.widthAnchor.constraint(equalToConstant: 300).isActive = true
+            let stack = NSStackView(views: [name, checks])
+            stack.orientation = .vertical
+            stack.alignment = .leading
+
+            let alert = NSAlert()
+            alert.messageText = "New Preset"
+            alert.informativeText = "Saves the chosen settings of this photo as a preset."
+            alert.accessoryView = PresetsPanelViewController.alertAccessory(stack)
+            alert.layout()
+            let content = try #require(alert.window.contentView)
+            let title = try #require(content.subviews.compactMap { $0 as? NSTextField }.first { $0.stringValue == "New Preset" })
+            let titleX = title.convert(title.bounds, to: nil).minX
+            let fieldX = name.convert(name.bounds, to: nil).minX
+            #expect(titleX > 0 && abs(fieldX - titleX) <= 4, "\(count) checkboxes: the name field is at \(fieldX), the title at \(titleX)")
+        }
+    }
+}

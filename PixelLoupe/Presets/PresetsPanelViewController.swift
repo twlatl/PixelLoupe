@@ -379,10 +379,9 @@ final class PresetsPanelViewController: NSViewController, NSOutlineViewDataSourc
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
-        stack.frame = NSRect(x: 0, y: 0, width: 300, height: 420)
         name.widthAnchor.constraint(equalToConstant: 300).isActive = true
         group.widthAnchor.constraint(equalToConstant: 240).isActive = true
-        alert.accessoryView = stack
+        alert.accessoryView = Self.alertAccessory(stack)
         alert.window.initialFirstResponder = name
         let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
             guard response == .alertFirstButtonReturn, let self else { return }
@@ -390,6 +389,22 @@ final class PresetsPanelViewController: NSViewController, NSOutlineViewDataSourc
             Task { await self.createPreset(name: name.stringValue, group: group.stringValue, from: settings, sections: sections) }
         }
         if let window = view.window { alert.beginSheetModal(for: window, completionHandler: finish) } else { finish(alert.runModal()) }
+    }
+
+    /// `content` in a plain view of its size, for an alert's accessory. An alert lines a plain view up
+    /// with its text, but puts a stack view straight in at its left edge once it's tall enough for the
+    /// alert to set its icon beside the text.
+    static func alertAccessory(_ content: NSView) -> NSView {
+        let container = NSView(frame: NSRect(origin: .zero, size: content.fittingSize))
+        content.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            content.topAnchor.constraint(equalTo: container.topAnchor),
+            content.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        return container
     }
 
     /// Creates a preset and selects it. Errors (a name already used) are shown.
