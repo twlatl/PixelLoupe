@@ -22,6 +22,8 @@ nonisolated enum ColorLUT {
         /// The base look and the camera calibration, which run first.
         var profile: PhotoAdjustments.Profile?
         var calibration: PhotoAdjustments.Calibration?
+        /// The photo's bright end, which per-pixel Shadows measures against: set only while it's in use.
+        var shadowsReference: Double?
     }
 
     struct Boost: Equatable, Sendable {
@@ -29,10 +31,12 @@ nonisolated enum ColorLUT {
         var saturation = 0.0
     }
 
-    /// `nil` when no table-based adjustment is active.
-    static func key(for adjustments: PhotoAdjustments) -> Key? {
+    /// `nil` when no table-based adjustment is active. `shadowsReference` is the photo's
+    /// (``DevelopSource/shadowsReference(exposure:)``), rounded so nearby measurements share a table.
+    static func key(for adjustments: PhotoAdjustments, shadowsReference: Double = Transform.defaultShadowsReference) -> Key? {
         let light = adjustments.light
-        let lightUsesTable = light.isEnabled && (Transform.hasToneCurve(light) || Transform.hasGainShadows(light))
+        let gainShadows = light.isEnabled && Transform.hasGainShadows(light)
+        let lightUsesTable = light.isEnabled && (Transform.hasToneCurve(light) || gainShadows)
         let key = Key(
             light: lightUsesTable ? light : nil,
             levels: adjustments.levels.isActive ? adjustments.levels : nil,
@@ -44,7 +48,8 @@ nonisolated enum ColorLUT {
             boost: adjustments.presence.hasColorEffect
                 ? Boost(vibrance: adjustments.presence.vibrance, saturation: adjustments.presence.saturation) : nil,
             profile: adjustments.profile.isActive ? adjustments.profile : nil,
-            calibration: adjustments.calibration.isActive ? adjustments.calibration : nil
+            calibration: adjustments.calibration.isActive ? adjustments.calibration : nil,
+            shadowsReference: gainShadows ? (shadowsReference * 100).rounded() / 100 : nil
         )
         return key == Key() ? nil : key
     }
@@ -98,8 +103,9 @@ nonisolated enum ColorLUT {
     struct Transform {
         private let key: Key
         private let tone: [Double]?
-        /// Shadows under the per-pixel process, -1…1.
+        /// Shadows under the per-pixel process, -1…1, and the photo's bright end it's measured against.
         private let shadows: Double?
+        private let shadowsReference: Double
         private let red: [Double]?
         private let green: [Double]?
         private let blue: [Double]?
@@ -110,6 +116,7 @@ nonisolated enum ColorLUT {
             self.key = key
             primaries = key.calibration.map(Self.primariesMatrix)
             shadows = key.light.flatMap { Self.hasGainShadows($0) ? $0.shadows : nil }
+            shadowsReference = key.shadowsReference ?? Self.defaultShadowsReference
             var base: [Double]?
             if let light = key.light, Self.hasToneCurve(light) {
                 base = (0..<ColorLUT.tableSize).map {
@@ -140,7 +147,7 @@ nonisolated enum ColorLUT {
             var (r, g, b) = (r, g, b)
             if let profile = key.profile { (r, g, b) = Self.look(r, g, b, profile) }
             if let primaries, let calibration = key.calibration { (r, g, b) = Self.calibrate(r, g, b, primaries, calibration) }
-            if let shadows { (r, g, b) = Self.shadows(r, g, b, shadows) }
+            if let shadows { (r, g, b) = Self.shadows(r, g, b, shadows, reference: shadowsReference) }
             if let tone { (r, g, b) = (Self.lookup(tone, r), Self.lookup(tone, g), Self.lookup(tone, b)) }
             if let red { r = Self.lookup(red, r) }
             if let green { g = Self.lookup(green, g) }
@@ -177,19 +184,34 @@ nonisolated enum ColorLUT {
             light.shadows != 0 && light.shadowsProcess == .perPixelGain
         }
 
-        /// Stops of gain at full Shadows, lifting and deepening, and how fast it fades toward white:
-        /// fitted to Lightroom's exports of Shadows sweeps on two photos (RAW-230).
-        static let shadowsLift = 3.0
-        static let shadowsDeepen = 3.75
+        /// Lightroom's Shadows adapts to the photo: what counts as a shadow is relative to the photo's
+        /// bright end (the 95th percentile of its encoded luminance), and the strength grows with it,
+        /// `exp(intercept + slope × reference)` stops at full Shadows, up to `cap`. Fitted to Lightroom's
+        /// Shadows sweeps of ten photos (RAW-231).
+        struct ShadowsStrength {
+            var intercept: Double
+            var slope: Double
+            var cap: Double
+
+            func stops(reference: Double) -> Double { min(exp(intercept + slope * reference), cap) }
+        }
+
+        static let shadowsLift = ShadowsStrength(intercept: -1.682, slope: 3.271, cap: 4)
+        static let shadowsDeepen = ShadowsStrength(intercept: -1.888, slope: 3.585, cap: 5)
         static let shadowsFalloff = 1.75
+        /// For an image with no photo to measure (and a typical one's).
+        static let defaultShadowsReference = 0.8
+        static let shadowsReferenceRange = 0.1...1.0
 
         /// Shadows' per-pixel process on sRGB-encoded color: a gain in stops of
-        /// `amount × strength × (1 − v)^falloff`, where `v` is the pixel's encoded luminance. A gain keeps
-        /// the color's ratios, and white is left alone.
-        static func shadows(_ r: Double, _ g: Double, _ b: Double, _ amount: Double) -> (Double, Double, Double) {
+        /// `amount × strength × (1 − min(v / reference, 1))^falloff`, where `v` is the pixel's encoded luminance
+        /// and `reference` the photo's bright end. A gain keeps the color's ratios, and the photo's
+        /// brightest tones are left alone.
+        static func shadows(_ r: Double, _ g: Double, _ b: Double, _ amount: Double, reference: Double = defaultShadowsReference) -> (Double, Double, Double) {
             let (lr, lg, lb) = (decodeSRGB(r), decodeSRGB(g), decodeSRGB(b))
-            let v = encodeSRGB(luminance(lr, lg, lb).clamped(to: 0...1))
-            let strength = amount > 0 ? shadowsLift : shadowsDeepen
+            let reference = reference.clamped(to: shadowsReferenceRange)
+            let v = min(encodeSRGB(luminance(lr, lg, lb).clamped(to: 0...1)) / reference, 1)
+            let strength = (amount > 0 ? shadowsLift : shadowsDeepen).stops(reference: reference)
             let gain = pow(2, amount * strength * pow(1 - v, shadowsFalloff))
             return (encodeSRGB(lr * gain), encodeSRGB(lg * gain), encodeSRGB(lb * gain))
         }

@@ -8,13 +8,15 @@ import CoreImage.CIFilterBuiltins
 nonisolated enum LocalAdjustmentRenderer {
     /// `subject` is the photo's subject matte (``SubjectMatteStore``), when a mask needs it and it's been
     /// found; a Subject or Background shape adds nothing without it.
-    static func apply(_ masks: [PhotoAdjustments.LocalAdjustment], to image: CIImage, subject: CIImage? = nil, scale: CGFloat = 1) -> CIImage {
+    /// `shadowsReference` is the photo's bright end, which a mask's per-pixel Shadows measures against.
+    static func apply(_ masks: [PhotoAdjustments.LocalAdjustment], to image: CIImage, subject: CIImage? = nil, scale: CGFloat = 1,
+                      shadowsReference: Double = ColorLUT.Transform.defaultShadowsReference) -> CIImage {
         var result = image
         let extent = image.extent
         guard !extent.isEmpty, !extent.isInfinite else { return image }
         for mask in masks where mask.isActive {
             guard let selection = self.mask(for: mask, extent: extent, subject: subject) else { continue }
-            let adjusted = adjust(result, with: mask.settings, scale: scale)
+            let adjusted = adjust(result, with: mask.settings, scale: scale, shadowsReference: shadowsReference)
             let blend = CIFilter.blendWithMask()
             blend.inputImage = adjusted
             blend.backgroundImage = result
@@ -143,7 +145,8 @@ nonisolated enum LocalAdjustmentRenderer {
     /// `image` with a mask's sections applied everywhere (the mask decides where it shows): its exposure and
     /// white balance shift, then the photo's own tone and color stage (``AdjustmentPipeline/applyTone``),
     /// sharpening and grain, so a mask's sliders look just like the Develop panel's. `scale` is the render's (for grain size).
-    static func adjust(_ image: CIImage, with settings: PhotoAdjustments.LocalSettings, scale: CGFloat = 1) -> CIImage {
+    static func adjust(_ image: CIImage, with settings: PhotoAdjustments.LocalSettings, scale: CGFloat = 1,
+                       shadowsReference: Double = ColorLUT.Transform.defaultShadowsReference) -> CIImage {
         var result = image
         let light = settings.light
         if light.isEnabled, light.exposure != 0 {
@@ -162,7 +165,8 @@ nonisolated enum LocalAdjustmentRenderer {
         }
 
         let extent = image.extent
-        result = AdjustmentPipeline.applyTone(settings.adjustments, to: result, longEdge: max(extent.width, extent.height), reducesNoise: true)
+        result = AdjustmentPipeline.applyTone(settings.adjustments, to: result, longEdge: max(extent.width, extent.height), reducesNoise: true,
+                                              shadowsReference: shadowsReference)
         result = SharpenRenderer.apply(settings.sharpen, to: result, scale: scale)
 
         let effects = settings.effects

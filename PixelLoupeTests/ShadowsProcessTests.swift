@@ -1,6 +1,7 @@
 import CoreImage
 import CoreImage.CIFilterBuiltins
 import Foundation
+import ImageIO
 import Testing
 @testable import PixelLoupe
 
@@ -125,15 +126,16 @@ struct ShadowsProcessTests {
         #expect(pixel(output) == pixel(expected))
     }
 
-    @Test("The per-pixel process lifts dark tones in stops, fades out toward white, and keeps color")
+    @Test("The per-pixel process lifts dark tones in stops, fades out toward the photo's bright end, and keeps color")
     func perPixelResponse() {
         typealias T = ColorLUT.Transform
-        // The curve itself: +100 lifts a dark gray by 2^(3 × (1 − v)^1.75) in linear light.
-        let dark = 0.15
+        // The curve itself: +100 lifts a dark gray by 2^(k × (1 − v / reference)^1.75) in linear light.
+        let dark = 0.15, reference = T.defaultShadowsReference
         let lifted = T.shadows(dark, dark, dark, 1).0
-        let v = dark  // a gray's encoded luminance is its own value
-        #expect(abs(T.decodeSRGB(lifted) / T.decodeSRGB(dark) - pow(2, 3 * pow(1 - v, 1.75))) < 1e-9)
+        let k = T.shadowsLift.stops(reference: reference)
+        #expect(abs(T.decodeSRGB(lifted) / T.decodeSRGB(dark) - pow(2, k * pow(1 - dark / reference, 1.75))) < 1e-9)
         #expect(abs(T.shadows(1, 1, 1, 1).0 - 1) < 1e-9 && abs(T.shadows(1, 1, 1, -1).0 - 1) < 1e-9, "white is left alone")
+        #expect(abs(T.shadows(0.85, 0.85, 0.85, 1).0 - 0.85) < 1e-9, "and so is anything as bright as the reference")
         #expect(T.shadows(0.4, 0.4, 0.4, -1).0 < 0.4 && T.shadows(0.4, 0.4, 0.4, 0.5).0 < T.shadows(0.4, 0.4, 0.4, 1).0)
 
         // Through the pipeline, within the color table's interpolation.
@@ -151,6 +153,74 @@ struct ShadowsProcessTests {
         let color = render(gray: 0.2, red: 0.3, light)
         let ratio = T.decodeSRGB(color.r) / T.decodeSRGB(color.g)
         #expect(abs(ratio - T.decodeSRGB(0.3) / T.decodeSRGB(0.2)) < 0.05, "\(ratio)")
+    }
+
+    @Test("Shadows is stronger, and reaches brighter tones, on a photo with a brighter bright end (RAW-231)")
+    func adaptsToTheReference() {
+        typealias T = ColorLUT.Transform
+        let dim = T.shadows(0.15, 0.15, 0.15, 1, reference: 0.45).0, bright = T.shadows(0.15, 0.15, 0.15, 1, reference: 0.95).0
+        #expect(dim > 0.15 && bright > dim + 0.1, "\(dim) \(bright)")
+        #expect(abs(T.shadows(0.5, 0.5, 0.5, 1, reference: 0.45).0 - 0.5) < 1e-9 && T.shadows(0.5, 0.5, 0.5, 1, reference: 0.95).0 > 0.5)
+        #expect(T.shadows(0.15, 0.15, 0.15, -1, reference: 0.95).0 < T.shadows(0.15, 0.15, 0.15, -1, reference: 0.45).0)
+        // The strength follows the rule, and stops at its cap.
+        #expect(abs(T.shadowsLift.stops(reference: 0.6) - exp(-1.682 + 3.271 * 0.6)) < 1e-9)
+        #expect(T.shadowsLift.stops(reference: 1) == 4 && T.shadowsDeepen.stops(reference: 1) == 5)
+
+        // The key carries the reference only while per-pixel Shadows is in use, rounded so tables are shared.
+        var adjustments = PhotoAdjustments()
+        adjustments.light.contrast = 0.2
+        #expect(ColorLUT.key(for: adjustments, shadowsReference: 0.5)?.shadowsReference == nil)
+        adjustments.light.shadows = 0.5
+        #expect(ColorLUT.key(for: adjustments, shadowsReference: 0.5012) == ColorLUT.key(for: adjustments, shadowsReference: 0.4995))
+        #expect(ColorLUT.key(for: adjustments, shadowsReference: 0.5) != ColorLUT.key(for: adjustments, shadowsReference: 0.7))
+    }
+
+    /// A photo that's 90% dark gray and 10% light gray (sRGB values).
+    private func twoToneJPEG(dark: UInt8, light: UInt8) throws -> (TemporaryDirectory, URL) {
+        let directory = try TemporaryDirectory()
+        let url = directory.url.appending(path: "two-tone.jpg")
+        let width = 200, height = 100
+        var bytes = [UInt8](repeating: 255, count: width * height * 4)
+        for y in 0..<height {
+            for x in 0..<width {
+                let value = x < 180 ? dark : light
+                for c in 0..<3 { bytes[(y * width + x) * 4 + c] = value }
+            }
+        }
+        let context = CGContext(data: &bytes, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                space: sRGB, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        let destination = CGImageDestinationCreateWithURL(url as CFURL, "public.jpeg" as CFString, 1, nil)!
+        CGImageDestinationAddImage(destination, context.makeImage()!, [kCGImageDestinationLossyCompressionQuality: 1.0] as CFDictionary)
+        CGImageDestinationFinalize(destination)
+        return (directory, url)
+    }
+
+    @Test("A photo's bright end is measured once from the photo, follows its exposure, and renders the same at every size")
+    func measuredReference() throws {
+        let (directory, url) = try twoToneJPEG(dark: 50, light: 200)
+        defer { _ = directory }
+        let source = try #require(DevelopSource(url: url))
+        let reference = source.shadowsReference(exposure: 0)
+        #expect(abs(reference - 200.0 / 255) < 0.03, "\(reference)")
+        #expect(source.shadowsReference(exposure: 1) > reference + 0.1 && source.shadowsReference(exposure: -1) < reference - 0.1)
+        #expect(abs(source.shadowsReference(exposure: 5) - 1) < 1e-9)
+
+        // A darker photo's lift is gentler.
+        let (dimDirectory, dimURL) = try twoToneJPEG(dark: 50, light: 110)
+        defer { _ = dimDirectory }
+        let dim = try #require(DevelopSource(url: dimURL))
+        var adjustments = PhotoAdjustments()
+        adjustments.light.shadows = 1
+        func darkValue(_ source: DevelopSource, scale: CGFloat) -> Float {
+            let image = source.image(with: adjustments, scale: scale)
+            var pixel = [Float](repeating: 0, count: 4)
+            context.render(image, toBitmap: &pixel, rowBytes: 16, bounds: CGRect(x: image.extent.minX + 10 * scale, y: image.extent.minY + 10 * scale, width: 1, height: 1),
+                           format: .RGBAf, colorSpace: sRGB)
+            return pixel[1]
+        }
+        let full = darkValue(source, scale: 1), half = darkValue(source, scale: 0.5)
+        #expect(full > Float(50.0 / 255) + 0.05 && abs(full - half) < 0.01, "\(full) \(half)")
+        #expect(darkValue(dim, scale: 1) < full - 0.03)
     }
 
     @Test("Brilliance still uses Core Image's filter alongside the per-pixel Shadows")
