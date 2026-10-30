@@ -57,6 +57,9 @@ final class SliderRow: NSView, NSTextFieldDelegate {
     /// Whether the value is being typed; Escape ends the edit without changing the value.
     private(set) var isEditingValue = false
     private var cancelsEdit = false
+    /// Keeps the field as wide as the row's longest value while it's edited; an editable field has no width of its
+    /// own and would otherwise stretch across the row.
+    private lazy var editingWidth = valueLabel.widthAnchor.constraint(equalToConstant: 0)
     var defaultValue: Double {
         get { scale.value(at: slider.defaultValue) }
         set {
@@ -178,8 +181,18 @@ final class SliderRow: NSView, NSTextFieldDelegate {
         valueLabel.drawsBackground = true
         valueLabel.backgroundColor = .textBackgroundColor
         valueLabel.textColor = .labelColor
+        editingWidth.constant = editingFieldWidth
+        editingWidth.isActive = true
         window.makeFirstResponder(valueLabel)
         valueLabel.currentEditor()?.selectAll(nil)
+    }
+
+    /// Wide enough for the longest text the row shows (its range's ends, "−180°", "50,000") plus the bezel's margins.
+    var editingFieldWidth: CGFloat {
+        let font = valueLabel.font ?? .systemFont(ofSize: NSFont.smallSystemFontSize)
+        let texts = [range.lowerBound, range.upperBound, value].map(format)
+        let widest = texts.map { ($0 as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
+        return ceil(widest) + 12
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -198,6 +211,7 @@ final class SliderRow: NSView, NSTextFieldDelegate {
         valueLabel.isSelectable = false
         valueLabel.isBezeled = false
         valueLabel.drawsBackground = false
+        editingWidth.isActive = false
         if !cancelsEdit, let entered = value(forDisplayed: typed) {
             value = entered
             onChange?(value, true)

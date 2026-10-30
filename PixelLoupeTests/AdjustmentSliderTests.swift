@@ -222,6 +222,10 @@ struct SliderValueEntryTests {
 
         row.beginEditingValue()
         #expect(row.isEditingValue)
+        row.layoutSubtreeIfNeeded()
+        let field = try #require(row.subviews.compactMap { $0 as? NSTextField }.first { $0.isEditable })
+        #expect(field.frame.width == row.editingFieldWidth, "sized to the value, not stretched across the row")
+        #expect(field.frame.width < 60)
         let editor = try #require(window.fieldEditor(false, for: nil) as? NSTextView)
         editor.string = "1.25"
         editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
