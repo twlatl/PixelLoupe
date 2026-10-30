@@ -244,7 +244,7 @@ final class CropPanelViewController: NSViewController {
         lockButton.setAccessibilityValue(crop.isAspectLocked ? "locked" : "unlocked")
         lockButton.toolTip = crop.isAspectLocked ? "Unlock the aspect ratio" : "Lock the aspect ratio"
         angleSlider.doubleValue = crop.angle
-        angleValue.stringValue = String(format: "%.2f", crop.angle)
+        showAngle(crop.angle)
         constrainCheckbox.state = crop.constrainToImage ? .on : .off
     }
 
@@ -292,9 +292,15 @@ final class CropPanelViewController: NSViewController {
     @objc private func angleChanged(_ sender: NSSlider) {
         var crop = crop
         crop.angle = (sender.doubleValue * 100).rounded() / 100
-        angleValue.stringValue = String(format: "%.2f", crop.angle)
+        showAngle(crop.angle)
         self.crop = crop
         onChange(crop, isFinalControlEvent())
+    }
+
+    /// Shows the angle, bright when it's been changed from 0 (as `SliderRow` does).
+    private func showAngle(_ angle: Double) {
+        angleValue.stringValue = String(format: "%.2f", angle)
+        angleValue.textColor = (angle * 100).rounded() == 0 ? .secondaryLabelColor : .labelColor
     }
 
     @objc private func resetAngle(_ sender: Any?) {

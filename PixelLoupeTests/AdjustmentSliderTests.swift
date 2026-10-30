@@ -116,6 +116,23 @@ struct AdjustmentSliderTests {
         #expect(changes.count == 1 && changes[0].0 == 0 && changes[0].1, "one final change, saved and undoable")
     }
 
+    @Test func aChangedValueIsShownBrightAndADefaultOneDimmed() {
+        let row = SliderRow(title: "Exposure", range: -5...5)
+        let label = { (row.subviews.compactMap { $0 as? NSTextField }.first { $0.stringValue == row.displayedValue })?.textColor }
+        #expect(!row.isModified && label() == .secondaryLabelColor)
+        row.value = 0.35
+        #expect(row.isModified && label() == .labelColor)
+        row.value = 0.001
+        #expect(!row.isModified && label() == .secondaryLabelColor, "a value that shows as the default is the default")
+
+        let temperature = SliderRow(title: "Temp", range: 2000...50000, defaultValue: 5500, format: { "\(Int($0.rounded()))" }, scale: .logarithmic(2000...50000))
+        #expect(!temperature.isModified, "the logarithmic round trip doesn't count as a change")
+        temperature.value = 6500
+        #expect(temperature.isModified)
+        temperature.defaultValue = 6500
+        #expect(!temperature.isModified, "a new default counts too")
+    }
+
     @Test func optionDraggingSnapsTheValueItSends() throws {
         let slider = AdjustmentSlider(value: 0, minValue: -5, maxValue: 5)
         var values: [Double] = []

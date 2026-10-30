@@ -54,7 +54,10 @@ final class SliderRow: NSView {
     let scale: SliderScale
     var defaultValue: Double {
         get { scale.value(at: slider.defaultValue) }
-        set { slider.defaultValue = scale.position(for: newValue) }
+        set {
+            slider.defaultValue = scale.position(for: newValue)
+            showValue()
+        }
     }
 
     var onChange: ((Double, Bool) -> Void)?
@@ -63,12 +66,16 @@ final class SliderRow: NSView {
         get { scale.value(at: slider.doubleValue) }
         set {
             slider.doubleValue = scale.position(for: newValue)
-            valueLabel.stringValue = format(newValue)
+            showValue()
         }
     }
 
     /// The value as the label shows it.
     var displayedValue: String { valueLabel.stringValue }
+
+    /// Whether the value differs from the default, as the label shows it. As in Lightroom, a changed
+    /// value is drawn bright and a default one dimmed.
+    var isModified: Bool { format(value) != format(defaultValue) }
 
     /// `trackColors`: a gradient drawn as the track, low end first (white balance's Temp and Tint).
     init(
@@ -131,8 +138,13 @@ final class SliderRow: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    @objc private func sliderChanged(_ sender: NSSlider) {
+    private func showValue() {
         valueLabel.stringValue = format(value)
+        valueLabel.textColor = isModified ? .labelColor : .secondaryLabelColor
+    }
+
+    @objc private func sliderChanged(_ sender: NSSlider) {
+        showValue()
         onChange?(value, isFinalControlEvent())
     }
 
