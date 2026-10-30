@@ -392,8 +392,7 @@ final class PresetsPanelViewController: NSViewController, NSOutlineViewDataSourc
     }
 
     /// `content` in a plain view of its size, for an alert's accessory. An alert lines a plain view up
-    /// with its text, but puts a stack view straight in at its left edge once it's tall enough for the
-    /// alert to set its icon beside the text.
+    /// with its text, but puts a stack view at its left edge.
     static func alertAccessory(_ content: NSView) -> NSView {
         let container = NSView(frame: NSRect(origin: .zero, size: content.fittingSize))
         content.translatesAutoresizingMaskIntoConstraints = false

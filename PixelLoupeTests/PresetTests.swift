@@ -309,9 +309,12 @@ struct PresetISOTests {
 /// RAW-228.
 @Suite("New Preset sheet")
 struct NewPresetSheetTests {
-    /// With a setting checkbox per section, the controls are tall enough for the alert to put its icon
-    /// beside the text; they must still line up with the text, not sit at the alert's edge.
-    @Test func theControlsLineUpWithTheAlertsText() throws {
+    /// The sheet's controls line up with its text (they sat at its left edge), short or with a checkbox
+    /// for every section.
+    @Test func theControlsLineUpWithTheSheetsText() async throws {
+        let host = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 900), styleMask: [.titled], backing: .buffered, defer: false)
+        host.isReleasedWhenClosed = false
+        defer { host.close() }
         for count in [2, PresetSection.allCases.count] {
             let checks = NSStackView(views: (0..<count).map { NSButton(checkboxWithTitle: "Section \($0)", target: nil, action: nil) })
             checks.orientation = .vertical
@@ -326,11 +329,13 @@ struct NewPresetSheetTests {
             alert.messageText = "New Preset"
             alert.informativeText = "Saves the chosen settings of this photo as a preset."
             alert.accessoryView = PresetsPanelViewController.alertAccessory(stack)
-            alert.layout()
+            alert.beginSheetModal(for: host, completionHandler: nil)
+            alert.window.layoutIfNeeded()
             let content = try #require(alert.window.contentView)
             let title = try #require(content.subviews.compactMap { $0 as? NSTextField }.first { $0.stringValue == "New Preset" })
             let titleX = title.convert(title.bounds, to: nil).minX
             let fieldX = name.convert(name.bounds, to: nil).minX
+            host.endSheet(alert.window)
             #expect(titleX > 0 && abs(fieldX - titleX) <= 4, "\(count) checkboxes: the name field is at \(fieldX), the title at \(titleX)")
         }
     }
