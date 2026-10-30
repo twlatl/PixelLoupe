@@ -185,6 +185,10 @@ In the Develop Adjust panel, double-click a slider's label, a color wheel or the
 The side panels' sliders (Develop, Crop, Lens, Masking, Retouch and the preset Amount) also reset when you double-click
 the knob.
 
+Double-click a slider's value (the number at the right of its label) to type a new one, in the units it shows (50 for
+50%), and press Return or Tab, or click elsewhere, to enter it; Escape leaves the value as it was. A value outside the
+slider's range is set to the nearest end.
+
 Sliders that set a value have tick marks under the track at every tenth of the range (5 on each side of the middle, the
 middle one longer when it's 0); hold Option while dragging to snap to them (so a −5…+5 slider such as Exposure stops at
 whole steps). Sliders that zoom or size thumbnails have no ticks.

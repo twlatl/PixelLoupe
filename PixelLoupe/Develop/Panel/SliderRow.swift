@@ -45,13 +45,18 @@ enum SliderScale {
     }
 }
 
-/// A labelled slider with its current value. Double-click the label or the knob to reset it.
-final class SliderRow: NSView {
+/// A labelled slider with its current value. Double-click the label or the knob to reset it, and
+/// the value to type a new one (as in Lightroom).
+final class SliderRow: NSView, NSTextFieldDelegate {
     let slider: AdjustmentSlider
     private let titleLabel: NSTextField
     private let valueLabel = NSTextField(labelWithString: "")
     private let format: (Double) -> String
+    private let range: ClosedRange<Double>
     let scale: SliderScale
+    /// Whether the value is being typed; Escape ends the edit without changing the value.
+    private(set) var isEditingValue = false
+    private var cancelsEdit = false
     var defaultValue: Double {
         get { scale.value(at: slider.defaultValue) }
         set {
@@ -88,6 +93,7 @@ final class SliderRow: NSView {
     ) {
         titleLabel = NSTextField(labelWithString: title)
         self.format = format
+        self.range = range
         self.scale = scale
         slider = trackColors.map { GradientSlider(colors: $0) } ?? AdjustmentSlider()
         super.init(frame: .zero)
@@ -114,6 +120,13 @@ final class SliderRow: NSView {
         reset.numberOfClicksRequired = 2
         titleLabel.addGestureRecognizer(reset)
         titleLabel.toolTip = "Double-click to reset"
+
+        let edit = NSClickGestureRecognizer(target: self, action: #selector(beginEditingValue))
+        edit.numberOfClicksRequired = 2
+        valueLabel.addGestureRecognizer(edit)
+        valueLabel.toolTip = "Double-click to enter a value"
+        valueLabel.delegate = self
+        valueLabel.setAccessibilityLabel("\(title) value")
 
         for view in [titleLabel, valueLabel, slider] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
@@ -151,6 +164,66 @@ final class SliderRow: NSView {
     @objc private func resetToDefault(_ sender: Any?) {
         value = defaultValue
         onChange?(defaultValue, true)
+    }
+
+    /// Makes the value label a text field with its text selected, for typing a new value.
+    @objc func beginEditingValue() {
+        guard !isEditingValue, let window else { return }
+        isEditingValue = true
+        cancelsEdit = false
+        valueLabel.isEditable = true
+        valueLabel.isSelectable = true
+        valueLabel.isBezeled = true
+        valueLabel.bezelStyle = .squareBezel
+        valueLabel.drawsBackground = true
+        valueLabel.backgroundColor = .textBackgroundColor
+        valueLabel.textColor = .labelColor
+        window.makeFirstResponder(valueLabel)
+        valueLabel.currentEditor()?.selectAll(nil)
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard commandSelector == #selector(cancelOperation(_:)) else { return false }
+        cancelsEdit = true
+        window?.makeFirstResponder(slider)
+        return true
+    }
+
+    /// Return, Tab or clicking elsewhere enters the typed value; Escape or text that isn't a number keeps the old one.
+    func controlTextDidEndEditing(_ notification: Notification) {
+        guard isEditingValue else { return }
+        isEditingValue = false
+        let typed = valueLabel.stringValue
+        valueLabel.isEditable = false
+        valueLabel.isSelectable = false
+        valueLabel.isBezeled = false
+        valueLabel.drawsBackground = false
+        if !cancelsEdit, let entered = value(forDisplayed: typed) {
+            value = entered
+            onChange?(value, true)
+        } else {
+            showValue()
+        }
+    }
+
+    /// The value a typed number stands for, in the units the label shows (so "50" on a ×100 percent row is 0.5),
+    /// clamped to the slider's range. The label's units are taken from how `format` shows the range's ends,
+    /// which works because every row's format is the value scaled and rounded.
+    func value(forDisplayed text: String) -> Double? {
+        guard let typed = Self.number(in: text),
+              let low = Self.number(in: format(range.lowerBound)),
+              let high = Self.number(in: format(range.upperBound)),
+              high != low
+        else { return nil }
+        let entered = range.lowerBound + (typed - low) / (high - low) * (range.upperBound - range.lowerBound)
+        return min(max(entered, range.lowerBound), range.upperBound)
+    }
+
+    /// The number in a label's text, ignoring units, thousands separators and a typographic minus ("−22", "5,500", "50%").
+    nonisolated static func number(in text: String) -> Double? {
+        let normalized = text.replacingOccurrences(of: "\u{2212}", with: "-")
+        let kept = normalized.filter { $0.isASCII && ($0.isNumber || "+-.".contains($0)) }
+        return Double(kept.hasPrefix("+") ? String(kept.dropFirst()) : kept)
     }
 
     nonisolated static func signed(_ value: Double) -> String {

@@ -172,3 +172,71 @@ struct AdjustmentSliderTests {
         #expect(!isFinalControlEvent(single))
     }
 }
+
+/// Double-clicking a slider row's value lets you type one (RAW-232).
+@MainActor
+struct SliderValueEntryTests {
+    @Test func typedNumbersAreInTheUnitsTheLabelShows() throws {
+        let exposure = SliderRow(title: "Exposure", range: -5...5)
+        #expect(try #require(exposure.value(forDisplayed: "+1.50")) == 1.5)
+        #expect(try #require(exposure.value(forDisplayed: "-2")) == -2)
+
+        let feather = SliderRow(title: "Feather", range: 0...1, format: { String(format: "%.0f", $0 * 100) })
+        #expect(abs(try #require(feather.value(forDisplayed: "50")) - 0.5) < 1e-9)
+        let sharpen = SliderRow(title: "Amount", range: 0...1, format: { String(format: "%.0f", $0 * 150) })
+        #expect(abs(try #require(sharpen.value(forDisplayed: "75")) - 0.5) < 1e-9)
+
+        let strength = SliderRow(title: "Strength", range: 0...1, format: RimLightPanelViewController.percent)
+        #expect(abs(try #require(strength.value(forDisplayed: "25%")) - 0.25) < 1e-9)
+        let angle = SliderRow(title: "Angle", range: -180...180, format: RimLightPanelViewController.degrees)
+        #expect(try #require(angle.value(forDisplayed: "−45°")) == -45)
+    }
+
+    @Test func kelvinAndTintParseTheirLabels() throws {
+        let temperature = SliderRow(
+            title: "Temp", range: WhiteBalanceEstimator.temperatureRange, defaultValue: 6500,
+            format: AdjustmentsPanelViewController.temperatureText, scale: .logarithmic(WhiteBalanceEstimator.temperatureRange)
+        )
+        #expect(abs(try #require(temperature.value(forDisplayed: "5500")) - 5500) < 1e-6)
+        #expect(abs(try #require(temperature.value(forDisplayed: temperature.displayedValue)) - 6500) < 1e-6)
+
+        let tint = SliderRow(title: "Tint", range: WhiteBalanceEstimator.tintRange, format: AdjustmentsPanelViewController.tintText)
+        #expect(try #require(tint.value(forDisplayed: "\u{2212}22")) == -22)
+    }
+
+    @Test func outOfRangeValuesClampAndNonNumbersAreIgnored() {
+        let exposure = SliderRow(title: "Exposure", range: -5...5)
+        #expect(exposure.value(forDisplayed: "12") == 5)
+        #expect(exposure.value(forDisplayed: "-12") == -5)
+        #expect(exposure.value(forDisplayed: "") == nil)
+        #expect(exposure.value(forDisplayed: "abc") == nil)
+    }
+
+    @Test func returnEntersTheValueAndEscapeKeepsTheOldOne() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 60), styleMask: [.titled], backing: .buffered, defer: false)
+        let row = SliderRow(title: "Exposure", range: -5...5)
+        row.frame = NSRect(x: 0, y: 0, width: 240, height: 40)
+        window.contentView?.addSubview(row)
+        var changes: [(Double, Bool)] = []
+        row.onChange = { changes.append(($0, $1)) }
+
+        row.beginEditingValue()
+        #expect(row.isEditingValue)
+        let editor = try #require(window.fieldEditor(false, for: nil) as? NSTextView)
+        editor.string = "1.25"
+        editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        #expect(!row.isEditingValue)
+        #expect(row.value == 1.25)
+        #expect(row.displayedValue == "+1.25")
+        #expect(changes.count == 1 && changes[0].0 == 1.25 && changes[0].1, "a typed value is final, for undo")
+
+        row.beginEditingValue()
+        let escapeEditor = try #require(window.fieldEditor(false, for: nil) as? NSTextView)
+        escapeEditor.string = "3"
+        escapeEditor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        #expect(!row.isEditingValue)
+        #expect(row.value == 1.25)
+        #expect(row.displayedValue == "+1.25")
+        #expect(changes.count == 1)
+    }
+}
