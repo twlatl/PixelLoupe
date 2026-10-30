@@ -38,8 +38,10 @@ nonisolated enum PanoramaFill {
 
         /// The fill at `color`'s resolution: each pixel takes the pixels its nearby matches point to in `color`
         /// (offsets scaled to `color`'s extent), weighted by how well they match and how near they are.
-        func fill(from color: CIImage) -> CIImage {
-            let target = color.extent
+        /// `target` is the whole image the field was solved for, when `color` is only the part of it the fill reads
+        /// (see ``sourceRect(for:target:)``).
+        func fill(from color: CIImage, target: CGRect? = nil) -> CIImage {
+            let target = target ?? color.extent
             let scale = CGSize(width: target.width / CGFloat(width), height: target.height / CGFloat(height))
             let image = fieldImage()
             let fieldBounds = image.extent
@@ -50,15 +52,26 @@ nonisolated enum PanoramaFill {
                 CIVector(x: target.minX, y: target.minY),
             ]
             return PanoramaKernels.fillReconstruct.apply(extent: target, roiCallback: { index, rect in
-                let local = CGRect(x: (rect.minX - target.minX) / scale.width, y: (rect.minY - target.minY) / scale.height,
-                                   width: rect.width / scale.width, height: rect.height / scale.height).insetBy(dx: -2, dy: -2)
-                if index == 1 { return local.intersection(fieldBounds) }
-                guard let offsets = field.offsets(in: local) else { return rect.insetBy(dx: -1, dy: -1) }
-                return CGRect(x: rect.minX + CGFloat(offsets.x) * scale.width, y: rect.minY + CGFloat(offsets.y) * scale.height,
-                              width: rect.width + CGFloat(offsets.z - offsets.x) * scale.width,
-                              height: rect.height + CGFloat(offsets.w - offsets.y) * scale.height)
-                    .insetBy(dx: -scale.width - 2, dy: -scale.height - 2)
+                if index == 1 { return field.local(rect, target: target).intersection(fieldBounds) }
+                return field.sourceRect(for: rect, target: target)
             }, arguments: arguments) ?? CIImage.empty()
+        }
+
+        /// The part of a `target`-sized image ``fill(from:target:)`` reads to draw `rect` (Core Image's coordinates).
+        func sourceRect(for rect: CGRect, target: CGRect) -> CGRect {
+            let scale = CGSize(width: target.width / CGFloat(width), height: target.height / CGFloat(height))
+            guard let offsets = offsets(in: local(rect, target: target)) else { return rect.insetBy(dx: -1, dy: -1) }
+            return CGRect(x: rect.minX + CGFloat(offsets.x) * scale.width, y: rect.minY + CGFloat(offsets.y) * scale.height,
+                          width: rect.width + CGFloat(offsets.z - offsets.x) * scale.width,
+                          height: rect.height + CGFloat(offsets.w - offsets.y) * scale.height)
+                .insetBy(dx: -scale.width - 2, dy: -scale.height - 2)
+        }
+
+        /// `rect` of a `target`-sized image in solved pixels, with a margin for the vote.
+        private func local(_ rect: CGRect, target: CGRect) -> CGRect {
+            let scale = CGSize(width: target.width / CGFloat(width), height: target.height / CGFloat(height))
+            return CGRect(x: (rect.minX - target.minX) / scale.width, y: (rect.minY - target.minY) / scale.height,
+                          width: rect.width / scale.width, height: rect.height / scale.height).insetBy(dx: -2, dy: -2)
         }
 
         /// The field as a Core Image image from (0, 0), one pixel per solved pixel: the match's center in Core Image's

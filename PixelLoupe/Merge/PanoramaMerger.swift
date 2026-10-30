@@ -180,6 +180,13 @@ nonisolated final class PanoramaMerger {
     private var warps: [PanoramaProjection: PanoramaBoundaryWarp] = [:]
     private var warpMaps: [WarpKey: WarpMap] = [:]
     private var fills: [FillKey: PanoramaFill.Solution] = [:]
+    /// The full-resolution panorama Fill Edges last copied from (see ``filled(_:analysis:warp:options:scale:canvas:drawn:)``).
+    private var panoramaCopies: [CopyKey: (rect: CGRect, image: CIImage)] = [:]
+
+    private struct CopyKey: Hashable {
+        var fill: FillKey
+        var scale: CGFloat
+    }
     /// The largest scale merged from the small copies (normally just above their own); tests lower it, so small
     /// synthetic photos take the full-resolution path.
     var largestSnapshotScale: CGFloat?
@@ -631,7 +638,9 @@ nonisolated final class PanoramaMerger {
         var image = composite.image
         var coverageImage = composite.coverage
         if options.fillEdges {
-            image = try filled(composite, analysis: analysis, warp: warp, options: options, scale: scale, canvas: canvas)
+            let part = region.map { CGRect(x: $0.minX, y: canvas.height - $0.maxY, width: $0.width, height: $0.height).integral } ?? canvas
+            image = try filled(composite, analysis: analysis, warp: warp, options: options, scale: scale, canvas: canvas,
+                               drawn: part.intersection(canvas))
             progress(0.1)
         }
         if let region {
@@ -676,7 +685,7 @@ nonisolated final class PanoramaMerger {
     /// a merge of at most `fillPixels` (this one, if it's that small; cached per projection, warp and size) and
     /// copied up to `scale` from this merge's pixels.
     private func filled(_ composite: (image: CIImage, coverage: CIImage), analysis: Analysis, warp: WarpMap?,
-                        options: PanoramaMergeOptions, scale: CGFloat, canvas: CGRect) throws -> CIImage {
+                        options: PanoramaMergeOptions, scale: CGFloat, canvas: CGRect, drawn: CGRect) throws -> CIImage {
         let layout = analysis.layout
         let fullPixels = Double(layout.size.width * layout.size.height)
         let solveScale = min(scale, CGFloat(sqrt(Double(fillPixels) / fullPixels)))
@@ -695,7 +704,20 @@ nonisolated final class PanoramaMerger {
             if fills.count > 8 { fills.removeAll() }
             fills[key] = solution
         }
-        let fill = solveCanvas == canvas ? solution.fill : solution.field.fill(from: composite.image)
+        guard solveCanvas != canvas else { return PanoramaFill.composite(composite.image, coverage: composite.coverage, fill: solution.fill) }
+        // The fill copies from anywhere in the panorama. Drawn from the merge itself, each block made Core Image
+        // render most of the full-resolution panorama at once (RAW-225), so it copies from a tiled copy of what it
+        // reads, written once (kept while the merge's settings and the part drawn stay within it).
+        let reads = solution.field.sourceRect(for: drawn, target: canvas).union(drawn).integral.intersection(canvas)
+        let copyKey = CopyKey(fill: key, scale: scale)
+        let source: CIImage
+        if let copy = panoramaCopies[copyKey], copy.rect.contains(reads) {
+            source = copy.image
+        } else {
+            source = try tiledCopy(of: composite.image, in: reads, name: "panorama-\(UUID().uuidString)")
+            panoramaCopies = [copyKey: (reads, source)]
+        }
+        let fill = solution.field.fill(from: source, target: canvas)
         return PanoramaFill.composite(composite.image, coverage: composite.coverage, fill: fill)
     }
 
@@ -775,39 +797,53 @@ nonisolated final class PanoramaMerger {
         let key = MaterializedKey(index: index, scale: scale)
         if let image = materializedBrackets[key] { return image }
         let image = Self.decoded(frames[index], scale: scale, neutral: neutral)
-        let size = image.extent.integral.size
-        let width = Int(size.width), height = Int(size.height), rowBytes = width * 8
-        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
-        let url = scratch.appending(path: "\(index)-\(Int(scale * 1000)).rgbah")
-        guard FileManager.default.createFile(atPath: url.path(percentEncoded: false), contents: nil) else {
-            throw PhotoMergeError.unreadable(frames[index].source.name)
-        }
-        let handle = try FileHandle(forWritingTo: url)
-        defer { try? handle.close() }
-        var band = Data(count: rowBytes * Self.bandRows)
-        // Top down, as a bitmap's rows go; Core Image's origin is the bottom left.
-        for top in stride(from: 0, to: height, by: Self.bandRows) {
-            try Task.checkCancellation()
-            let rows = min(Self.bandRows, height - top)
-            band.withUnsafeMutableBytes { buffer in
-                context.render(image, toBitmap: buffer.baseAddress!, rowBytes: rowBytes,
-                               bounds: CGRect(x: 0, y: height - top - rows, width: width, height: rows), format: .RGBAh, colorSpace: nil)
-            }
-            try handle.write(contentsOf: band.prefix(rowBytes * rows))
-        }
-        try handle.close()
-        context.clearCaches()
-        // Tiles copied out of the mapped file as Core Image asks for them: a bitmap image would copy the whole file
-        // into memory, and Core Image would upload all of it.
-        let provider = MappedTiles(data: try Data(contentsOf: url, options: .alwaysMapped), rowBytes: rowBytes)
-        let pixels = CIImage(imageProvider: provider, size: width, height, format: .RGBAh, colorSpace: nil,
-                             options: [.providerTileSize: [Self.tileSize, Self.tileSize]])
+        let pixels = try tiledCopy(of: image, in: CGRect(origin: .zero, size: image.extent.integral.size),
+                                   name: "\(index)-\(Int(scale * 1000))")
         materializedBrackets[key] = pixels
         return pixels
     }
 
-    /// Rows a bracket set is merged in at a time, and the tiles it's read back in, for ``materialized(_:scale:)``.
-    private static let bandRows = 1024
+    /// `rect` of `image` rendered once, in blocks, into a memory-mapped file in RGBA half floats, and read back as
+    /// Core Image asks for it, a tile at a time (a bitmap image would copy the whole file into memory, and Core Image
+    /// would upload all of it). The file goes with the merger.
+    private func tiledCopy(of image: CIImage, in rect: CGRect, name: String) throws -> CIImage {
+        let width = Int(rect.width), height = Int(rect.height), rowBytes = width * 8
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        let url = scratch.appending(path: "\(name).rgbah")
+        guard FileManager.default.createFile(atPath: url.path(percentEncoded: false), contents: nil) else {
+            throw PhotoMergeError.unreadable(name)
+        }
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        try handle.truncate(atOffset: UInt64(rowBytes * height))
+        let block = Self.copyBlock
+        var buffer = Data(count: min(block, width) * min(block, height) * 8)
+        // Top down, as a bitmap's rows go; Core Image's origin is the bottom left.
+        for top in stride(from: 0, to: height, by: block) {
+            let rows = min(block, height - top)
+            for left in stride(from: 0, to: width, by: block) {
+                try Task.checkCancellation()
+                let columns = min(block, width - left)
+                let bounds = CGRect(x: Int(rect.minX) + left, y: Int(rect.minY) + height - top - rows, width: columns, height: rows)
+                try buffer.withUnsafeMutableBytes { pixels in
+                    context.render(image, toBitmap: pixels.baseAddress!, rowBytes: columns * 8, bounds: bounds, format: .RGBAh, colorSpace: nil)
+                    for row in 0..<rows {
+                        try handle.seek(toOffset: UInt64((top + row) * rowBytes + left * 8))
+                        try handle.write(contentsOf: UnsafeRawBufferPointer(rebasing: pixels[(row * columns * 8)..<((row + 1) * columns * 8)]))
+                    }
+                }
+            }
+        }
+        try handle.close()
+        context.clearCaches()
+        let provider = MappedTiles(data: try Data(contentsOf: url, options: .alwaysMapped), rowBytes: rowBytes)
+        return CIImage(imageProvider: provider, size: width, height, format: .RGBAh, colorSpace: nil,
+                       options: [.providerTileSize: [Self.tileSize, Self.tileSize]])
+            .transformed(by: CGAffineTransform(translationX: rect.minX, y: rect.minY))
+    }
+
+    /// The blocks a ``tiledCopy(of:in:name:)`` is rendered in, and the tiles it's read back in.
+    private static let copyBlock = 2048
     private static let tileSize = 512
 
     /// A merged bracket set's pixels (RGBA half floats, top row first) in a memory-mapped file, handed to Core

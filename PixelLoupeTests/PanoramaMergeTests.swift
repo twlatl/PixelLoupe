@@ -365,6 +365,34 @@ struct PanoramaMergeTests {
         #expect(abs(holeFull - holePreview) / holeCount < 0.05, "filled: mean difference \(abs(holeFull - holePreview) / holeCount)")
     }
 
+    @Test func fillEdgesAtOneHundredPercentMatchesTheFullMerge() throws {
+        // Solved smaller than the merge, the fill copies from a tiled copy of the part it reads (RAW-225): only
+        // that part for the sheet's 100% view, all of it for Merge. The two must agree.
+        let panorama = try SyntheticPanorama()
+        let merger = try PanoramaMerger(sources: panorama.sources)
+        merger.fillPixels = 20_000
+        var options = PanoramaMergeOptions()
+        options.fillEdges = true
+        options.autoSettings = false
+        let full = try merger.merge(options: options, scale: 1).image
+        let region = CGRect(x: 0, y: full.height - 90, width: 160, height: 90)
+        let part = try merger.merge(options: options, scale: 1, region: region).image
+        #expect(part.width == 160 && part.height == 90)
+        var total: Float = 0, worst: Float = 0
+        for y in 0..<part.height {
+            for x in 0..<part.width {
+                for c in 0..<3 {
+                    let difference = abs(Float(part.pixels[(y * part.width + x) * 3 + c])
+                        - Float(full.pixels[((y + Int(region.minY)) * full.width + x + Int(region.minX)) * 3 + c]))
+                    total += difference
+                    worst = max(worst, difference)
+                }
+            }
+        }
+        let mean = total / Float(part.pixels.count)
+        #expect(mean < 0.002 && worst < 0.05, "mean \(mean), worst \(worst)")
+    }
+
     @Test func cancellingStopsAFilledMerge() async throws {
         let panorama = try SyntheticPanorama()
         let sources = panorama.sources
