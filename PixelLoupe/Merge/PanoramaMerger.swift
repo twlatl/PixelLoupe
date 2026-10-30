@@ -684,7 +684,7 @@ nonisolated final class PanoramaMerger {
     /// The composite with Fill Edges' fill where the photos don't reach (after Boundary Warp). The fill is solved on
     /// a merge of at most `fillPixels` (this one, if it's that small; cached per projection, warp and size) and
     /// copied up to `scale` from this merge's pixels.
-    private func filled(_ composite: (image: CIImage, coverage: CIImage), analysis: Analysis, warp: WarpMap?,
+    private func filled(_ composite: (image: CIImage, coverage: CIImage, blended: CIImage), analysis: Analysis, warp: WarpMap?,
                         options: PanoramaMergeOptions, scale: CGFloat, canvas: CGRect, drawn: CGRect) throws -> CIImage {
         let layout = analysis.layout
         let fullPixels = Double(layout.size.width * layout.size.height)
@@ -704,7 +704,7 @@ nonisolated final class PanoramaMerger {
             if fills.count > 8 { fills.removeAll() }
             fills[key] = solution
         }
-        guard solveCanvas != canvas else { return PanoramaFill.composite(composite.image, coverage: composite.coverage, fill: solution.fill) }
+        guard solveCanvas != canvas else { return PanoramaFill.composite(composite.blended, coverage: composite.coverage, fill: solution.fill) }
         // The fill copies from anywhere in the panorama. Drawn from the merge itself, each block made Core Image
         // render most of the full-resolution panorama at once (RAW-225), so it copies from a tiled copy of what it
         // reads, written once (kept while the merge's settings and the part drawn stay within it).
@@ -718,7 +718,7 @@ nonisolated final class PanoramaMerger {
             panoramaCopies = [copyKey: (reads, source)]
         }
         let fill = solution.field.fill(from: source, target: canvas)
-        return PanoramaFill.composite(composite.image, coverage: composite.coverage, fill: fill)
+        return PanoramaFill.composite(composite.blended, coverage: composite.coverage, fill: fill)
     }
 
     /// Auto Crop's rectangle for these options (Develop's unit crop rectangle, origin bottom left):
@@ -872,12 +872,13 @@ nonisolated final class PanoramaMerger {
     }
 
     /// Everything for one merge as Core Image images on `canvas`: the finished panorama (opaque,
-    /// white beyond the photos) and where the photos cover it (red).
+    /// white beyond the photos), where the photos cover it (red), and the blend before it's finished (premultiplied,
+    /// for Fill Edges).
     /// `region` (Core Image's axes) is the part a render draws, when that's all it samples, so only the bracket
     /// sets there are merged into files.
     private func composite(
         _ analysis: Analysis, scale: CGFloat, canvas: CGRect, warp: WarpMap?, region: CGRect? = nil
-    ) throws -> (image: CIImage, coverage: CIImage) {
+    ) throws -> (image: CIImage, coverage: CIImage, blended: CIImage) {
         let layout = analysis.layout
         let drawn = region ?? canvas
         let sources = try sourceImages(scale: scale) { [self] index in
@@ -906,7 +907,7 @@ nonisolated final class PanoramaMerger {
         }
         let fill = CIVector(x: CGFloat(peakValue), y: CGFloat(peakValue), z: CGFloat(peakValue))
         let finished = PanoramaKernels.finish.apply(extent: canvas, arguments: [blended, coverage, fill]) ?? blended
-        return (finished, coverage)
+        return (finished, coverage, blended)
     }
 
     /// A photo warped onto the panorama at `scale`, scaled by its gains: premultiplied, its alpha

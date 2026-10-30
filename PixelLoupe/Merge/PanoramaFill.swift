@@ -186,6 +186,8 @@ nonisolated enum PanoramaFill {
     }
 
     /// `color` where `coverage` (red) says the photos cover, `fill` where they don't, mixed across partial coverage.
+    /// `color` is the panorama's blend before it's finished (premultiplied, so its color where the photos partly cover
+    /// isn't already mixed with white), or any opaque image.
     static func composite(_ color: CIImage, coverage: CIImage, fill: CIImage) -> CIImage {
         PanoramaKernels.fillMix.apply(extent: color.extent, arguments: [color, coverage, fill]) ?? color
     }

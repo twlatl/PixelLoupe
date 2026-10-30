@@ -365,6 +365,33 @@ struct PanoramaMergeTests {
         #expect(abs(holeFull - holePreview) / holeCount < 0.05, "filled: mean difference \(abs(holeFull - holePreview) / holeCount)")
     }
 
+    @Test func fillEdgesLeavesNoLightLineAlongThePhotosEdges() throws {
+        // Where the photos partly cover, the fill mixes with their own color: mixing it with the white beyond the
+        // photos as well left a light dashed line along their edges (RAW-226).
+        let panorama = try SyntheticPanorama()
+        let merger = try PanoramaMerger(sources: panorama.sources)
+        let coverage = try #require(try merger.merge(options: PanoramaMergeOptions(), scale: 0.5).coverage)
+        var options = PanoramaMergeOptions()
+        options.fillEdges = true
+        let image = try merger.merge(options: options, scale: 0.5).image
+        func green(_ x: Int, _ y: Int) -> Float { Float(image.pixels[(y * image.width + x) * 3 + 1]) }
+        var edge = 0, lighter = 0
+        for y in 1..<(image.height - 1) {
+            for x in 1..<(image.width - 1) {
+                let covered = coverage.values[y * image.width + x]
+                guard covered > 0.05, covered < 0.95 else { continue }
+                edge += 1
+                var neighbors: [Float] = []
+                for (dx, dy) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
+                    neighbors.append(green(x + dx, y + dy))
+                }
+                if green(x, y) > (neighbors.max() ?? 0) + 0.03 { lighter += 1 }
+            }
+        }
+        #expect(edge > 50)
+        #expect(Float(lighter) / Float(edge) < 0.02, "\(lighter) of \(edge) edge pixels lighter than all around them")
+    }
+
     @Test func fillEdgesAtOneHundredPercentMatchesTheFullMerge() throws {
         // Solved smaller than the merge, the fill copies from a tiled copy of the part it reads (RAW-225): only
         // that part for the sheet's 100% view, all of it for Merge. The two must agree.
