@@ -97,12 +97,14 @@ float4 panoramaBoundaryWarp(sampler panorama, sampler map, float4 size, destinat
     return panorama.sample(panorama.transform(source));
 }
 
-/// Fill Edges' fill laid under the panorama: the panorama where the photos cover (red), the fill where they don't,
-/// mixed across partial coverage. Fully covered pixels are the panorama's as they are.
-float4 panoramaFillMix(sample_t panorama, sample_t coverage, sample_t fill) {
+/// Fill Edges' fill laid under the panorama: the blended photos (premultiplied; or opaque color) where they cover (red),
+/// the fill where they don't, mixed across partial coverage. Fully covered pixels are as panoramaFinish draws them.
+float4 panoramaFillMix(sample_t blended, sample_t coverage, sample_t fill) {
+    // As panoramaFinish, with the fill in place of white: the photos' own color where they partly cover, not one
+    // already mixed with white (which left a light line along their edges).
+    float3 color = blended.a > 1e-4 ? max(blended.rgb / blended.a, float3(0.0)) : fill.rgb;
     float covered = clamp(coverage.r, 0.0, 1.0);
-    if (covered >= 1.0) { return float4(panorama.rgb, 1.0); }
-    return float4(mix(fill.rgb, panorama.rgb, covered), 1.0);
+    return float4(mix(fill.rgb, color, covered), 1.0);
 }
 
 /// Fill Edges at any resolution (see PanoramaFill.Field): each pixel takes what the matches of the solved pixels
