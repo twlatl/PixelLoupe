@@ -9,6 +9,10 @@ final class ColorWheelView: NSView {
     var onChange: ((_ hue: Double, _ amount: Double, _ isFinal: Bool) -> Void)?
     /// The pointer moved over or off the wheel, or a drag began or ended: `isHighlighted` changed.
     var onHighlight: ((Bool) -> Void)?
+    /// Set when the wheel is a neighbour peeking into a carousel: a click asks for its tab instead of editing it.
+    var onPeek: (() -> Void)? {
+        didSet { setAccessibilityRole(onPeek == nil ? .colorWell : .button) }
+    }
 
     /// Whether the wheel is drawn at full brightness: the pointer is over it, or it's being dragged.
     private(set) var isHighlighted = false {
@@ -90,6 +94,10 @@ final class ColorWheelView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        if let onPeek {
+            onPeek()
+            return
+        }
         if event.clickCount == 2 {
             hue = 0
             amount = 0
@@ -101,6 +109,12 @@ final class ColorWheelView: NSView {
         drag = Drag(mode: onDot ? .hueOnly : .free, pointer: point)
         // Grabbing the dot doesn't move anything until it's dragged.
         if !onDot { track(event, isFinal: false) }
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        guard let onPeek else { return false }
+        onPeek()
+        return true
     }
 
     override func mouseDragged(with event: NSEvent) {

@@ -26,6 +26,18 @@ nonisolated enum ColorGradingTab: Int, CaseIterable {
         }
     }
 
+    /// The tonal tabs, in the order their wheels sit side by side (`ColorWheelCarouselView`).
+    static let carousel: [ColorGradingTab] = [.shadows, .midtones, .highlights]
+
+    /// Where the tab's wheel sits among the tonal wheels; All and Global aren't among them.
+    var carouselIndex: Int? { Self.carousel.firstIndex(of: self) }
+
+    /// The tonal tabs whose wheels peek in beside this one's: Midtones beside Shadows, both beside Midtones.
+    var neighbours: [ColorGradingTab] {
+        guard let index = carouselIndex else { return [] }
+        return [index - 1, index + 1].filter(Self.carousel.indices.contains).map { Self.carousel[$0] }
+    }
+
     /// Blending and Balance shape the three tonal wheels, so Global's view leaves them out.
     var showsBlending: Bool { self != .global }
 
