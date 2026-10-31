@@ -71,6 +71,8 @@ final class AdjustmentsPanelViewController: NSViewController {
     /// Color Grading wheels hidden from the preview by their eye buttons.
     private(set) var mutedWheels: Set<ColorGradingTab> = []
     private var eyeButtons: [(tab: ColorGradingTab, button: NSButton)] = []
+    /// The Shadows, Midtones and Highlights tabs' wheel strips, which slide between those tabs.
+    private var colorCarousels: [ColorGradingTab: ColorWheelCarouselView] = [:]
 
     override func loadView() {
         stack.orientation = .vertical
@@ -532,11 +534,27 @@ final class AdjustmentsPanelViewController: NSViewController {
             format: Self.signedPercent, get: { $0.color.balance }, set: { $0.color.balance = $1 }
         )
 
-        let show = { [weak picker, weak separator, weak blending, weak balance] in
+        var shown: ColorGradingTab?
+        let show = { [weak self, weak picker, weak separator, weak blending, weak balance] in
             let current = ColorGradingTab.current
             picker?.selectedSegment = current.rawValue
             for (tab, page) in pages { page.isHidden = tab != current }
             for view in [separator, blending, balance] as [NSView?] { view?.isHidden = !current.showsBlending }
+            // Between tonal tabs the wheels slide over, from where the new tab's wheel was peeking in.
+            defer { shown = current }
+            guard let previous = shown, previous != current, let from = previous.carouselIndex, let to = current.carouselIndex,
+                  let carousel = self?.colorCarousels[current]
+            else { return }
+            carousel.scrollPosition = CGFloat(from)
+            if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+                carousel.scrollPosition = CGFloat(to)
+            } else {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = ColorWheelCarouselView.slideDuration
+                    context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                    carousel.animator().scrollPosition = CGFloat(to)
+                }
+            }
         }
         let pickerTarget = ActionTarget { control in
             guard let tab = ColorGradingTab(rawValue: (control as! NSSegmentedControl).selectedSegment) else { return }
@@ -610,21 +628,53 @@ final class AdjustmentsPanelViewController: NSViewController {
             }
         }
 
-        // The eye sits at the wheel's lower right, balanced by an empty space at its left so the wheel stays centered.
+        // The eye sits at the wheel's lower right.
         let eye = eyeButton(tab)
-        let balance = NSView()
-        let wheelRow = NSStackView(views: [balance, wheel, eye])
-        wheelRow.alignment = .bottom
-        wheelRow.spacing = 4
-        balance.widthAnchor.constraint(equalTo: eye.widthAnchor).isActive = true
+        let wheelArea: NSView
+        if let index = tab.carouselIndex {
+            // A tonal wheel: its neighbours peek in at the edges, and clicking one shows its tab.
+            let wheels = ColorGradingTab.carousel.map { other -> ColorWheelView in
+                guard other != tab, let otherPath = other.wheel else { return wheel }
+                let peek = ColorWheelView()
+                peek.setAccessibilityLabel("Show \(other.title)")
+                peek.setAccessibilityIdentifier("colorWheelPeek.\(scopeName)\(tab.title).\(other.title)")
+                peek.toolTip = other.title
+                sectionStates.append { [weak self, weak peek] in
+                    guard let self else { return }
+                    peek?.hue = adjustments.color[keyPath: otherPath].hue
+                    peek?.amount = adjustments.color[keyPath: otherPath].amount
+                }
+                return peek
+            }
+            let carousel = ColorWheelCarouselView(wheels: wheels, index: index, accessory: eye)
+            carousel.onSelect = { [weak self] index in
+                ColorGradingTab.current = ColorGradingTab.carousel[index]
+                self?.showColorGradingTab?()
+            }
+            colorCarousels[tab] = carousel
+            wheelArea = carousel
+        } else {
+            // Global, on its own; an empty space left of the wheel balances the eye so the wheel stays centered.
+            let balance = NSView()
+            let wheelRow = NSStackView(views: [balance, wheel, eye])
+            wheelRow.alignment = .bottom
+            wheelRow.spacing = 4
+            balance.widthAnchor.constraint(equalTo: eye.widthAnchor).isActive = true
+            wheelArea = wheelRow
+        }
 
-        let page = NSStackView(views: [label, wheelRow, hue, saturation, luminance])
+        let page = NSStackView(views: [label, wheelArea, hue, saturation, luminance])
         page.orientation = .vertical
         page.alignment = .centerX
         page.spacing = 8
-        page.setCustomSpacing(12, after: wheelRow)
-        wheel.widthAnchor.constraint(equalTo: page.widthAnchor, multiplier: 0.62).isActive = true
-        wheel.heightAnchor.constraint(equalTo: wheel.widthAnchor).isActive = true
+        page.setCustomSpacing(12, after: wheelArea)
+        if wheelArea is ColorWheelCarouselView {
+            wheelArea.widthAnchor.constraint(equalTo: page.widthAnchor).isActive = true
+            wheelArea.heightAnchor.constraint(equalTo: page.widthAnchor, multiplier: 0.62).isActive = true
+        } else {
+            wheel.widthAnchor.constraint(equalTo: page.widthAnchor, multiplier: 0.62).isActive = true
+            wheel.heightAnchor.constraint(equalTo: wheel.widthAnchor).isActive = true
+        }
         for row in [hue, saturation, luminance] { row.widthAnchor.constraint(equalTo: page.widthAnchor).isActive = true }
         return page
     }
