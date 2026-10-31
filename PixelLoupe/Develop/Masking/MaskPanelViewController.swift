@@ -25,6 +25,12 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         set { sections.onPickGradingColor = newValue }
     }
 
+    /// A color well's eyedropper was dragged onto the photo for one of the mask's wheels (screen coordinates).
+    var onDropGradingColor: ((ColorGradingTab, NSPoint) -> Void)? {
+        get { sections.onDropGradingColor }
+        set { sections.onDropGradingColor = newValue }
+    }
+
     /// Sets one of the selected mask's wheels from a picked color, as one undoable edit (`false` for a gray).
     @discardableResult
     func applyGradingColor(_ color: ColorGradingSwatches.RGB, to tab: ColorGradingTab) -> Bool {

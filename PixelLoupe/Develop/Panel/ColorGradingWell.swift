@@ -51,8 +51,10 @@ final class ColorGradingWellButton: NSButton {
 final class ColorGradingWellPopover: NSViewController {
     /// A swatch was clicked, with its color.
     var onPick: ((ColorGradingSwatches.RGB) -> Void)?
-    /// The eyedropper was clicked.
+    /// The eyedropper was clicked: the next click on the photo picks.
     var onEyedropper: (() -> Void)?
+    /// The eyedropper was dragged out and let go here (screen coordinates), as in Lightroom.
+    var onEyedropperDrop: ((NSPoint) -> Void)?
 
     var current: NSColor = .gray {
         didSet { currentWell.color = current }
@@ -63,9 +65,9 @@ final class ColorGradingWellPopover: NSViewController {
         didSet { showSwatches() }
     }
 
-    private let tab: ColorGradingTab
+    let tab: ColorGradingTab
     private let currentWell = ColorGradingWellButton()
-    private let eyedropper = NSButton()
+    private let eyedropper = ColorGradingEyedropperButton()
     private let swatchRow = NSStackView()
     private let spinner = NSProgressIndicator()
     private let emptyLabel = NSTextField(labelWithString: "No colors")
@@ -81,7 +83,7 @@ final class ColorGradingWellPopover: NSViewController {
 
     /// The swatch buttons shown (for tests).
     var swatchButtons: [NSButton] { swatchRow.arrangedSubviews.compactMap { $0 as? NSButton } }
-    var eyedropperButton: NSButton { eyedropper }
+    var eyedropperButton: ColorGradingEyedropperButton { eyedropper }
 
     override func loadView() {
         currentWell.refusesFirstResponder = true
@@ -91,7 +93,8 @@ final class ColorGradingWellPopover: NSViewController {
         eyedropper.isBordered = false
         eyedropper.bezelStyle = .toolbar
         eyedropper.imagePosition = .imageOnly
-        eyedropper.toolTip = "Pick a color from the photo"
+        eyedropper.toolTip = "Drag onto the photo, or click and then click the photo, to pick a color"
+        eyedropper.onDrop = { [weak self] point in self?.onEyedropperDrop?(point) }
         eyedropper.setAccessibilityLabel("Pick a \(tab.title.lowercased()) color from the photo")
         eyedropper.setAccessibilityIdentifier("colorGradingEyedropper")
         let eyedropperTarget = ActionTarget { [weak self] _ in self?.onEyedropper?() }
@@ -148,6 +151,44 @@ final class ColorGradingWellPopover: NSViewController {
             button.action = #selector(ActionTarget.fire(_:))
             targets.append(target)
             swatchRow.addArrangedSubview(button)
+        }
+    }
+}
+
+/// The popover's eyedropper. Drag from it and let go over the photo to pick there, as in Lightroom; a plain click
+/// sends its action instead (the next click on the photo picks).
+final class ColorGradingEyedropperButton: NSButton {
+    /// Where a drag out of the button was let go, in screen coordinates.
+    var onDrop: ((NSPoint) -> Void)?
+    /// How far the pointer moves before a press becomes a drag.
+    static let dragThreshold = 4.0
+
+    override func mouseDown(with event: NSEvent) {
+        guard let window, isEnabled else { return }
+        let start = event.locationInWindow
+        var isDragging = false
+        highlight(true)
+        defer {
+            highlight(false)
+            if isDragging { NSCursor.pop() }
+        }
+        // The window that got the press keeps getting the drag, even outside the popover.
+        while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            let location = next.locationInWindow
+            if next.type == .leftMouseDragged {
+                if !isDragging, hypot(location.x - start.x, location.y - start.y) > Self.dragThreshold {
+                    isDragging = true
+                    highlight(false)
+                    NSCursor.crosshair.push()
+                }
+                continue
+            }
+            if isDragging {
+                onDrop?(window.convertPoint(toScreen: location))
+            } else if bounds.contains(convert(location, from: nil)) {
+                sendAction(action, to: target)
+            }
+            return
         }
     }
 }

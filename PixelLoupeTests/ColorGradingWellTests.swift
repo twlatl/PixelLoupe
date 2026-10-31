@@ -103,9 +103,22 @@ struct ColorGradingWellTests {
         #expect(isClose(panel.adjustments.color.global.hue, expected.hue, 0.01) && isClose(panel.adjustments.color.global.amount, expected.amount))
         #expect(changes.list.count == 1)
 
+        #expect(content.current == ColorGradingWellButton.tint(panel.adjustments.color.global), "the popover shows the picked color")
+
         let eyedropper = content.eyedropperButton
         _ = (eyedropper.target as AnyObject).perform(eyedropper.action, with: eyedropper)
         #expect(picking == .global)
+    }
+
+    @Test("Dragging the eyedropper out of the popover and letting go asks to pick the photo there")
+    func eyedropperDrag() throws {
+        let (panel, _) = makePanel()
+        var dropped: (ColorGradingTab, NSPoint)?
+        panel.onDropGradingColor = { dropped = ($0, $1) }
+        panel.showColorWell(.highlights, from: nil)
+        let content = try #require(panel.colorWellPopover)
+        content.eyedropperButton.onDrop?(NSPoint(x: 120, y: 340))
+        #expect(dropped?.0 == .highlights && dropped?.1 == NSPoint(x: 120, y: 340))
     }
 }
 

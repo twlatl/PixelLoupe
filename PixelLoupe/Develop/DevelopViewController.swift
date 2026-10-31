@@ -258,6 +258,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         whiteBalancePicker.sample = { [weak self] point in self?.neutralTargetSample(at: point) }
         panel.ungradedPixels = { [weak self] in await self?.ungradedPixels() ?? [] }
         panel.onPickGradingColor = { [weak self] tab in self?.startGradingColorPicking(tab, isMask: false) }
+        panel.onDropGradingColor = { [weak self] tab, point in self?.dropGradingColor(tab, at: point, isMask: false) }
         gradingPicker.onPick = { [weak self] point in self?.pickGradingColor(at: point) }
         panel.autoWhiteBalance = { [weak self] in self?.autoWhiteBalance() }
         panel.onUprightLevel = { [weak self] in self?.levelWithUpright() }
@@ -777,6 +778,16 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         endFringePicking()
         gradingPick = (tab, isMask)
         gradingPicker.isHidden = false
+        // Switched on from the well's popover, which took key: the crosshair (a cursor rect) only shows in the key window.
+        view.window?.makeKey()
+        view.window?.invalidateCursorRects(for: gradingPicker)
+    }
+
+    /// The well's eyedropper was dragged out of its popover and let go at `screenPoint`: pick the photo there.
+    private func dropGradingColor(_ tab: ColorGradingTab, at screenPoint: NSPoint, isMask: Bool) {
+        guard let window = view.window, source != nil else { return NSSound.beep() }
+        gradingPick = (tab, isMask)
+        pickGradingColor(at: gradingPicker.convert(window.convertPoint(fromScreen: screenPoint), from: nil))
     }
 
     private func endGradingColorPicking() {
@@ -1068,6 +1079,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         }
         maskPanel.ungradedPixels = { [weak self] in await self?.ungradedPixels() ?? [] }
         maskPanel.onPickGradingColor = { [weak self] tab in self?.startGradingColorPicking(tab, isMask: true) }
+        maskPanel.onDropGradingColor = { [weak self] tab, point in self?.dropGradingColor(tab, at: point, isMask: true) }
         maskPanel.onBrushChange = { [weak self] brush in self?.maskOverlay.brush = brush }
         maskOverlay.onBrushChange = { [weak self] brush in self?.maskPanel.brush = brush }
         maskOverlay.brush = maskPanel.brush
