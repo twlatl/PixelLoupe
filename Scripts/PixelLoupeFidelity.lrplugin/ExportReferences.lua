@@ -41,7 +41,9 @@ end
 local function withoutColorGrading(settings)
 	local copy = {}
 	for key, value in pairs(settings) do
-		copy[key] = (key:match("^ColorGrade%a+Sat$") or key:match("^ColorGrade%a+Lum$")) and 0 or value
+		local grading = key:match("^ColorGrade%a+Sat$") or key:match("^ColorGrade%a+Lum$")
+			or key:match("^SplitToning%a+Saturation$")
+		copy[key] = grading and 0 or value
 	end
 	return copy
 end

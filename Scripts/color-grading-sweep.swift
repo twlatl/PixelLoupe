@@ -86,15 +86,18 @@ struct Grade {
     var balance = 0
 }
 
-/// Every Color Grading setting is written, so applying a case over an earlier one leaves nothing behind.
+/// Every Color Grading setting is written, so applying a case over an earlier one leaves nothing behind. Lightroom
+/// keeps the Shadows and Highlights wheels' hue and saturation under their Split Toning names
+/// (`SplitToningShadowHue`, `SplitToningShadowSaturation`); it ignores `ColorGradeShadowHue`/`Sat`.
 func xmp(_ grade: Grade) -> String {
     var attributes: [String] = []
     for wheel in ["Shadow", "Midtone", "Highlight", "Global"] {
         let value = grade.wheels[wheel] ?? (0, 0, 0)
-        attributes += [
-            "crs:ColorGrade\(wheel)Hue=\"\(value.hue)\"", "crs:ColorGrade\(wheel)Sat=\"\(value.saturation)\"",
-            "crs:ColorGrade\(wheel)Lum=\"\(value.luminance)\"",
-        ]
+        let splitToning = wheel == "Shadow" || wheel == "Highlight"
+        attributes += splitToning
+            ? ["crs:SplitToning\(wheel)Hue=\"\(value.hue)\"", "crs:SplitToning\(wheel)Saturation=\"\(value.saturation)\""]
+            : ["crs:ColorGrade\(wheel)Hue=\"\(value.hue)\"", "crs:ColorGrade\(wheel)Sat=\"\(value.saturation)\""]
+        attributes.append("crs:ColorGrade\(wheel)Lum=\"\(value.luminance)\"")
     }
     attributes += ["crs:ColorGradeBlending=\"\(grade.blending)\"", "crs:SplitToningBalance=\"\(grade.balance)\""]
     return """
