@@ -2,7 +2,7 @@ import AppKit
 
 /// What the Color Grading section shows, picked at its top as in Lightroom: the three tonal wheels together (All),
 /// or one wheel large with its Hue, Saturation and Luminance sliders.
-enum ColorGradingTab: Int, CaseIterable {
+nonisolated enum ColorGradingTab: Int, CaseIterable {
     case all, shadows, midtones, highlights, global
 
     var title: String {
@@ -32,6 +32,22 @@ enum ColorGradingTab: Int, CaseIterable {
     /// Whether the tab's segment gets a dot: its wheel is set. All never does, as in Lightroom.
     func isMarked(in color: PhotoAdjustments.ColorGrading) -> Bool {
         wheel.map { color[keyPath: $0].isSet } ?? false
+    }
+
+    /// A wheel's values as the All tab shows them while the pointer is over it, in Lightroom's units: "H:189 S:14 L:-5".
+    static func readout(_ wheel: PhotoAdjustments.ColorWheel) -> String {
+        func whole(_ value: Double) -> Int {
+            let rounded = Int(value.rounded())
+            return rounded == 0 ? 0 : rounded
+        }
+        return "H:\(whole(wheel.hue * 360) % 360) S:\(whole(wheel.amount * 100)) L:\(whole(wheel.luminance * 100))"
+    }
+
+    /// `color` with `tabs`' wheels left out, for previewing without them (their eye buttons).
+    static func muting(_ tabs: Set<ColorGradingTab>, in color: PhotoAdjustments.ColorGrading) -> PhotoAdjustments.ColorGrading {
+        var color = color
+        for tab in tabs { if let wheel = tab.wheel { color[keyPath: wheel] = .init() } }
+        return color
     }
 
     // MARK: - Remembered tab

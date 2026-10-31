@@ -47,6 +47,8 @@ final class AdjustmentsPanelViewController: NSViewController {
     var onPickWhiteBalance: ((Bool) -> Void)?
     /// Transform's Upright ▸ Level: the controller measures the photo and calls back with the rotation.
     var onUprightLevel: (() -> Void)?
+    /// A Color Grading wheel's eye was switched: the preview should leave out these wheels (render-time only).
+    var onMuteWheels: ((Set<ColorGradingTab>) -> Void)?
     /// Option-dragging the Masking slider asks for the mask to be shown in the preview.
     var onSharpenMaskPreview: ((Bool) -> Void)?
 
@@ -66,6 +68,9 @@ final class AdjustmentsPanelViewController: NSViewController {
     private let whiteBalanceEyedropper = NSButton()
     /// Shows the Color Grading tab picked app-wide (`ColorGradingTab.current`).
     private var showColorGradingTab: (() -> Void)?
+    /// Color Grading wheels hidden from the preview by their eye buttons.
+    private(set) var mutedWheels: Set<ColorGradingTab> = []
+    private var eyeButtons: [(tab: ColorGradingTab, button: NSButton)] = []
 
     override func loadView() {
         stack.orientation = .vertical
@@ -496,10 +501,10 @@ final class AdjustmentsPanelViewController: NSViewController {
 
         // All: Midtones on top, Shadows and Highlights under it.
         let lower = NSStackView(views: [
-            colorWheelColumn("Shadows", \.shadows, title: title), colorWheelColumn("Highlights", \.highlights, title: title),
+            colorWheelColumn(.shadows, title: title), colorWheelColumn(.highlights, title: title),
         ])
         lower.distribution = .fillEqually
-        let allPage = NSStackView(views: [colorWheelColumn("Midtones", \.midtones, title: title), lower])
+        let allPage = NSStackView(views: [colorWheelColumn(.midtones, title: title), lower])
         allPage.orientation = .vertical
         allPage.alignment = .centerX
         allPage.spacing = 10
@@ -605,11 +610,19 @@ final class AdjustmentsPanelViewController: NSViewController {
             }
         }
 
-        let page = NSStackView(views: [label, wheel, hue, saturation, luminance])
+        // The eye sits at the wheel's lower right, balanced by an empty space at its left so the wheel stays centered.
+        let eye = eyeButton(tab)
+        let balance = NSView()
+        let wheelRow = NSStackView(views: [balance, wheel, eye])
+        wheelRow.alignment = .bottom
+        wheelRow.spacing = 4
+        balance.widthAnchor.constraint(equalTo: eye.widthAnchor).isActive = true
+
+        let page = NSStackView(views: [label, wheelRow, hue, saturation, luminance])
         page.orientation = .vertical
         page.alignment = .centerX
         page.spacing = 8
-        page.setCustomSpacing(12, after: wheel)
+        page.setCustomSpacing(12, after: wheelRow)
         wheel.widthAnchor.constraint(equalTo: page.widthAnchor, multiplier: 0.62).isActive = true
         wheel.heightAnchor.constraint(equalTo: wheel.widthAnchor).isActive = true
         for row in [hue, saturation, luminance] { row.widthAnchor.constraint(equalTo: page.widthAnchor).isActive = true }
@@ -641,10 +654,11 @@ final class AdjustmentsPanelViewController: NSViewController {
     /// The Hue slider's track: around the wheel from red back to red.
     static let hueColors: [NSColor] = stride(from: 0.0, through: 1, by: 1.0 / 6).map { wheelColor(hue: $0) }
 
-    /// One color wheel with its name above and its luminance slider below (the All tab).
-    private func colorWheelColumn(
-        _ name: String, _ wheelPath: WritableKeyPath<Adjustments.ColorGrading, Adjustments.ColorWheel>, title: String
-    ) -> NSView {
+    /// One color wheel with its name above and its luminance slider and eye below (the All tab). While the pointer is
+    /// over the wheel, the name gives way to its values, as in Lightroom.
+    private func colorWheelColumn(_ tab: ColorGradingTab, title: String) -> NSView {
+        let name = tab.title
+        guard let wheelPath = tab.wheel else { preconditionFailure("All has no wheel of its own") }
         let label = NSTextField(labelWithString: name)
         label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         label.textColor = .secondaryLabelColor
@@ -665,6 +679,12 @@ final class AdjustmentsPanelViewController: NSViewController {
         luminance.action = #selector(ActionTarget.fire(_:))
         actionTargets.append(target)
 
+        let showLabel = { [weak self, weak wheel, weak label] in
+            guard let self, let wheel else { return }
+            label?.stringValue = wheel.isHighlighted ? ColorGradingTab.readout(adjustments.color[keyPath: wheelPath]) : name
+        }
+        wheel.onHighlight = { _ in showLabel() }
+
         // Follows edits made on the wheel's own tab too.
         sectionStates.append { [weak self, weak wheel, weak luminance] in
             guard let self else { return }
@@ -672,14 +692,60 @@ final class AdjustmentsPanelViewController: NSViewController {
             wheel?.hue = value.hue
             wheel?.amount = value.amount
             luminance?.doubleValue = value.luminance
+            showLabel()
         }
-        let column = NSStackView(views: [label, wheel, luminance])
+        let lower = NSStackView(views: [luminance, eyeButton(tab)])
+        lower.spacing = 2
+        let column = NSStackView(views: [label, wheel, lower])
         column.orientation = .vertical
         column.spacing = 4
         wheel.widthAnchor.constraint(equalToConstant: 96).isActive = true
         wheel.heightAnchor.constraint(equalTo: wheel.widthAnchor).isActive = true
-        luminance.widthAnchor.constraint(equalTo: wheel.widthAnchor).isActive = true
+        lower.widthAnchor.constraint(equalTo: wheel.widthAnchor).isActive = true
         return column
+    }
+
+    // MARK: Muted wheels
+
+    /// Shows or hides one wheel's effect in the preview: a before and after for that wheel, never saved or undone.
+    private func eyeButton(_ tab: ColorGradingTab) -> NSButton {
+        let button = NSButton()
+        button.bezelStyle = .accessoryBarAction
+        button.isBordered = false
+        button.setButtonType(.toggle)
+        button.image = NSImage(systemSymbolName: "eye", accessibilityDescription: nil)
+        button.alternateImage = NSImage(systemSymbolName: "eye.slash", accessibilityDescription: nil)
+        button.imageScaling = .scaleProportionallyDown
+        button.contentTintColor = .secondaryLabelColor
+        button.toolTip = "Preview without \(tab.title)"
+        button.setAccessibilityLabel("Hide \(tab.title) in preview")
+        button.setAccessibilityIdentifier("colorGradingEye.\(scopeName)\(tab.title)")
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        let target = ActionTarget { [weak self] control in
+            guard let self else { return }
+            if (control as! NSButton).state == .on { mutedWheels.insert(tab) } else { mutedWheels.remove(tab) }
+            showMutedWheels()
+            onMuteWheels?(mutedWheels)
+        }
+        button.target = target
+        button.action = #selector(ActionTarget.fire(_:))
+        actionTargets.append(target)
+        eyeButtons.append((tab, button))
+        return button
+    }
+
+    private func showMutedWheels() {
+        for (tab, button) in eyeButtons {
+            button.state = mutedWheels.contains(tab) ? .on : .off
+            button.contentTintColor = mutedWheels.contains(tab) ? .controlAccentColor : .secondaryLabelColor
+        }
+    }
+
+    /// Shows every wheel again, without telling `onMuteWheels` (the owner is starting afresh, on another photo).
+    func clearMutedWheels() {
+        guard !mutedWheels.isEmpty else { return }
+        mutedWheels = []
+        showMutedWheels()
     }
 
     private func buildBlackAndWhite() {
