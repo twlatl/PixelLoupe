@@ -275,41 +275,112 @@ nonisolated enum ColorLUT {
             return t * t * (3 - 2 * t)
         }
 
-        /// Fully saturated color for `hue` (0…1), offset so its components average zero.
-        static func tint(hue: Double) -> (r: Double, g: Double, b: Double) {
-            let (r, g, b) = hsvToRGB(h: hue * 360, s: 1, v: 1)
-            let mean = (r + g + b) / 3
-            return (r - mean, g - mean, b - mean)
+        // MARK: Color Grading
+
+        // Fitted to Lightroom Classic's exports of a step wedge (RAW-242, Scripts/color-grading-sweep.swift). Lightroom
+        // grades linear ProPhoto RGB with per-channel gains: a wheel's hue raises the channels on its side of the HSV
+        // wheel and lowers the others by the same log amount, and each channel's change fades as it nears white.
+
+        /// Linear sRGB to linear ProPhoto RGB (D65 to D50 by Bradford), and back.
+        private static let sRGBToProPhoto = [0.5293, 0.3300, 0.1407, 0.0983, 0.8734, 0.0283, 0.0169, 0.1177, 0.8654]
+        private static let proPhotoToSRGB = [2.0341, -0.7272, -0.3069, -0.2287, 1.2318, -0.0031, -0.0086, -0.1533, 1.1620]
+        /// ProPhoto RGB's luminance weights.
+        private static let proPhotoLuminance = (r: 0.2880, g: 0.7118, b: 0.0002)
+
+        private static func multiply(_ m: [Double], _ r: Double, _ g: Double, _ b: Double) -> (Double, Double, Double) {
+            (m[0] * r + m[1] * g + m[2] * b, m[3] * r + m[4] * g + m[5] * b, m[6] * r + m[7] * g + m[8] * b)
         }
 
-        /// How much each tonal wheel acts on a color of luminance `y` (0…1), given Balance and Blending.
-        static func toneWeights(
-            luminance y: Double, _ color: PhotoAdjustments.ColorGrading
-        ) -> (shadows: Double, midtones: Double, highlights: Double) {
-            let pivot = 0.5 + 0.25 * color.balance
-            // Each end's weight falls off over a span around the middle of its half; blending 0.5
-            // is the original span (the half itself), 0 a hard split and 1 twice as wide.
-            let reach = 2 * color.blending.clamped(to: 0...1)
-            let shadowCenter = pivot / 2, highlightCenter = (1 + pivot) / 2
-            let shadowWeight = 1 - smoothstep(shadowCenter - reach * pivot / 2, shadowCenter + reach * pivot / 2, y)
-            let highlightWeight = smoothstep(highlightCenter - reach * (1 - pivot) / 2, highlightCenter + reach * (1 - pivot) / 2, y)
-            return (shadowWeight, max(0, 1 - shadowWeight - highlightWeight), highlightWeight)
+        private static func lightness(_ y: Double) -> Double {
+            y > 216.0 / 24389 ? 116 * cbrt(y) - 16 : 24389.0 / 27 * y
+        }
+
+        private static func logistic(_ x: Double) -> Double { 1 / (1 + exp(-x)) }
+
+        /// Where a color sits for the tonal wheels, 0…1: the lightness of its luminance, pulled a little towards its
+        /// brightest and darkest channels (linear ProPhoto RGB).
+        private static func tone(_ r: Double, _ g: Double, _ b: Double) -> Double {
+            let y = proPhotoLuminance.r * r + proPhotoLuminance.g * g + proPhotoLuminance.b * b
+            let tone = y + 0.1355 * (max(r, g, b) - y) + 0.2855 * (min(r, g, b) - y)
+            return lightness(max(tone, 0)) / 100
+        }
+
+        /// How much each tonal wheel acts at `tone` (0…1), each at most 1, given Blending and Balance. Shadows and
+        /// Highlights each mix a hard split (Blending 0) with a soft one (Blending 100); Balance moves both splits and
+        /// narrows them.
+        static func toneWeights(tone t: Double, _ color: PhotoAdjustments.ColorGrading) -> (shadows: Double, midtones: Double, highlights: Double) {
+            let soft = pow(color.blending.clamped(to: 0...1), 1.989)
+            let balance = color.balance.clamped(to: -1...1)
+            let shadowShift = balance * (balance > 0 ? -0.4359 : -0.4634)
+            let highlightShift = balance * (balance > 0 ? -0.5446 : -0.3914)
+            let narrowing = exp(-0.2793 * abs(balance))
+            let shadows = (1 - soft) * logistic((0.2981 + shadowShift - t) / (0.0680 * narrowing))
+                + soft * logistic((0.5980 + shadowShift - t) / (0.1584 * narrowing))
+            let highlights = (1 - soft) * logistic((t - 0.7836 - highlightShift) / (0.0712 * narrowing))
+                + soft * logistic((t - 0.4754 - highlightShift) / (0.1467 * narrowing))
+            let midtones = exp(-pow((t - 0.5361 - (shadowShift + highlightShift) / 2) / 0.2753, 2))
+            return (shadows, midtones, highlights)
+        }
+
+        /// The tonal weights of an sRGB color (0…1, gamma-encoded).
+        static func toneWeights(_ r: Double, _ g: Double, _ b: Double, _ color: PhotoAdjustments.ColorGrading) -> (shadows: Double, midtones: Double, highlights: Double) {
+            let (pr, pg, pb) = multiply(sRGBToProPhoto, decodeSRGB(r), decodeSRGB(g), decodeSRGB(b))
+            return toneWeights(tone: tone(pr, pg, pb), color)
+        }
+
+        /// −1 or 1 per channel: which channels `hue` (0…1) raises, blending between them between the primaries.
+        static func hueDirection(_ hue: Double) -> (r: Double, g: Double, b: Double) {
+            let (r, g, b) = hsvToRGB(h: hue * 360, s: 1, v: 1)
+            return (2 * r - 1, 2 * g - 1, 2 * b - 1)
         }
 
         static func grade(_ r: Double, _ g: Double, _ b: Double, _ color: PhotoAdjustments.ColorGrading) -> (Double, Double, Double) {
-            let (shadowWeight, midtoneWeight, highlightWeight) = toneWeights(luminance: luminance(r, g, b), color)
+            let (pr, pg, pb) = multiply(sRGBToProPhoto, decodeSRGB(r), decodeSRGB(g), decodeSRGB(b))
+            let y = max(proPhotoLuminance.r * pr + proPhotoLuminance.g * pg + proPhotoLuminance.b * pb, 0)
+            let weights = toneWeights(tone: tone(pr, pg, pb), color)
 
-            var (r, g, b) = (r, g, b)
-            for (wheel, weight) in [(color.global, 1.0), (color.shadows, shadowWeight), (color.midtones, midtoneWeight), (color.highlights, highlightWeight)] {
-                guard weight > 0 else { continue }
-                let t = tint(hue: wheel.hue)
-                let strength = wheel.amount * 0.35 * weight
-                let lift = wheel.luminance * 0.25 * weight
-                r += t.r * strength + lift
-                g += t.g * strength + lift
-                b += t.b * strength + lift
+            // Log gains per channel. Shadows and Highlights shift all three to keep the color's luminance, by at most
+            // `low…high` times the tint's strength, limits that tighten as their saturation rises; Midtones and Global
+            // don't.
+            var gain = (r: 0.0, g: 0.0, b: 0.0)
+            func add(_ wheel: PhotoAdjustments.ColorWheel, _ weight: Double, keeping luminance: (low: Double, high: Double)?) {
+                guard wheel.amount > 0, weight > 0 else { return }
+                let a = 0.5631 * wheel.amount * weight
+                let d = hueDirection(wheel.hue)
+                var shift = 0.0
+                if let luminance {
+                    let l = proPhotoLuminance
+                    shift = -log(l.r * exp(a * d.r) + l.g * exp(a * d.g) + l.b * exp(a * d.b))
+                    shift = min(max(shift, luminance.low * a), luminance.high * a)
+                }
+                gain.r += a * d.r + shift
+                gain.g += a * d.g + shift
+                gain.b += a * d.b + shift
             }
-            return (r, g, b)
+            let shadowSat = color.shadows.amount, highlightSat = color.highlights.amount
+            add(color.global, 1, keeping: nil)
+            add(color.shadows, 1.7973 * weights.shadows,
+                keeping: (-1 + 0.9677 * pow(shadowSat, 0.6237), 1 - 0.8257 * pow(shadowSat, 2.288)))
+            add(color.midtones, 0.9863 * weights.midtones, keeping: nil)
+            add(color.highlights, 1.7889 * weights.highlights,
+                keeping: (-1 + 0.5702 * pow(highlightSat, 8.244), 1 - 1.3295 * pow(highlightSat, 1.4836)))
+            func fade(_ c: Double) -> Double { pow(max(1 - c, 0), 0.9965) }
+            var (or, og, ob) = (pr * exp(gain.r * fade(pr)), pg * exp(gain.g * fade(pg)), pb * exp(gain.b * fade(pb)))
+
+            // Luminance moves the color's lightness; brightening also adds a little to every channel alike, which
+            // mutes saturated colors as Lightroom does.
+            let lift = color.global.luminance + 1.9237 * color.shadows.luminance * weights.shadows
+                + color.midtones.luminance * weights.midtones + 1.7661 * color.highlights.luminance * weights.highlights
+            if lift != 0, y > 0 {
+                let l = lightness(y), t = l / 100
+                let l2 = max(l + 14.79 * lift * pow(max(t, 0.001), 0.4596) * pow(max(1 - t, 0), 0.3637), 0)
+                let y2 = l2 > 8 ? pow((l2 + 16) / 116, 3) : l2 * 27 / 24389
+                let added = lift > 0 ? 0.5231 : 0.1787, scale = y2 / y, offset = y2 - y
+                func lifted(_ c: Double) -> Double { (1 - added) * c * scale + added * (c + offset) }
+                (or, og, ob) = (lifted(or), lifted(og), lifted(ob))
+            }
+            let (sr, sg, sb) = multiply(proPhotoToSRGB, or, og, ob)
+            return (encodeSRGB(max(sr, 0)), encodeSRGB(max(sg, 0)), encodeSRGB(max(sb, 0)))
         }
 
         static func selective(_ r: Double, _ g: Double, _ b: Double, _ selective: PhotoAdjustments.SelectiveColor) -> (Double, Double, Double) {

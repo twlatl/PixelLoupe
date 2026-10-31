@@ -83,7 +83,7 @@ nonisolated enum ColorGradingSwatches {
 
     /// How much a tab's wheel acts on `pixel`.
     static func toneWeight(of pixel: RGB, for tab: ColorGradingTab, in grading: PhotoAdjustments.ColorGrading) -> Double {
-        let weights = ColorLUT.Transform.toneWeights(luminance: ColorLUT.Transform.luminance(pixel.x, pixel.y, pixel.z), grading)
+        let weights = ColorLUT.Transform.toneWeights(pixel.x, pixel.y, pixel.z, grading)
         return switch tab {
         case .shadows: weights.shadows
         case .midtones: weights.midtones
