@@ -266,7 +266,7 @@ nonisolated enum ColorLUT {
 
         // MARK: Color
 
-        private static func luminance(_ r: Double, _ g: Double, _ b: Double) -> Double {
+        static func luminance(_ r: Double, _ g: Double, _ b: Double) -> Double {
             0.2126 * r + 0.7152 * g + 0.0722 * b
         }
 
@@ -282,8 +282,10 @@ nonisolated enum ColorLUT {
             return (r - mean, g - mean, b - mean)
         }
 
-        static func grade(_ r: Double, _ g: Double, _ b: Double, _ color: PhotoAdjustments.ColorGrading) -> (Double, Double, Double) {
-            let y = luminance(r, g, b)
+        /// How much each tonal wheel acts on a color of luminance `y` (0…1), given Balance and Blending.
+        static func toneWeights(
+            luminance y: Double, _ color: PhotoAdjustments.ColorGrading
+        ) -> (shadows: Double, midtones: Double, highlights: Double) {
             let pivot = 0.5 + 0.25 * color.balance
             // Each end's weight falls off over a span around the middle of its half; blending 0.5
             // is the original span (the half itself), 0 a hard split and 1 twice as wide.
@@ -291,7 +293,11 @@ nonisolated enum ColorLUT {
             let shadowCenter = pivot / 2, highlightCenter = (1 + pivot) / 2
             let shadowWeight = 1 - smoothstep(shadowCenter - reach * pivot / 2, shadowCenter + reach * pivot / 2, y)
             let highlightWeight = smoothstep(highlightCenter - reach * (1 - pivot) / 2, highlightCenter + reach * (1 - pivot) / 2, y)
-            let midtoneWeight = max(0, 1 - shadowWeight - highlightWeight)
+            return (shadowWeight, max(0, 1 - shadowWeight - highlightWeight), highlightWeight)
+        }
+
+        static func grade(_ r: Double, _ g: Double, _ b: Double, _ color: PhotoAdjustments.ColorGrading) -> (Double, Double, Double) {
+            let (shadowWeight, midtoneWeight, highlightWeight) = toneWeights(luminance: luminance(r, g, b), color)
 
             var (r, g, b) = (r, g, b)
             for (wheel, weight) in [(color.global, 1.0), (color.shadows, shadowWeight), (color.midtones, midtoneWeight), (color.highlights, highlightWeight)] {
