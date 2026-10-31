@@ -623,7 +623,13 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         let shooting = ShootingInfo.read(from: url)
         let camera = database.camera(make: make, model: model)
         let cropFactor = camera?.cropFactor ?? shooting.cropFactor
-        let match = database.match(make: make, model: model, lens: lens).map {
+        // Photos cataloged before the lens was read from {ExifAux} have none recorded, or Lightroom's
+        // "24.0-120.0 mm f/4.0", which names no lens; the file has the real name.
+        var lensMatch = database.match(make: make, model: model, lens: lens)
+        if lensMatch == nil, let fileLens = ImageMetadata.read(from: url)?.lensModel, fileLens != lens {
+            lensMatch = database.match(make: make, model: model, lens: fileLens)
+        }
+        let match = lensMatch.map {
             LensFunDatabase.profile(for: $0, cropFactor: cropFactor, focalLength: shooting.focalLength,
                                     aperture: shooting.aperture, distance: shooting.subjectDistance)
         }
