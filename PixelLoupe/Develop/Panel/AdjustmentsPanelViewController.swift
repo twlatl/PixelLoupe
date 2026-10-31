@@ -64,6 +64,8 @@ final class AdjustmentsPanelViewController: NSViewController {
     private var tintRow: SliderRow?
     private let whiteBalancePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let whiteBalanceEyedropper = NSButton()
+    /// Shows the Color Grading tab picked app-wide (`ColorGradingTab.current`).
+    private var showColorGradingTab: (() -> Void)?
 
     override func loadView() {
         stack.orientation = .vertical
@@ -466,50 +468,160 @@ final class AdjustmentsPanelViewController: NSViewController {
         }
     }
 
+    /// Color Grading, as in Lightroom: a picker at the top shows the three tonal wheels together (All) or one wheel
+    /// large with its sliders, with a dot under each wheel that's set. The picked tab is shared app-wide.
     private func buildColor() {
         let title = "Color Grading"
         let section = addSection(
             title, symbol: "circle.hexagongrid.circle", keyPath: \.color, enabled: \.isEnabled, defaultValue: .init(),
             isApplied: { $0.color.isActive }, expanded: true
         )
-        let wheels: [(String, WritableKeyPath<Adjustments.ColorGrading, Adjustments.ColorWheel>)] = [
-            ("Shadows", \.shadows), ("Midtones", \.midtones), ("Highlights", \.highlights),
-        ]
-        let row = NSStackView(views: wheels.map { colorWheelColumn($0.0, $0.1, title: title) })
-        row.distribution = .equalSpacing
-        section.addControl(row)
+        let tabs = ColorGradingTab.allCases
+        let picker = NSSegmentedControl(images: tabs.map(\.image), trackingMode: .selectOne, target: nil, action: nil)
+        picker.segmentDistribution = .fillEqually
+        for tab in tabs {
+            picker.setWidth(32, forSegment: tab.rawValue)
+            picker.setToolTip(tab.title, forSegment: tab.rawValue)
+        }
+        picker.setAccessibilityLabel("Color Grading wheels")
+        picker.setAccessibilityIdentifier("\(scopeName)colorGradingTab")
+        let dots = SegmentDotsView()
+        dots.setAccessibilityElement(false)
+        let pickerColumn = NSStackView(views: [picker, dots])
+        pickerColumn.orientation = .vertical
+        pickerColumn.alignment = .centerX
+        pickerColumn.spacing = 2
+        dots.widthAnchor.constraint(equalTo: picker.widthAnchor).isActive = true
+        section.addControl(pickerColumn)
 
-        // Global, with the two sliders that shape the wheels.
-        let balance = addSlider(
-            to: section, title, "Balance", keyPath: \.color, enabled: \.isEnabled, range: -1...1, placed: false,
-            get: { $0.color.balance }, set: { $0.color.balance = $1 }
-        )
+        // All: Midtones on top, Shadows and Highlights under it.
+        let lower = NSStackView(views: [
+            colorWheelColumn("Shadows", \.shadows, title: title), colorWheelColumn("Highlights", \.highlights, title: title),
+        ])
+        lower.distribution = .fillEqually
+        let allPage = NSStackView(views: [colorWheelColumn("Midtones", \.midtones, title: title), lower])
+        allPage.orientation = .vertical
+        allPage.alignment = .centerX
+        allPage.spacing = 10
+        section.addControl(allPage)
+        lower.widthAnchor.constraint(equalTo: allPage.widthAnchor).isActive = true
+
+        var pages: [ColorGradingTab: NSView] = [.all: allPage]
+        for tab in tabs {
+            guard let wheel = tab.wheel else { continue }
+            let page = colorWheelPage(tab, wheel, title: title, section: section)
+            section.addControl(page)
+            pages[tab] = page
+        }
+
+        // Blending and Balance shape the tonal wheels, so they follow All, Shadows, Midtones and Highlights.
+        let separator = NSBox()
+        separator.boxType = .separator
+        section.addControl(separator)
         let blending = addSlider(
             to: section, title, "Blending", keyPath: \.color, enabled: \.isEnabled, range: 0...1, defaultValue: 0.5,
-            format: SliderRow.unsigned, placed: false,
-            get: { $0.color.blending }, set: { $0.color.blending = $1 }
+            format: Self.percent, get: { $0.color.blending }, set: { $0.color.blending = $1 }
         )
-        let sliders = NSStackView(views: [blending, balance])
-        sliders.orientation = .vertical
-        sliders.spacing = 8
-        sliders.alignment = .leading
-        for slider in [blending, balance] { slider.widthAnchor.constraint(equalTo: sliders.widthAnchor).isActive = true }
-        let globalRow = NSStackView(views: [colorWheelColumn("Global", \.global, title: title), sliders])
-        globalRow.spacing = 12
-        globalRow.alignment = .top
-        section.addControl(globalRow)
+        let balance = addSlider(
+            to: section, title, "Balance", keyPath: \.color, enabled: \.isEnabled, range: -1...1,
+            format: Self.signedPercent, get: { $0.color.balance }, set: { $0.color.balance = $1 }
+        )
+
+        let show = { [weak picker, weak separator, weak blending, weak balance] in
+            let current = ColorGradingTab.current
+            picker?.selectedSegment = current.rawValue
+            for (tab, page) in pages { page.isHidden = tab != current }
+            for view in [separator, blending, balance] as [NSView?] { view?.isHidden = !current.showsBlending }
+        }
+        let pickerTarget = ActionTarget { control in
+            guard let tab = ColorGradingTab(rawValue: (control as! NSSegmentedControl).selectedSegment) else { return }
+            ColorGradingTab.current = tab
+            show()
+        }
+        picker.target = pickerTarget
+        picker.action = #selector(ActionTarget.fire(_:))
+        actionTargets.append(pickerTarget)
+        showColorGradingTab = show
+        refreshers.append(show)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(colorGradingTabDidChange(_:)), name: ColorGradingTab.didChangeNotification, object: nil
+        )
+        sectionStates.append { [weak self, weak dots] in
+            guard let self else { return }
+            dots?.marked = tabs.map { $0.isMarked(in: adjustments.color) }
+        }
     }
 
-    /// One color wheel with its luminance slider.
-    private func colorWheelColumn(
-        _ name: String, _ wheelPath: WritableKeyPath<Adjustments.ColorGrading, Adjustments.ColorWheel>, title: String
+    /// Another panel (the photo's or a mask's) picked a Color Grading tab.
+    @objc private func colorGradingTabDidChange(_ notification: Notification) {
+        showColorGradingTab?()
+    }
+
+    /// One wheel large, with its name above and its Hue, Saturation and Luminance below in Lightroom's units.
+    private func colorWheelPage(
+        _ tab: ColorGradingTab, _ wheelPath: WritableKeyPath<Adjustments.ColorGrading, Adjustments.ColorWheel>,
+        title: String, section: AdjustmentSectionView
     ) -> NSView {
-        let label = NSTextField(labelWithString: name)
+        let label = NSTextField(labelWithString: tab.title)
         label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         label.textColor = .secondaryLabelColor
+        let wheel = colorWheel(tab.title, wheelPath, title: title)
+        wheel.setAccessibilityIdentifier("colorWheel.\(scopeName)\(tab.title).single")
+
+        func row(
+            _ name: String, range: ClosedRange<Double>, format: @escaping (Double) -> String, trackColors: [NSColor],
+            _ valuePath: WritableKeyPath<Adjustments.ColorWheel, Double>
+        ) -> SliderRow {
+            let row = addSlider(
+                to: section, title, name, keyPath: \.color, enabled: \.isEnabled, range: range, format: format,
+                trackColors: trackColors, placed: false,
+                get: { $0.color[keyPath: wheelPath][keyPath: valuePath] },
+                set: { $0.color[keyPath: wheelPath][keyPath: valuePath] = $1 }
+            )
+            row.setAccessibilityIdentifier("slider.\(scopeName)\(title).\(tab.title).\(name)")
+            row.slider.setAccessibilityIdentifier("slider.\(scopeName)\(title).\(tab.title).\(name)")
+            row.slider.setAccessibilityLabel("\(tab.title) \(name.lowercased())")
+            return row
+        }
+        let hue = row("Hue", range: 0...1, format: Self.degrees, trackColors: Self.hueColors, \.hue)
+        let saturation = row("Saturation", range: 0...1, format: Self.percent, trackColors: [.gray, .gray], \.amount)
+        let luminance = row("Luminance", range: -1...1, format: Self.signedPercent, trackColors: [.black, .white], \.luminance)
+
+        // The wheel and the sliders edit the same values, so each follows the other as it changes.
+        sectionStates.append { [weak self, weak wheel, weak hue, weak saturation, weak luminance] in
+            guard let self else { return }
+            let value = adjustments.color[keyPath: wheelPath]
+            wheel?.hue = value.hue
+            wheel?.amount = value.amount
+            hue?.value = value.hue
+            saturation?.value = value.amount
+            luminance?.value = value.luminance
+            if let slider = saturation?.slider, let cell = slider.cell as? GradientSliderCell {
+                let full = Self.wheelColor(hue: value.hue)
+                if cell.colors.last != full {
+                    cell.colors = [.gray, full]
+                    slider.needsDisplay = true
+                }
+            }
+        }
+
+        let page = NSStackView(views: [label, wheel, hue, saturation, luminance])
+        page.orientation = .vertical
+        page.alignment = .centerX
+        page.spacing = 8
+        page.setCustomSpacing(12, after: wheel)
+        wheel.widthAnchor.constraint(equalTo: page.widthAnchor, multiplier: 0.62).isActive = true
+        wheel.heightAnchor.constraint(equalTo: wheel.widthAnchor).isActive = true
+        for row in [hue, saturation, luminance] { row.widthAnchor.constraint(equalTo: page.widthAnchor).isActive = true }
+        return page
+    }
+
+    /// A color wheel that tints `wheelPath`.
+    private func colorWheel(
+        _ name: String, _ wheelPath: WritableKeyPath<Adjustments.ColorGrading, Adjustments.ColorWheel>, title: String
+    ) -> ColorWheelView {
         let wheel = ColorWheelView()
         wheel.setAccessibilityLabel("\(name) color")
-        wheel.setAccessibilityIdentifier("colorWheel.\(name)")
         wheel.onChange = { [weak self] hue, amount, isFinal in
             self?.change(title, isFinal: isFinal) {
                 $0.color[keyPath: wheelPath].hue = hue
@@ -517,6 +629,27 @@ final class AdjustmentsPanelViewController: NSViewController {
                 $0.color.isEnabled = true
             }
         }
+        return wheel
+    }
+
+    /// The full-strength color at `hue` (0…1), as the wheel draws its rim.
+    nonisolated static func wheelColor(hue: Double) -> NSColor {
+        let (r, g, b) = ColorLUT.Transform.hsvToRGB(h: hue * 360, s: 0.85, v: 0.9)
+        return NSColor(srgbRed: r, green: g, blue: b, alpha: 1)
+    }
+
+    /// The Hue slider's track: around the wheel from red back to red.
+    static let hueColors: [NSColor] = stride(from: 0.0, through: 1, by: 1.0 / 6).map { wheelColor(hue: $0) }
+
+    /// One color wheel with its name above and its luminance slider below (the All tab).
+    private func colorWheelColumn(
+        _ name: String, _ wheelPath: WritableKeyPath<Adjustments.ColorGrading, Adjustments.ColorWheel>, title: String
+    ) -> NSView {
+        let label = NSTextField(labelWithString: name)
+        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        label.textColor = .secondaryLabelColor
+        let wheel = colorWheel(name, wheelPath, title: title)
+        wheel.setAccessibilityIdentifier("colorWheel.\(scopeName)\(name)")
         let luminance = AdjustmentSlider(value: 0, minValue: -1, maxValue: 1)
         luminance.controlSize = .mini
         luminance.isContinuous = true
@@ -532,7 +665,8 @@ final class AdjustmentsPanelViewController: NSViewController {
         luminance.action = #selector(ActionTarget.fire(_:))
         actionTargets.append(target)
 
-        refreshers.append { [weak self, weak wheel, weak luminance] in
+        // Follows edits made on the wheel's own tab too.
+        sectionStates.append { [weak self, weak wheel, weak luminance] in
             guard let self else { return }
             let value = adjustments.color[keyPath: wheelPath]
             wheel?.hue = value.hue
@@ -542,6 +676,8 @@ final class AdjustmentsPanelViewController: NSViewController {
         let column = NSStackView(views: [label, wheel, luminance])
         column.orientation = .vertical
         column.spacing = 4
+        wheel.widthAnchor.constraint(equalToConstant: 96).isActive = true
+        wheel.heightAnchor.constraint(equalTo: wheel.widthAnchor).isActive = true
         luminance.widthAnchor.constraint(equalTo: wheel.widthAnchor).isActive = true
         return column
     }
@@ -1074,8 +1210,10 @@ final class AdjustmentsPanelViewController: NSViewController {
     }
 
     /// Slider text on Lightroom's scales: 0…100 or -100…+100.
-    private static func percent(_ value: Double) -> String { String(format: "%.0f", value * 100) }
-    private static func signedPercent(_ value: Double) -> String {
+    nonisolated static func percent(_ value: Double) -> String { String(format: "%.0f", value * 100) }
+    /// A hue, 0…1 around the wheel, in degrees as Lightroom shows it.
+    nonisolated static func degrees(_ value: Double) -> String { String(format: "%.0f", value * 360) }
+    nonisolated static func signedPercent(_ value: Double) -> String {
         let rounded = (value * 100).rounded()
         return rounded == 0 ? "0" : String(format: "%+.0f", rounded)
     }
