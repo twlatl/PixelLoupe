@@ -228,6 +228,10 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         panel.onPreview = { [weak self] adjustments in self?.previewSettings(adjustments) }
+        panel.onMuteWheels = { [weak self] wheels in
+            self?.mutedWheels = wheels
+            self?.metalView.needsDisplay = true
+        }
         panel.onChange = { [weak self] adjustments, isFinal, actionName in
             self?.adjustmentsChanged(adjustments, isFinal: isFinal, actionName: actionName)
         }
@@ -985,6 +989,10 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         maskPanel.onChange = { [weak self] masks, isFinal, actionName in self?.masksChanged(masks, isFinal: isFinal, actionName: actionName) }
         maskPanel.onSelectionChange = { [weak self] id in self?.maskOverlay.adjustment = self?.adjustments.masks.first { $0.id == id } }
         maskPanel.onAdd = { [weak self] kind in self?.addMask(kind) }
+        maskPanel.onMuteWheels = { [weak self] mask, wheels in
+            self?.mutedMaskWheels = mask.map { ($0, wheels) }
+            self?.metalView.needsDisplay = true
+        }
         maskPanel.onBrushChange = { [weak self] brush in self?.maskOverlay.brush = brush }
         maskOverlay.onBrushChange = { [weak self] brush in self?.maskPanel.brush = brush }
         maskOverlay.brush = maskPanel.brush
@@ -1282,6 +1290,35 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
 
     var isPreviewingPreset: Bool { presetPreview != nil }
 
+    /// Color Grading wheels hidden by their eye buttons, the photo's and one mask's: left out of what's drawn, never
+    /// saved. Cleared when another photo is shown.
+    private var mutedWheels: Set<ColorGradingTab> = []
+    private var mutedMaskWheels: (mask: UUID, wheels: Set<ColorGradingTab>)?
+
+    /// The photo's settings as drawn: without any wheels hidden by their eyes.
+    private var drawnAdjustments: PhotoAdjustments {
+        Self.muting(adjustments, wheels: mutedWheels, maskWheels: mutedMaskWheels)
+    }
+
+    static func muting(
+        _ adjustments: PhotoAdjustments, wheels: Set<ColorGradingTab>, maskWheels: (mask: UUID, wheels: Set<ColorGradingTab>)?
+    ) -> PhotoAdjustments {
+        guard !wheels.isEmpty || maskWheels != nil else { return adjustments }
+        var muted = adjustments
+        muted.color = ColorGradingTab.muting(wheels, in: muted.color)
+        if let maskWheels, let index = muted.masks.firstIndex(where: { $0.id == maskWheels.mask }) {
+            muted.masks[index].settings.color = ColorGradingTab.muting(maskWheels.wheels, in: muted.masks[index].settings.color)
+        }
+        return muted
+    }
+
+    private func clearMutedWheels() {
+        mutedWheels = []
+        mutedMaskWheels = nil
+        panel.clearMutedWheels()
+        maskPanel.clearMutedWheels()
+    }
+
     /// Previews a preset on the photo (`nil` ends the preview).
     func previewPreset(_ preset: DevelopPreset?) {
         guard let preset, let photo = displayedPhoto, presetsPanel.isEditingEnabled else {
@@ -1530,6 +1567,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         if state.developTool == .crop { commitCrop() }
         endPresetAmount()
         endPresetPreview()
+        clearMutedWheels()
         displayedPhotoID = id
         historyCursor = nil
         source = nil
@@ -1736,7 +1774,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         var newArrangement: BeforeAfterOverlayView.Arrangement?
         var previewImage: (image: CIImage, scale: CGFloat)?
         /// The settings the loupe magnifies: the before's in Before Only.
-        var loupeAdjustments = presetPreview ?? adjustments
+        var loupeAdjustments = presetPreview ?? drawnAdjustments
         if source == nil, let placeholder, !placeholder.extent.isEmpty {
             // Fill the same rect the decoded photo will, so the swap is seamless.
             let extent = placeholder.extent
@@ -1756,7 +1794,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             // overlays map through the crop and its straightening.
             let masking = state.developTool == .mask || state.developTool == .retouch
             // A preset under the pointer in the Presets panel is previewed.
-            let shownAdjustments = presetPreview ?? adjustments
+            let shownAdjustments = presetPreview ?? drawnAdjustments
             // A cropped photo renders at the size it's shown; the crop tool shows the whole frame.
             let previewScale = cropping
                 ? source.scale(toFit: max(bounds.width, bounds.height))
