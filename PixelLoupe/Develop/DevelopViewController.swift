@@ -87,7 +87,9 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     private var showsSharpenMask = false
     let whiteBalancePicker = WhiteBalancePickerView()
     /// Covers the preview while a Color Grading well's eyedropper is on.
-    private let gradingPicker = FringePickerView(label: "Pick a color on the photo for Color Grading", identifier: "colorGradingPicker")
+    private let gradingPicker = FringePickerView(
+        label: "Pick a color on the photo for Color Grading", identifier: "colorGradingPicker", cursor: .eyedropper
+    )
     /// The wheel that eyedropper picks for, and whether it's the selected mask's.
     private var gradingPick: (tab: ColorGradingTab, isMask: Bool)?
     /// The preview as last drawn, for the defringe eyedropper: the image and where it's shown (points).
@@ -790,8 +792,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         isMask ? panel.endGradingColorPicking() : maskPanel.endGradingColorPicking()
         gradingPick = (tab, isMask)
         gradingPicker.isHidden = false
-        // The popover took key when its eyedropper was clicked, and the crosshair (a cursor rect) only shows in the
-        // key window; the popover stays open.
+        // The popover took key when its eyedropper was clicked, and the eyedropper pointer (a cursor rect) only shows
+        // in the key window; the popover stays open.
         view.window?.makeKey()
         view.window?.invalidateCursorRects(for: gradingPicker)
     }
