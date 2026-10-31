@@ -151,9 +151,11 @@ nonisolated enum PresetWriter {
             }
         }
         if sections.contains(.colorGrading) {
+            // Lightroom reads the Shadows and Highlights wheels' hue and saturation only under their Split Toning names.
             for (name, wheel) in [("Shadow", a.color.shadows), ("Midtone", a.color.midtones), ("Highlight", a.color.highlights), ("Global", a.color.global)] {
-                number("ColorGrade\(name)Hue", wheel.hue * 360)
-                number("ColorGrade\(name)Sat", wheel.amount * 100)
+                let splitToning = name == "Shadow" || name == "Highlight"
+                number(splitToning ? "SplitToning\(name)Hue" : "ColorGrade\(name)Hue", wheel.hue * 360)
+                number(splitToning ? "SplitToning\(name)Saturation" : "ColorGrade\(name)Sat", wheel.amount * 100)
                 number("ColorGrade\(name)Lum", wheel.luminance * 100)
             }
             number("ColorGradeBlending", a.color.blending * 100)
@@ -260,6 +262,7 @@ nonisolated enum PresetWriter {
             "ParametricShadowSplit", "ParametricMidtoneSplit", "ParametricHighlightSplit",
         ]
         return exact.contains(key) || key.hasPrefix("Defringe") || (key.hasPrefix("ColorGrade") && (key.hasSuffix("Hue") || key.hasSuffix("Sat")))
+            || (key.hasPrefix("SplitToning") && (key.hasSuffix("Hue") || key.hasSuffix("Saturation")))
     }
 
     /// A complete preset file.

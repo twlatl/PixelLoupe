@@ -167,25 +167,22 @@ nonisolated enum LightroomDevelopMapper {
             adjustments.blackAndWhite.intensity = 1
         }
 
-        func wheel(_ part: String) -> PhotoAdjustments.ColorWheel? {
-            let hue = value("ColorGrade\(part)Hue") ?? 0, saturation = value("ColorGrade\(part)Sat") ?? 0
+        // Lightroom keeps the Shadows and Highlights wheels' hue and saturation under their Split Toning names (and ignores
+        // ColorGrade<part>Hue/Sat for them); their luminance is ColorGrade<part>Lum. The ColorGrade names are read when
+        // there's no Split Toning value, as in presets PixelLoupe wrote before RAW-243.
+        func wheel(_ part: String, splitToning: Bool = false) -> PhotoAdjustments.ColorWheel? {
+            let hue = (splitToning ? value("SplitToning\(part)Hue") : nil) ?? value("ColorGrade\(part)Hue") ?? 0
+            let saturation = (splitToning ? value("SplitToning\(part)Saturation") : nil) ?? value("ColorGrade\(part)Sat") ?? 0
             let luminance = value("ColorGrade\(part)Lum") ?? 0
             guard hue != 0 || saturation != 0 || luminance != 0 else { return nil }
             return .init(hue: LightroomScales.hue(hue), amount: LightroomScales.saturation(saturation), luminance: LightroomScales.percent(luminance))
         }
-        if let shadows = wheel("Shadow") { adjustments.color.shadows = shadows }
+        if let shadows = wheel("Shadow", splitToning: true) { adjustments.color.shadows = shadows }
         if let midtones = wheel("Midtone") { adjustments.color.midtones = midtones }
-        if let highlights = wheel("Highlight") { adjustments.color.highlights = highlights }
+        if let highlights = wheel("Highlight", splitToning: true) { adjustments.color.highlights = highlights }
         if let global = wheel("Global") { adjustments.color.global = global }
         if let blending = value("ColorGradeBlending") { adjustments.color.blending = LightroomScales.saturation(blending) }
         if let balance = value("SplitToningBalance"), balance != 0 { adjustments.color.balance = LightroomScales.percent(balance) }
-        // Split toning from before color grading: its shadow and highlight tints are the wheels.
-        if adjustments.color.shadows == .init(), let amount = value("SplitToningShadowSaturation"), amount > 0 {
-            adjustments.color.shadows = .init(hue: LightroomScales.hue(value("SplitToningShadowHue") ?? 0), amount: LightroomScales.saturation(amount))
-        }
-        if adjustments.color.highlights == .init(), let amount = value("SplitToningHighlightSaturation"), amount > 0 {
-            adjustments.color.highlights = .init(hue: LightroomScales.hue(value("SplitToningHighlightHue") ?? 0), amount: LightroomScales.saturation(amount))
-        }
     }
 
     // MARK: - Detail

@@ -100,7 +100,22 @@ struct PresetWriterTests {
         let text = String(decoding: PresetWriter.xmp(name: "S", group: "G", settings: PresetWriter.settings(for: Self.edited(), sections: Set(PresetSection.allCases))),
                           as: UTF8.self)
         #expect(text.contains(#"crs:Contrast2012="+20""#) && text.contains(#"crs:Blacks2012="-15""#))
-        #expect(text.contains(#"crs:GrainAmount="20""#) && text.contains(#"crs:ColorGradeShadowHue="216""#) && text.contains(#"crs:Temperature="5200""#))
+        #expect(text.contains(#"crs:GrainAmount="20""#) && text.contains(#"crs:SplitToningShadowHue="216""#) && text.contains(#"crs:Temperature="5200""#))
+    }
+
+    @Test("Shadows and Highlights go under Lightroom's Split Toning names, and read back")
+    func colorGradingKeys() throws {
+        let photo = Self.edited()
+        let settings = PresetWriter.settings(for: photo, sections: [.colorGrading])
+        #expect(settings["SplitToningShadowHue"] == .number(216) && settings["SplitToningShadowSaturation"] == .number(20))
+        #expect(settings["SplitToningHighlightHue"] == .number(36) && settings["SplitToningHighlightSaturation"] == .number(15))
+        #expect(settings["ColorGradeShadowLum"] == .number(-5))
+        #expect(settings["ColorGradeShadowHue"] == nil && settings["ColorGradeShadowSat"] == nil && settings["ColorGradeHighlightSat"] == nil,
+                "Lightroom ignores these for Shadows and Highlights")
+        let preset = try #require(DevelopPreset.parse(PresetWriter.xmp(name: "G", group: "G", settings: settings), url: URL(filePath: "/p/g.xmp"),
+                                                      defaultGroup: "x"))
+        let applied = preset.applied(to: PhotoAdjustments(), isRaw: true)
+        #expect(applied.color.shadows == photo.color.shadows && applied.color.highlights == photo.color.highlights)
     }
 }
 

@@ -165,7 +165,7 @@ struct ColorMixerTests {
         #expect(try map("{ ColorGradeBlending = 50, ColorGradeShadowHue = 0, ColorGradeShadowSat = 0 }").0.isDefault)
     }
 
-    @Test("Old split toning becomes the shadow and highlight wheels, unless color grading is set")
+    @Test("Split Toning's hue and saturation are the Shadows and Highlights wheels, with Color Grading's luminance")
     func importsSplitToning() throws {
         let legacy = try map("""
             { SplitToningShadowHue = 200, SplitToningShadowSaturation = 40, SplitToningHighlightHue = 45, SplitToningHighlightSaturation = 20,
@@ -173,8 +173,16 @@ struct ColorMixerTests {
             """).0
         #expect(legacy.color.shadows == .init(hue: 0.556, amount: 0.4, luminance: 0))
         #expect(legacy.color.highlights == .init(hue: 0.125, amount: 0.2, luminance: 0) && legacy.color.balance == 0.1)
-        let modern = try map("{ ColorGradeShadowHue = 10, ColorGradeShadowSat = 50, SplitToningShadowHue = 200, SplitToningShadowSaturation = 40 }").0
-        #expect(modern.color.shadows.amount == 0.5)
+        // How Lightroom writes a graded photo: luminance under Color Grading's name, hue and saturation under Split Toning's.
+        let modern = try map("""
+            { SplitToningShadowHue = 180, SplitToningShadowSaturation = 40, ColorGradeShadowLum = -20,
+              SplitToningHighlightHue = 36, SplitToningHighlightSaturation = 25, ColorGradeHighlightLum = 10 }
+            """).0
+        #expect(modern.color.shadows == .init(hue: 0.5, amount: 0.4, luminance: -0.2))
+        #expect(modern.color.highlights == .init(hue: 0.1, amount: 0.25, luminance: 0.1))
+        // Lightroom renders the Split Toning values when both are there.
+        let both = try map("{ ColorGradeShadowHue = 10, ColorGradeShadowSat = 50, SplitToningShadowHue = 200, SplitToningShadowSaturation = 40 }").0
+        #expect(both.color.shadows.amount == 0.4 && both.color.shadows.hue == 0.556)
     }
 
     @Test("Lightroom's black & white and gray mixer import")
