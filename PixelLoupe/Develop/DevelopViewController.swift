@@ -621,6 +621,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     nonisolated private static func lookUpLens(make: String?, model: String?, lens: String?, url: URL) async -> LensLookup {
         let database = LensFunDatabase.shared
         let shooting = ShootingInfo.read(from: url)
+        // Photos cataloged before the lens was read from {ExifAux} have none recorded; the file does.
+        let lens = lens ?? ImageMetadata.read(from: url)?.lensModel
         let camera = database.camera(make: make, model: model)
         let cropFactor = camera?.cropFactor ?? shooting.cropFactor
         let match = database.match(make: make, model: model, lens: lens).map {
