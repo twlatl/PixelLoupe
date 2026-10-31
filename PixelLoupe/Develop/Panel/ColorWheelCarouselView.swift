@@ -12,6 +12,8 @@ final class ColorWheelCarouselView: NSView {
     let wheels: [ColorWheelView]
     /// Shown at the centered wheel's lower right (its eye).
     let accessory: NSView?
+    /// Shown at the centered wheel's lower left (its color well).
+    let leadingAccessory: NSView?
     /// Called with a peeking wheel's index when it's clicked.
     var onSelect: ((Int) -> Void)?
 
@@ -21,9 +23,10 @@ final class ColorWheelCarouselView: NSView {
     }
 
     /// `wheels` in carousel order; the one at `index` is the tab's own (editable), the others peeks.
-    init(wheels: [ColorWheelView], index: Int, accessory: NSView? = nil) {
+    init(wheels: [ColorWheelView], index: Int, accessory: NSView? = nil, leadingAccessory: NSView? = nil) {
         self.wheels = wheels
         self.accessory = accessory
+        self.leadingAccessory = leadingAccessory
         super.init(frame: .zero)
         clipsToBounds = true
         scrollPosition = CGFloat(index)
@@ -33,9 +36,9 @@ final class ColorWheelCarouselView: NSView {
             guard position != index else { continue }
             wheel.onPeek = { [weak self] in self?.onSelect?(position) }
         }
-        if let accessory {
-            accessory.translatesAutoresizingMaskIntoConstraints = true
-            addSubview(accessory)
+        for view in [accessory, leadingAccessory].compactMap(\.self) {
+            view.translatesAutoresizingMaskIntoConstraints = true
+            addSubview(view)
         }
     }
 
@@ -55,6 +58,11 @@ final class ColorWheelCarouselView: NSView {
             let size = accessory.fittingSize
             let side = bounds.height
             accessory.frame = CGRect(x: bounds.midX + side / 2 + 2, y: 0, width: size.width, height: size.height)
+        }
+        if let leadingAccessory {
+            let size = leadingAccessory.fittingSize
+            let side = bounds.height
+            leadingAccessory.frame = CGRect(x: bounds.midX - side / 2 - 2 - size.width, y: 0, width: size.width, height: size.height)
         }
     }
 

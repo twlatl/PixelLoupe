@@ -14,6 +14,31 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
     var onSelectionChange: ((UUID?) -> Void)?
     /// A Color Grading wheel's eye was switched in the selected mask: the preview should leave out these wheels of it.
     var onMuteWheels: ((_ mask: UUID?, _ wheels: Set<ColorGradingTab>) -> Void)?
+    /// For Color Grading's color wells in the mask's sections: the photo's pixels with Color Grading off.
+    var ungradedPixels: (() async -> [ColorGradingSwatches.RGB])? {
+        get { sections.ungradedPixels }
+        set { sections.ungradedPixels = newValue }
+    }
+    /// A color well's eyedropper was switched on for one of the mask's wheels, or off (`nil`).
+    var onPickGradingColor: ((ColorGradingTab?) -> Void)? {
+        get { sections.onPickGradingColor }
+        set { sections.onPickGradingColor = newValue }
+    }
+
+    /// A color well's eyedropper was dragged onto the photo for one of the mask's wheels (screen coordinates).
+    var onDropGradingColor: ((ColorGradingTab, NSPoint) -> Void)? {
+        get { sections.onDropGradingColor }
+        set { sections.onDropGradingColor = newValue }
+    }
+
+    func closeColorWell() { sections.closeColorWell() }
+    func endGradingColorPicking() { sections.endGradingColorPicking() }
+
+    /// Sets one of the selected mask's wheels from a picked color, as one undoable edit (`false` for a gray).
+    @discardableResult
+    func applyGradingColor(_ color: ColorGradingSwatches.RGB, to tab: ColorGradingTab) -> Bool {
+        sections.applyGradingColor(color, to: tab)
+    }
     var onAdd: ((MaskKind) -> Void)?
     var onOverlayChange: ((Bool) -> Void)?
     var onBrushChange: ((MaskGeometry.BrushSettings) -> Void)?

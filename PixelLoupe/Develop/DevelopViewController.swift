@@ -86,8 +86,16 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     /// While Option-dragging the Masking slider, the preview shows the sharpening mask.
     private var showsSharpenMask = false
     let whiteBalancePicker = WhiteBalancePickerView()
+    /// Covers the preview while a Color Grading well's eyedropper is on.
+    private let gradingPicker = FringePickerView(
+        label: "Pick a color on the photo for Color Grading", identifier: "colorGradingPicker", cursor: .eyedropper
+    )
+    /// The wheel that eyedropper picks for, and whether it's the selected mask's.
+    private var gradingPick: (tab: ColorGradingTab, isMask: Bool)?
     /// The preview as last drawn, for the defringe eyedropper: the image and where it's shown (points).
     private var lastPreview: (image: CIImage, rect: CGRect)?
+    /// The scale `lastPreview` was rendered at.
+    private var lastPreviewScale: CGFloat?
     private let histogramView = HistogramView()
     /// The clipping overlays drawn on the preview (switched on, or previewed by hovering).
     private var clippingDisplay: (shadows: Bool, highlights: Bool) = (false, false)
@@ -161,9 +169,10 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         cropOverlay.isHidden = true
         fringePicker.isHidden = true
         whiteBalancePicker.isHidden = true
+        gradingPicker.isHidden = true
         maskOverlay.isHidden = true
         retouchOverlay.isHidden = true
-        for view in [metalView!, beforeAfterOverlay, zoomClickView, loupeOverlay, cropOverlay, maskOverlay, retouchOverlay, fringePicker, whiteBalancePicker, infoLabel, messageLabel, locateButton, spinner] as [NSView] {
+        for view in [metalView!, beforeAfterOverlay, zoomClickView, loupeOverlay, cropOverlay, maskOverlay, retouchOverlay, fringePicker, whiteBalancePicker, gradingPicker, infoLabel, messageLabel, locateButton, spinner] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             previewContainer.addSubview(view)
         }
@@ -204,6 +213,10 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             maskOverlay.leadingAnchor.constraint(equalTo: metalView.leadingAnchor),
             maskOverlay.trailingAnchor.constraint(equalTo: metalView.trailingAnchor),
             maskOverlay.bottomAnchor.constraint(equalTo: metalView.bottomAnchor),
+            gradingPicker.topAnchor.constraint(equalTo: metalView.topAnchor),
+            gradingPicker.leadingAnchor.constraint(equalTo: metalView.leadingAnchor),
+            gradingPicker.trailingAnchor.constraint(equalTo: metalView.trailingAnchor),
+            gradingPicker.bottomAnchor.constraint(equalTo: metalView.bottomAnchor),
             whiteBalancePicker.topAnchor.constraint(equalTo: metalView.topAnchor),
             whiteBalancePicker.leadingAnchor.constraint(equalTo: metalView.leadingAnchor),
             whiteBalancePicker.trailingAnchor.constraint(equalTo: metalView.trailingAnchor),
@@ -245,6 +258,12 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         }
         whiteBalancePicker.onPick = { [weak self] point in self?.pickWhiteBalance(at: point) }
         whiteBalancePicker.sample = { [weak self] point in self?.neutralTargetSample(at: point) }
+        panel.ungradedPixels = { [weak self] in await self?.ungradedPixels() ?? [] }
+        panel.onPickGradingColor = { [weak self] tab in
+            if let tab { self?.startGradingColorPicking(tab, isMask: false) } else { self?.endGradingColorPicking() }
+        }
+        panel.onDropGradingColor = { [weak self] tab, point in self?.dropGradingColor(tab, at: point, isMask: false) }
+        gradingPicker.onPick = { [weak self] point in self?.pickGradingColor(at: point) }
         panel.autoWhiteBalance = { [weak self] in self?.autoWhiteBalance() }
         panel.onUprightLevel = { [weak self] in self?.levelWithUpright() }
         panel.onSharpenMaskPreview = { [weak self] on in
@@ -335,6 +354,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         // Leaving Develop closes the crop tool, keeping the crop.
         if state.developTool == .crop { state.developTool = .adjust }
         endFringePicking()
+        closeColorWells()
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
         loupeOverlay.isPlacementKeyDown = false
@@ -715,6 +735,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         fringePicker.isHidden = true
         lensPanel.endFringePicking()
         endWhiteBalancePicking()
+        endGradingColorPicking()
     }
 
     private func endWhiteBalancePicking() {
@@ -730,24 +751,113 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
 
     /// The average color of the preview (display RGB) over `rect` of the image, or the whole image.
     private func previewColor(around point: CGPoint?) -> [Double]? {
-        guard let preview = lastPreview, let ciContext else { return nil }
-        let extent = preview.image.extent
+        guard let preview = lastPreview else { return nil }
+        return averageColor(of: preview.image, shownIn: preview.rect, around: point, in: CGColorSpace(name: CGColorSpace.displayP3))
+    }
+
+    /// The average color of `image`, shown at `rect` (points), over a 5-point square around `point`, or all of it.
+    private func averageColor(of image: CIImage, shownIn rect: CGRect, around point: CGPoint?, in colorSpace: CGColorSpace?) -> [Double]? {
+        guard let ciContext else { return nil }
+        let extent = image.extent
         var bounds = extent
         if let point {
-            guard preview.rect.contains(point) else { return nil }
-            let x = extent.minX + (point.x - preview.rect.minX) / preview.rect.width * extent.width
-            let y = extent.minY + (point.y - preview.rect.minY) / preview.rect.height * extent.height
+            guard rect.contains(point) else { return nil }
+            let x = extent.minX + (point.x - rect.minX) / rect.width * extent.width
+            let y = extent.minY + (point.y - rect.minY) / rect.height * extent.height
             // A 5-point square of the preview, so noise doesn't decide.
-            let side = max(3, (5 * extent.width / preview.rect.width).rounded())
+            let side = max(3, (5 * extent.width / rect.width).rounded())
             bounds = CGRect(x: x - side / 2, y: y - side / 2, width: side, height: side).intersection(extent).integral
         }
         guard !bounds.isEmpty, let filter = CIFilter(name: "CIAreaAverage", parameters: [
-            kCIInputImageKey: preview.image, kCIInputExtentKey: CIVector(cgRect: bounds),
+            kCIInputImageKey: image, kCIInputExtentKey: CIVector(cgRect: bounds),
         ]), let average = filter.outputImage else { return nil }
         var pixel = [Float](repeating: 0, count: 4)
-        ciContext.render(average, toBitmap: &pixel, rowBytes: 16, bounds: average.extent, format: .RGBAf,
-                         colorSpace: CGColorSpace(name: CGColorSpace.displayP3))
+        ciContext.render(average, toBitmap: &pixel, rowBytes: 16, bounds: average.extent, format: .RGBAf, colorSpace: colorSpace)
         return pixel.prefix(3).map(Double.init)
+    }
+
+    // MARK: Color Grading wells
+
+    /// A well's eyedropper was switched on: until it's switched off (or its well closes), each click on the photo
+    /// picks for that wheel.
+    private func startGradingColorPicking(_ tab: ColorGradingTab, isMask: Bool) {
+        guard source != nil else {
+            NSSound.beep()
+            return isMask ? maskPanel.endGradingColorPicking() : panel.endGradingColorPicking()
+        }
+        fringePicker.isHidden = true
+        lensPanel.endFringePicking()
+        endWhiteBalancePicking()
+        // Only one eyedropper at a time: the other panel's goes off.
+        isMask ? panel.endGradingColorPicking() : maskPanel.endGradingColorPicking()
+        gradingPick = (tab, isMask)
+        gradingPicker.isHidden = false
+        // The popover took key when its eyedropper was clicked, and the eyedropper pointer (a cursor rect) only shows
+        // in the key window; the popover stays open.
+        view.window?.makeKey()
+        view.window?.invalidateCursorRects(for: gradingPicker)
+    }
+
+    /// The well's eyedropper was dragged out of its popover and let go at `screenPoint`: pick the photo there.
+    private func dropGradingColor(_ tab: ColorGradingTab, at screenPoint: NSPoint, isMask: Bool) {
+        guard let window = view.window, source != nil else { return NSSound.beep() }
+        let armed = gradingPick
+        gradingPick = (tab, isMask)
+        pickGradingColor(at: gradingPicker.convert(window.convertPoint(fromScreen: screenPoint), from: nil))
+        gradingPick = armed
+    }
+
+    /// Switches the eyedropper off (the wells stay open).
+    private func endGradingColorPicking() {
+        gradingPick = nil
+        gradingPicker.isHidden = true
+        panel.endGradingColorPicking()
+        maskPanel.endGradingColorPicking()
+    }
+
+    /// Closes any open color well, and with it the eyedropper.
+    private func closeColorWells() {
+        panel.closeColorWell()
+        maskPanel.closeColorWell()
+        endGradingColorPicking()
+    }
+
+    /// The settings with Color Grading off (the photo's and every mask's), so swatches and picks show the photo's own
+    /// colors rather than the current grade.
+    private var ungradedAdjustments: PhotoAdjustments {
+        var settings = adjustments
+        settings.color.isEnabled = false
+        for index in settings.masks.indices { settings.masks[index].settings.color.isEnabled = false }
+        return settings
+    }
+
+    /// A small copy of the photo with Color Grading off, as sRGB pixels, for the wells' swatches.
+    private func ungradedPixels() async -> [ColorGradingSwatches.RGB] {
+        guard let source else { return [] }
+        let settings = ungradedAdjustments
+        let frame = source.frameSize(settings)
+        let scale = min(1, ColorGradingSwatches.sampleSide / max(frame.width, frame.height, 1))
+        return await Self.readPixels(NavigatorPreviewInput(image: source.image(with: settings, scale: scale)))
+    }
+
+    @concurrent
+    private nonisolated static func readPixels(_ input: NavigatorPreviewInput) async -> [ColorGradingSwatches.RGB] {
+        ColorGradingSwatches.pixels(of: input.image, context: navigatorContext)
+    }
+
+    /// A well's eyedropper: sets the wheel from the clicked spot of the photo with Color Grading off, as one undoable edit.
+    /// The eyedropper stays on for more picks, as Lightroom's does.
+    private func pickGradingColor(at point: CGPoint) {
+        guard let pick = gradingPick else { return }
+        guard let source, let preview = lastPreview, let scale = lastPreviewScale,
+              let color = averageColor(
+                  of: source.image(with: ungradedAdjustments, scale: scale), shownIn: preview.rect, around: point,
+                  in: CGColorSpace(name: CGColorSpace.sRGB)
+              ), color.count == 3
+        else { return NSSound.beep() }
+        let rgb = ColorGradingSwatches.RGB(color[0], color[1], color[2]).clamped(lowerBound: .zero, upperBound: .one)
+        let applied = pick.isMask ? maskPanel.applyGradingColor(rgb, to: pick.tab) : panel.applyGradingColor(rgb, to: pick.tab)
+        if !applied { NSSound.beep() }
     }
 
     /// The 5 × 5 grid of the preview around `point` (one square per screen point) for the White
@@ -864,6 +974,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         cropOverlay.isHidden = !cropping
         loupeOverlay.isLoupeVisible = state.isLoupeVisible && !cropping
         if state.developTool == .lens { loadLensContext() } else { endFringePicking() }
+        closeColorWells()
         if cropping {
             cropSessionStart = adjustments.crop
             showCrop(adjustments.crop)
@@ -993,6 +1104,11 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             self?.mutedMaskWheels = mask.map { ($0, wheels) }
             self?.metalView.needsDisplay = true
         }
+        maskPanel.ungradedPixels = { [weak self] in await self?.ungradedPixels() ?? [] }
+        maskPanel.onPickGradingColor = { [weak self] tab in
+            if let tab { self?.startGradingColorPicking(tab, isMask: true) } else { self?.endGradingColorPicking() }
+        }
+        maskPanel.onDropGradingColor = { [weak self] tab, point in self?.dropGradingColor(tab, at: point, isMask: true) }
         maskPanel.onBrushChange = { [weak self] brush in self?.maskOverlay.brush = brush }
         maskOverlay.onBrushChange = { [weak self] brush in self?.maskPanel.brush = brush }
         maskOverlay.brush = maskPanel.brush
@@ -1554,6 +1670,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             lightingPanel.isEditingEnabled = false
             clearLightingStatus()
             endFringePicking()
+            closeColorWells()
             histogramView.isEditingEnabled = false
             histogramView.histogram = nil
             histogramView.shootingInfo = ShootingInfo()
@@ -1568,6 +1685,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         endPresetAmount()
         endPresetPreview()
         clearMutedWheels()
+        closeColorWells()
         displayedPhotoID = id
         historyCursor = nil
         source = nil
@@ -1946,6 +2064,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
                     lastDrawnRect = rect
                 }
                 // Side by side, the eyedroppers and loupe work on the after.
+                lastPreviewScale = previewScale
                 lastPreview = (beforeAfter?.isSideBySide == true ? afterImage : image, CGRect(
                     x: rect.minX / backingScale, y: rect.minY / backingScale,
                     width: rect.width / backingScale, height: rect.height / backingScale

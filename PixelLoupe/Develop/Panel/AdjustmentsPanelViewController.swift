@@ -49,6 +49,13 @@ final class AdjustmentsPanelViewController: NSViewController {
     var onUprightLevel: (() -> Void)?
     /// A Color Grading wheel's eye was switched: the preview should leave out these wheels (render-time only).
     var onMuteWheels: ((Set<ColorGradingTab>) -> Void)?
+    /// The photo's pixels (sRGB), rendered small with Color Grading off, for the color wells' swatches.
+    var ungradedPixels: (() async -> [ColorGradingSwatches.RGB])?
+    /// A color well's eyedropper was switched on for a wheel (clicks on the photo pick its color until it's switched
+    /// off), or off (`nil`).
+    var onPickGradingColor: ((ColorGradingTab?) -> Void)?
+    /// A color well's eyedropper was dragged out and let go at a point on screen: the controller picks the photo there.
+    var onDropGradingColor: ((ColorGradingTab, NSPoint) -> Void)?
     /// Option-dragging the Masking slider asks for the mask to be shown in the preview.
     var onSharpenMaskPreview: ((Bool) -> Void)?
 
@@ -538,6 +545,8 @@ final class AdjustmentsPanelViewController: NSViewController {
         let show = { [weak self, weak picker, weak separator, weak blending, weak balance] in
             let current = ColorGradingTab.current
             picker?.selectedSegment = current.rawValue
+            // The well's popover belongs to its tab's page.
+            if let open = self?.colorWellPopover, open.tab != current { self?.closeColorWell() }
             for (tab, page) in pages { page.isHidden = tab != current }
             for view in [separator, blending, balance] as [NSView?] { view?.isHidden = !current.showsBlending }
             // Between tonal tabs the wheels slide over, from where the new tab's wheel was peeking in.
@@ -628,8 +637,9 @@ final class AdjustmentsPanelViewController: NSViewController {
             }
         }
 
-        // The eye sits at the wheel's lower right.
+        // The eye sits at the wheel's lower right, the color well at its lower left.
         let eye = eyeButton(tab)
+        let well = colorWell(tab, wheelPath)
         let wheelArea: NSView
         if let index = tab.carouselIndex {
             // A tonal wheel: its neighbours peek in at the edges, and clicking one shows its tab.
@@ -646,7 +656,7 @@ final class AdjustmentsPanelViewController: NSViewController {
                 }
                 return peek
             }
-            let carousel = ColorWheelCarouselView(wheels: wheels, index: index, accessory: eye)
+            let carousel = ColorWheelCarouselView(wheels: wheels, index: index, accessory: eye, leadingAccessory: well)
             carousel.onSelect = { [weak self] index in
                 ColorGradingTab.current = ColorGradingTab.carousel[index]
                 self?.showColorGradingTab?()
@@ -654,12 +664,19 @@ final class AdjustmentsPanelViewController: NSViewController {
             colorCarousels[tab] = carousel
             wheelArea = carousel
         } else {
-            // Global, on its own; an empty space left of the wheel balances the eye so the wheel stays centered.
-            let balance = NSView()
-            let wheelRow = NSStackView(views: [balance, wheel, eye])
+            // Global, on its own; the well's slot is as wide as the eye so the wheel stays centered.
+            let wellSlot = NSView()
+            well.translatesAutoresizingMaskIntoConstraints = false
+            wellSlot.addSubview(well)
+            let wheelRow = NSStackView(views: [wellSlot, wheel, eye])
             wheelRow.alignment = .bottom
             wheelRow.spacing = 4
-            balance.widthAnchor.constraint(equalTo: eye.widthAnchor).isActive = true
+            NSLayoutConstraint.activate([
+                wellSlot.widthAnchor.constraint(equalTo: eye.widthAnchor),
+                wellSlot.heightAnchor.constraint(equalTo: well.heightAnchor),
+                well.trailingAnchor.constraint(equalTo: wellSlot.trailingAnchor),
+                well.bottomAnchor.constraint(equalTo: wellSlot.bottomAnchor),
+            ])
             wheelArea = wheelRow
         }
 
@@ -753,6 +770,104 @@ final class AdjustmentsPanelViewController: NSViewController {
         wheel.heightAnchor.constraint(equalTo: wheel.widthAnchor).isActive = true
         lower.widthAnchor.constraint(equalTo: wheel.widthAnchor).isActive = true
         return column
+    }
+
+    // MARK: Color wells
+
+    /// A single wheel's color well: shows the wheel's tint and opens the photo's colors.
+    private func colorWell(
+        _ tab: ColorGradingTab, _ wheelPath: WritableKeyPath<Adjustments.ColorGrading, Adjustments.ColorWheel>
+    ) -> ColorGradingWellButton {
+        let well = ColorGradingWellButton()
+        well.toolTip = "Colors from the photo"
+        well.setAccessibilityLabel("\(tab.title) colors from the photo")
+        well.setAccessibilityIdentifier("colorGradingWell.\(scopeName)\(tab.title)")
+        let target = ActionTarget { [weak self, weak well] _ in
+            guard let well else { return }
+            self?.showColorWell(tab, from: well)
+        }
+        well.target = target
+        well.action = #selector(ActionTarget.fire(_:))
+        actionTargets.append(target)
+        sectionStates.append { [weak self, weak well] in
+            guard let self else { return }
+            well?.color = ColorGradingWellButton.tint(adjustments.color[keyPath: wheelPath])
+        }
+        return well
+    }
+
+    /// The open color well's popover (for tests).
+    private(set) var colorWellPopover: ColorGradingWellPopover?
+    private(set) var colorWellPopoverHost: NSPopover?
+
+    /// Opens a well: the wheel's tint, the eyedropper, and the photo's colors once they're found (off the main thread).
+    /// It stays open, as Lightroom's does, until its close button (or `closeColorWell()`).
+    func showColorWell(_ tab: ColorGradingTab, from well: NSView?) {
+        guard isEditingEnabled, let wheelPath = tab.wheel else { return }
+        closeColorWell()
+        let content = ColorGradingWellPopover(tab: tab)
+        content.current = ColorGradingWellButton.tint(adjustments.color[keyPath: wheelPath])
+        content.onPick = { [weak self] color in
+            guard let self, applyGradingColor(color, to: tab) else { return NSSound.beep() }
+        }
+        content.onEyedropper = { [weak self] on in self?.onPickGradingColor?(on ? tab : nil) }
+        content.onEyedropperDrop = { [weak self] point in self?.onDropGradingColor?(tab, point) }
+        content.onClose = { [weak self] in self?.closeColorWell() }
+        colorWellPopover = content
+        if let well, well.window != nil {
+            let popover = NSPopover()
+            popover.behavior = .applicationDefined
+            popover.contentViewController = content
+            popover.show(relativeTo: well.bounds, of: well, preferredEdge: .minY)
+            colorWellPopoverHost = popover
+        } else {
+            _ = content.view
+        }
+        let grading = adjustments.color, pixels = ungradedPixels
+        Task { [weak content] in
+            let found = await Self.swatches(from: await pixels?() ?? [], for: tab, in: grading)
+            content?.swatches = found
+        }
+    }
+
+    /// Closes the open well (its close button, another well, a tab or photo change), switching its eyedropper off.
+    func closeColorWell() {
+        guard let content = colorWellPopover else { return }
+        colorWellPopover = nil
+        colorWellPopoverHost?.close()
+        colorWellPopoverHost = nil
+        if content.isPicking {
+            content.isPicking = false
+            onPickGradingColor?(nil)
+        }
+    }
+
+    /// Switches the open well's eyedropper off (the controller stopped picking) without closing it.
+    func endGradingColorPicking() {
+        colorWellPopover?.isPicking = false
+    }
+
+    @concurrent
+    private nonisolated static func swatches(
+        from pixels: [ColorGradingSwatches.RGB], for tab: ColorGradingTab, in grading: Adjustments.ColorGrading
+    ) async -> [ColorGradingSwatches.RGB] {
+        ColorGradingSwatches.swatches(from: pixels, for: tab, in: grading)
+    }
+
+    /// Sets a wheel's hue and saturation from a color (a swatch or an eyedropper pick), leaving its luminance, as one
+    /// undoable edit. `false` (nothing changed) for a gray.
+    @discardableResult
+    func applyGradingColor(_ color: ColorGradingSwatches.RGB, to tab: ColorGradingTab) -> Bool {
+        guard isEditingEnabled, let wheelPath = tab.wheel, let wheel = ColorGradingSwatches.wheel(for: color) else { return false }
+        change("Color Grading", isFinal: true) {
+            $0.color[keyPath: wheelPath].hue = wheel.hue
+            $0.color[keyPath: wheelPath].amount = wheel.amount
+            $0.color.isEnabled = true
+        }
+        if let popover = colorWellPopover, popover.tab == tab {
+            popover.current = ColorGradingWellButton.tint(adjustments.color[keyPath: wheelPath])
+        }
+        return true
     }
 
     // MARK: Muted wheels
