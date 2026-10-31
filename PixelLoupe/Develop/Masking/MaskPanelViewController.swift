@@ -5,10 +5,15 @@ import AppKit
 /// are saved and undoable).
 final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
     private(set) var masks: [PhotoAdjustments.LocalAdjustment] = []
-    private(set) var selectedID: UUID?
+    private(set) var selectedID: UUID? {
+        // A wheel hidden with its eye belongs to the mask it was hidden in.
+        didSet { if selectedID != oldValue, !sections.mutedWheels.isEmpty { clearMutedWheels(); onMuteWheels?(nil, []) } }
+    }
 
     var onChange: ((_ masks: [PhotoAdjustments.LocalAdjustment], _ isFinal: Bool, _ actionName: String) -> Void)?
     var onSelectionChange: ((UUID?) -> Void)?
+    /// A Color Grading wheel's eye was switched in the selected mask: the preview should leave out these wheels of it.
+    var onMuteWheels: ((_ mask: UUID?, _ wheels: Set<ColorGradingTab>) -> Void)?
     var onAdd: ((MaskKind) -> Void)?
     var onOverlayChange: ((Bool) -> Void)?
     var onBrushChange: ((MaskGeometry.BrushSettings) -> Void)?
@@ -197,6 +202,10 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         sections.onChange = { [weak self] adjustments, isFinal, action in
             self?.edit(action, isFinal: isFinal) { $0.settings = PhotoAdjustments.LocalSettings(adjustments) }
         }
+        sections.onMuteWheels = { [weak self] wheels in
+            guard let self else { return }
+            onMuteWheels?(wheels.isEmpty ? nil : selectedID, wheels)
+        }
         refreshers.append { [weak self] in
             guard let self else { return }
             sections.display((selected?.settings ?? .init()).adjustments, asShotWhiteBalance: (0, 0), isRaw: false)
@@ -376,6 +385,11 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         onSelectionChange?(selectedID)
         onChange?(masks, true, "Delete Mask")
         refresh()
+    }
+
+    /// Shows every Color Grading wheel again (another photo is shown).
+    func clearMutedWheels() {
+        sections.clearMutedWheels()
     }
 
     // MARK: - Showing
