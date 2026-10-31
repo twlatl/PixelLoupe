@@ -147,6 +147,14 @@ struct ColorGradingWellTests {
         #expect(panel.colorWellPopover == nil)
     }
 
+    @Test("Picking shows an eyedropper pointer that picks at its tip (lower left)")
+    func eyedropperCursor() {
+        let cursor = NSCursor.eyedropper
+        #expect(cursor !== NSCursor.crosshair && cursor.image.size == NSSize(width: 22, height: 22))
+        #expect(cursor.hotSpot.x < 5 && cursor.hotSpot.y > 17, "hot spots count from the top left")
+        #expect(FringePickerView(cursor: .eyedropper).cursor === NSCursor.eyedropper)
+    }
+
     @Test("Dragging the eyedropper out of the popover and letting go asks to pick the photo there")
     func eyedropperDrag() throws {
         let (panel, _) = makePanel()

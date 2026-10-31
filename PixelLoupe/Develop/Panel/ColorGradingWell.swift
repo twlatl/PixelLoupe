@@ -192,6 +192,39 @@ final class ColorGradingWellPopover: NSViewController {
     }
 }
 
+extension NSCursor {
+    /// The Color Grading eyedropper's pointer: the eyedropper symbol, picking at its tip, with a light halo so it shows
+    /// on dark and light photos alike.
+    static let eyedropper: NSCursor = {
+        let side = 22.0
+        let configuration = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
+        guard let symbol = NSImage(systemSymbolName: "eyedropper", accessibilityDescription: nil)?
+            .withSymbolConfiguration(configuration) else { return .crosshair }
+        func tinted(_ color: NSColor) -> NSImage {
+            NSImage(size: symbol.size, flipped: false) { rect in
+                symbol.draw(in: rect)
+                color.set()
+                rect.fill(using: .sourceAtop)
+                return true
+            }
+        }
+        let halo = tinted(.white), body = tinted(.black)
+        let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { _ in
+            // The symbol's tip is its lower left; put it at the image's lower left, inside the halo.
+            let origin = CGPoint(x: 1.5, y: 1.5)
+            for dx in [-1.0, 0, 1] {
+                for dy in [-1.0, 0, 1] where dx != 0 || dy != 0 {
+                    halo.draw(at: CGPoint(x: origin.x + dx, y: origin.y + dy), from: .zero, operation: .sourceOver, fraction: 1)
+                }
+            }
+            body.draw(at: origin, from: .zero, operation: .sourceOver, fraction: 1)
+            return true
+        }
+        // Hot spots count from the top left.
+        return NSCursor(image: image, hotSpot: NSPoint(x: 3, y: side - 2.5))
+    }()
+}
+
 /// The popover's eyedropper, a toggle: click it on, then click the photo (as often as you like) to pick. It can also be
 /// dragged out and let go over the photo to pick there.
 final class ColorGradingEyedropperButton: NSButton {
@@ -216,7 +249,7 @@ final class ColorGradingEyedropperButton: NSButton {
                 if !isDragging, hypot(location.x - start.x, location.y - start.y) > Self.dragThreshold {
                     isDragging = true
                     highlight(false)
-                    NSCursor.crosshair.push()
+                    NSCursor.eyedropper.push()
                 }
                 continue
             }
