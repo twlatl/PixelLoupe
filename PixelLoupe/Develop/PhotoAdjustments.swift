@@ -120,6 +120,9 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
         var amount = 0.0
         /// -1…1.
         var luminance = 0.0
+
+        /// Whether the wheel does anything: a tint or a luminance shift.
+        var isSet: Bool { amount > 0 || luminance != 0 }
     }
 
     struct ColorGrading: Codable, Equatable, Sendable {
