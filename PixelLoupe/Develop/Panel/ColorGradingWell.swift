@@ -47,14 +47,17 @@ final class ColorGradingWellButton: NSButton {
 }
 
 /// What a color well opens, like Lightroom's color popover but offering the photo's own colors: the wheel's current
-/// tint, an eyedropper for picking from the photo, and the photo's main colors in the wheel's tonal range.
+/// tint, an eyedropper for picking from the photo, and the photo's main colors in the wheel's tonal range. Like
+/// Lightroom's, it stays open while you work (picking from the photo included) until its close button.
 final class ColorGradingWellPopover: NSViewController {
     /// A swatch was clicked, with its color.
     var onPick: ((ColorGradingSwatches.RGB) -> Void)?
-    /// The eyedropper was clicked: the next click on the photo picks.
-    var onEyedropper: (() -> Void)?
-    /// The eyedropper was dragged out and let go here (screen coordinates), as in Lightroom.
+    /// The eyedropper was switched on (clicks on the photo pick) or off.
+    var onEyedropper: ((Bool) -> Void)?
+    /// The eyedropper was dragged out and let go here (screen coordinates).
     var onEyedropperDrop: ((NSPoint) -> Void)?
+    /// The close button was clicked.
+    var onClose: (() -> Void)?
 
     var current: NSColor = .gray {
         didSet { currentWell.color = current }
@@ -65,13 +68,24 @@ final class ColorGradingWellPopover: NSViewController {
         didSet { showSwatches() }
     }
 
+    /// Whether the eyedropper is on.
+    var isPicking: Bool {
+        get { eyedropper.state == .on }
+        set {
+            eyedropper.state = newValue ? .on : .off
+            eyedropper.contentTintColor = newValue ? Accent.color : nil
+        }
+    }
+
     let tab: ColorGradingTab
     private let currentWell = ColorGradingWellButton()
     private let eyedropper = ColorGradingEyedropperButton()
+    private let closeButton = NSButton()
     private let swatchRow = NSStackView()
     private let spinner = NSProgressIndicator()
     private let emptyLabel = NSTextField(labelWithString: "No colors")
     private var targets: [ActionTarget] = []
+    private var swatchTargets: [ActionTarget] = []
 
     init(tab: ColorGradingTab) {
         self.tab = tab
@@ -84,20 +98,41 @@ final class ColorGradingWellPopover: NSViewController {
     /// The swatch buttons shown (for tests).
     var swatchButtons: [NSButton] { swatchRow.arrangedSubviews.compactMap { $0 as? NSButton } }
     var eyedropperButton: ColorGradingEyedropperButton { eyedropper }
+    var closeButtonForTesting: NSButton { closeButton }
 
     override func loadView() {
+        let title = NSTextField(labelWithString: tab.title)
+        title.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
+        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close")
+        closeButton.isBordered = false
+        closeButton.bezelStyle = .toolbar
+        closeButton.imagePosition = .imageOnly
+        closeButton.contentTintColor = .secondaryLabelColor
+        closeButton.toolTip = "Close"
+        closeButton.setAccessibilityIdentifier("colorGradingWellClose")
+        closeButton.keyEquivalent = "\u{1b}"
+        let closeTarget = ActionTarget { [weak self] _ in self?.onClose?() }
+        closeButton.target = closeTarget
+        closeButton.action = #selector(ActionTarget.fire(_:))
+        targets.append(closeTarget)
+
         currentWell.refusesFirstResponder = true
         currentWell.setAccessibilityLabel("Current \(tab.title.lowercased()) color")
 
         eyedropper.image = NSImage(systemSymbolName: "eyedropper", accessibilityDescription: nil)
+        eyedropper.setButtonType(.pushOnPushOff)
         eyedropper.isBordered = false
         eyedropper.bezelStyle = .toolbar
         eyedropper.imagePosition = .imageOnly
-        eyedropper.toolTip = "Drag onto the photo, or click and then click the photo, to pick a color"
+        eyedropper.toolTip = "Click, then click the photo to pick a color (or drag onto the photo)"
         eyedropper.onDrop = { [weak self] point in self?.onEyedropperDrop?(point) }
         eyedropper.setAccessibilityLabel("Pick a \(tab.title.lowercased()) color from the photo")
         eyedropper.setAccessibilityIdentifier("colorGradingEyedropper")
-        let eyedropperTarget = ActionTarget { [weak self] _ in self?.onEyedropper?() }
+        let eyedropperTarget = ActionTarget { [weak self] _ in
+            guard let self else { return }
+            isPicking = eyedropper.state == .on
+            onEyedropper?(isPicking)
+        }
         eyedropper.target = eyedropperTarget
         eyedropper.action = #selector(ActionTarget.fire(_:))
         targets.append(eyedropperTarget)
@@ -111,15 +146,17 @@ final class ColorGradingWellPopover: NSViewController {
         spinner.controlSize = .small
         swatchRow.spacing = 4
 
-        let top = NSStackView(views: [currentWell, NSView(), eyedropper])
-        let stack = NSStackView(views: [top, label, swatchRow])
+        let header = NSStackView(views: [title, NSView(), closeButton])
+        let current = NSStackView(views: [currentWell, eyedropper])
+        current.spacing = 6
+        let stack = NSStackView(views: [header, current, label, swatchRow])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 6
-        stack.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
-        top.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -20).isActive = true
-        stack.widthAnchor.constraint(greaterThanOrEqualToConstant: 150).isActive = true
-        currentWell.color = current
+        stack.edgeInsets = NSEdgeInsets(top: 8, left: 10, bottom: 10, right: 8)
+        header.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -18).isActive = true
+        stack.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
+        currentWell.color = self.current
         view = stack
         showSwatches()
     }
@@ -127,7 +164,7 @@ final class ColorGradingWellPopover: NSViewController {
     private func showSwatches() {
         guard isViewLoaded else { return }
         swatchRow.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        targets.removeSubrange(1...)
+        swatchTargets = []
         guard let swatches else {
             swatchRow.addArrangedSubview(spinner)
             spinner.startAnimation(nil)
@@ -149,14 +186,14 @@ final class ColorGradingWellPopover: NSViewController {
             let target = ActionTarget { [weak self] _ in self?.onPick?(color) }
             button.target = target
             button.action = #selector(ActionTarget.fire(_:))
-            targets.append(target)
+            swatchTargets.append(target)
             swatchRow.addArrangedSubview(button)
         }
     }
 }
 
-/// The popover's eyedropper. Drag from it and let go over the photo to pick there, as in Lightroom; a plain click
-/// sends its action instead (the next click on the photo picks).
+/// The popover's eyedropper, a toggle: click it on, then click the photo (as often as you like) to pick. It can also be
+/// dragged out and let go over the photo to pick there.
 final class ColorGradingEyedropperButton: NSButton {
     /// Where a drag out of the button was let go, in screen coordinates.
     var onDrop: ((NSPoint) -> Void)?
@@ -186,6 +223,8 @@ final class ColorGradingEyedropperButton: NSButton {
             if isDragging {
                 onDrop?(window.convertPoint(toScreen: location))
             } else if bounds.contains(convert(location, from: nil)) {
+                // Tracking is done here rather than by the cell, so flip the toggle as a click would.
+                state = state == .on ? .off : .on
                 sendAction(action, to: target)
             }
             return
