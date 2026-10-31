@@ -257,7 +257,9 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         whiteBalancePicker.onPick = { [weak self] point in self?.pickWhiteBalance(at: point) }
         whiteBalancePicker.sample = { [weak self] point in self?.neutralTargetSample(at: point) }
         panel.ungradedPixels = { [weak self] in await self?.ungradedPixels() ?? [] }
-        panel.onPickGradingColor = { [weak self] tab in self?.startGradingColorPicking(tab, isMask: false) }
+        panel.onPickGradingColor = { [weak self] tab in
+            if let tab { self?.startGradingColorPicking(tab, isMask: false) } else { self?.endGradingColorPicking() }
+        }
         panel.onDropGradingColor = { [weak self] tab, point in self?.dropGradingColor(tab, at: point, isMask: false) }
         gradingPicker.onPick = { [weak self] point in self?.pickGradingColor(at: point) }
         panel.autoWhiteBalance = { [weak self] in self?.autoWhiteBalance() }
@@ -350,6 +352,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         // Leaving Develop closes the crop tool, keeping the crop.
         if state.developTool == .crop { state.developTool = .adjust }
         endFringePicking()
+        closeColorWells()
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
         loupeOverlay.isPlacementKeyDown = false
@@ -773,12 +776,22 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
 
     // MARK: Color Grading wells
 
+    /// A well's eyedropper was switched on: until it's switched off (or its well closes), each click on the photo
+    /// picks for that wheel.
     private func startGradingColorPicking(_ tab: ColorGradingTab, isMask: Bool) {
-        guard source != nil else { return NSSound.beep() }
-        endFringePicking()
+        guard source != nil else {
+            NSSound.beep()
+            return isMask ? maskPanel.endGradingColorPicking() : panel.endGradingColorPicking()
+        }
+        fringePicker.isHidden = true
+        lensPanel.endFringePicking()
+        endWhiteBalancePicking()
+        // Only one eyedropper at a time: the other panel's goes off.
+        isMask ? panel.endGradingColorPicking() : maskPanel.endGradingColorPicking()
         gradingPick = (tab, isMask)
         gradingPicker.isHidden = false
-        // Switched on from the well's popover, which took key: the crosshair (a cursor rect) only shows in the key window.
+        // The popover took key when its eyedropper was clicked, and the crosshair (a cursor rect) only shows in the
+        // key window; the popover stays open.
         view.window?.makeKey()
         view.window?.invalidateCursorRects(for: gradingPicker)
     }
@@ -786,13 +799,25 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     /// The well's eyedropper was dragged out of its popover and let go at `screenPoint`: pick the photo there.
     private func dropGradingColor(_ tab: ColorGradingTab, at screenPoint: NSPoint, isMask: Bool) {
         guard let window = view.window, source != nil else { return NSSound.beep() }
+        let armed = gradingPick
         gradingPick = (tab, isMask)
         pickGradingColor(at: gradingPicker.convert(window.convertPoint(fromScreen: screenPoint), from: nil))
+        gradingPick = armed
     }
 
+    /// Switches the eyedropper off (the wells stay open).
     private func endGradingColorPicking() {
         gradingPick = nil
         gradingPicker.isHidden = true
+        panel.endGradingColorPicking()
+        maskPanel.endGradingColorPicking()
+    }
+
+    /// Closes any open color well, and with it the eyedropper.
+    private func closeColorWells() {
+        panel.closeColorWell()
+        maskPanel.closeColorWell()
+        endGradingColorPicking()
     }
 
     /// The settings with Color Grading off (the photo's and every mask's), so swatches and picks show the photo's own
@@ -819,9 +844,9 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     }
 
     /// A well's eyedropper: sets the wheel from the clicked spot of the photo with Color Grading off, as one undoable edit.
+    /// The eyedropper stays on for more picks, as Lightroom's does.
     private func pickGradingColor(at point: CGPoint) {
         guard let pick = gradingPick else { return }
-        defer { endGradingColorPicking() }
         guard let source, let preview = lastPreview, let scale = lastPreviewScale,
               let color = averageColor(
                   of: source.image(with: ungradedAdjustments, scale: scale), shownIn: preview.rect, around: point,
@@ -947,7 +972,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         cropOverlay.isHidden = !cropping
         loupeOverlay.isLoupeVisible = state.isLoupeVisible && !cropping
         if state.developTool == .lens { loadLensContext() } else { endFringePicking() }
-        endGradingColorPicking()
+        closeColorWells()
         if cropping {
             cropSessionStart = adjustments.crop
             showCrop(adjustments.crop)
@@ -1078,7 +1103,9 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             self?.metalView.needsDisplay = true
         }
         maskPanel.ungradedPixels = { [weak self] in await self?.ungradedPixels() ?? [] }
-        maskPanel.onPickGradingColor = { [weak self] tab in self?.startGradingColorPicking(tab, isMask: true) }
+        maskPanel.onPickGradingColor = { [weak self] tab in
+            if let tab { self?.startGradingColorPicking(tab, isMask: true) } else { self?.endGradingColorPicking() }
+        }
         maskPanel.onDropGradingColor = { [weak self] tab, point in self?.dropGradingColor(tab, at: point, isMask: true) }
         maskPanel.onBrushChange = { [weak self] brush in self?.maskOverlay.brush = brush }
         maskOverlay.onBrushChange = { [weak self] brush in self?.maskPanel.brush = brush }
@@ -1641,6 +1668,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             lightingPanel.isEditingEnabled = false
             clearLightingStatus()
             endFringePicking()
+            closeColorWells()
             histogramView.isEditingEnabled = false
             histogramView.histogram = nil
             histogramView.shootingInfo = ShootingInfo()
@@ -1655,6 +1683,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         endPresetAmount()
         endPresetPreview()
         clearMutedWheels()
+        closeColorWells()
         displayedPhotoID = id
         historyCursor = nil
         source = nil

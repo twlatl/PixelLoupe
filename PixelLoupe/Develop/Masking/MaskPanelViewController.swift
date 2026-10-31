@@ -19,8 +19,8 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         get { sections.ungradedPixels }
         set { sections.ungradedPixels = newValue }
     }
-    /// A color well's eyedropper was switched on for one of the mask's wheels.
-    var onPickGradingColor: ((ColorGradingTab) -> Void)? {
+    /// A color well's eyedropper was switched on for one of the mask's wheels, or off (`nil`).
+    var onPickGradingColor: ((ColorGradingTab?) -> Void)? {
         get { sections.onPickGradingColor }
         set { sections.onPickGradingColor = newValue }
     }
@@ -30,6 +30,9 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         get { sections.onDropGradingColor }
         set { sections.onDropGradingColor = newValue }
     }
+
+    func closeColorWell() { sections.closeColorWell() }
+    func endGradingColorPicking() { sections.endGradingColorPicking() }
 
     /// Sets one of the selected mask's wheels from a picked color, as one undoable edit (`false` for a gray).
     @discardableResult

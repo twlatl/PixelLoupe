@@ -105,9 +105,46 @@ struct ColorGradingWellTests {
 
         #expect(content.current == ColorGradingWellButton.tint(panel.adjustments.color.global), "the popover shows the picked color")
 
+        // The eyedropper is a toggle: on, picks keep coming until it's clicked off.
         let eyedropper = content.eyedropperButton
-        _ = (eyedropper.target as AnyObject).perform(eyedropper.action, with: eyedropper)
-        #expect(picking == .global)
+        eyedropper.performClick(nil)
+        #expect(picking == .global && content.isPicking)
+        eyedropper.performClick(nil)
+        #expect(picking == nil && !content.isPicking)
+    }
+
+    @Test("The popover stays open, eyedropper on, until its close button")
+    func staysOpen() async throws {
+        let saved = ColorGradingTab.current
+        defer { ColorGradingTab.current = saved }
+        ColorGradingTab.current = .midtones
+        let (panel, _) = makePanel()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 900), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentViewController = panel
+        window.orderFront(nil)
+        func allViews(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(allViews) }
+        let well = try #require(allViews(panel.view).first { $0.accessibilityIdentifier() == "colorGradingWell.Midtones" } as? NSButton)
+        var picking: [ColorGradingTab?] = []
+        panel.onPickGradingColor = { picking.append($0) }
+
+        well.performClick(nil)
+        let content = try #require(panel.colorWellPopover)
+        #expect(panel.colorWellPopoverHost?.behavior == .applicationDefined, "clicks elsewhere (on the photo) don't close it")
+        content.eyedropperButton.performClick(nil)
+        #expect(picking == [.midtones])
+        #expect(panel.colorWellPopover === content, "still open with the eyedropper on")
+
+        content.closeButtonForTesting.performClick(nil)
+        #expect(panel.colorWellPopover == nil)
+        #expect(picking == [.midtones, nil], "closing switches the eyedropper off")
+
+        // A well's popover closes when its tab is no longer shown.
+        well.performClick(nil)
+        #expect(panel.colorWellPopover != nil)
+        ColorGradingTab.current = .global
+        #expect(panel.colorWellPopover == nil)
     }
 
     @Test("Dragging the eyedropper out of the popover and letting go asks to pick the photo there")

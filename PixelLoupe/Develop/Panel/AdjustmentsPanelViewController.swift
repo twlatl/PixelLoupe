@@ -51,8 +51,9 @@ final class AdjustmentsPanelViewController: NSViewController {
     var onMuteWheels: ((Set<ColorGradingTab>) -> Void)?
     /// The photo's pixels (sRGB), rendered small with Color Grading off, for the color wells' swatches.
     var ungradedPixels: (() async -> [ColorGradingSwatches.RGB])?
-    /// A color well's eyedropper was switched on for a wheel: the controller lets a click on the photo pick its color.
-    var onPickGradingColor: ((ColorGradingTab) -> Void)?
+    /// A color well's eyedropper was switched on for a wheel (clicks on the photo pick its color until it's switched
+    /// off), or off (`nil`).
+    var onPickGradingColor: ((ColorGradingTab?) -> Void)?
     /// A color well's eyedropper was dragged out and let go at a point on screen: the controller picks the photo there.
     var onDropGradingColor: ((ColorGradingTab, NSPoint) -> Void)?
     /// Option-dragging the Masking slider asks for the mask to be shown in the preview.
@@ -544,6 +545,8 @@ final class AdjustmentsPanelViewController: NSViewController {
         let show = { [weak self, weak picker, weak separator, weak blending, weak balance] in
             let current = ColorGradingTab.current
             picker?.selectedSegment = current.rawValue
+            // The well's popover belongs to its tab's page.
+            if let open = self?.colorWellPopover, open.tab != current { self?.closeColorWell() }
             for (tab, page) in pages { page.isHidden = tab != current }
             for view in [separator, blending, balance] as [NSView?] { view?.isHidden = !current.showsBlending }
             // Between tonal tabs the wheels slide over, from where the new tab's wheel was peeking in.
@@ -795,27 +798,25 @@ final class AdjustmentsPanelViewController: NSViewController {
 
     /// The open color well's popover (for tests).
     private(set) var colorWellPopover: ColorGradingWellPopover?
-    private var colorWellPopoverHost: NSPopover?
+    private(set) var colorWellPopoverHost: NSPopover?
 
     /// Opens a well: the wheel's tint, the eyedropper, and the photo's colors once they're found (off the main thread).
+    /// It stays open, as Lightroom's does, until its close button (or `closeColorWell()`).
     func showColorWell(_ tab: ColorGradingTab, from well: NSView?) {
         guard isEditingEnabled, let wheelPath = tab.wheel else { return }
-        colorWellPopoverHost?.close()
+        closeColorWell()
         let content = ColorGradingWellPopover(tab: tab)
         content.current = ColorGradingWellButton.tint(adjustments.color[keyPath: wheelPath])
         content.onPick = { [weak self] color in
             guard let self, applyGradingColor(color, to: tab) else { return NSSound.beep() }
         }
-        content.onEyedropper = { [weak self] in
-            self?.colorWellPopoverHost?.close()
-            self?.onPickGradingColor?(tab)
-        }
-        // Dragged onto the photo: the popover stays open, showing the picked color.
+        content.onEyedropper = { [weak self] on in self?.onPickGradingColor?(on ? tab : nil) }
         content.onEyedropperDrop = { [weak self] point in self?.onDropGradingColor?(tab, point) }
+        content.onClose = { [weak self] in self?.closeColorWell() }
         colorWellPopover = content
         if let well, well.window != nil {
             let popover = NSPopover()
-            popover.behavior = .transient
+            popover.behavior = .applicationDefined
             popover.contentViewController = content
             popover.show(relativeTo: well.bounds, of: well, preferredEdge: .minY)
             colorWellPopoverHost = popover
@@ -827,6 +828,23 @@ final class AdjustmentsPanelViewController: NSViewController {
             let found = await Self.swatches(from: await pixels?() ?? [], for: tab, in: grading)
             content?.swatches = found
         }
+    }
+
+    /// Closes the open well (its close button, another well, a tab or photo change), switching its eyedropper off.
+    func closeColorWell() {
+        guard let content = colorWellPopover else { return }
+        colorWellPopover = nil
+        colorWellPopoverHost?.close()
+        colorWellPopoverHost = nil
+        if content.isPicking {
+            content.isPicking = false
+            onPickGradingColor?(nil)
+        }
+    }
+
+    /// Switches the open well's eyedropper off (the controller stopped picking) without closing it.
+    func endGradingColorPicking() {
+        colorWellPopover?.isPicking = false
     }
 
     @concurrent
