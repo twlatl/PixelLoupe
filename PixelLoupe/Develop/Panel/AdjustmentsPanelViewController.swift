@@ -53,6 +53,8 @@ final class AdjustmentsPanelViewController: NSViewController {
     var ungradedPixels: (() async -> [ColorGradingSwatches.RGB])?
     /// A color well's eyedropper was switched on for a wheel: the controller lets a click on the photo pick its color.
     var onPickGradingColor: ((ColorGradingTab) -> Void)?
+    /// A color well's eyedropper was dragged out and let go at a point on screen: the controller picks the photo there.
+    var onDropGradingColor: ((ColorGradingTab, NSPoint) -> Void)?
     /// Option-dragging the Masking slider asks for the mask to be shown in the preview.
     var onSharpenMaskPreview: ((Bool) -> Void)?
 
@@ -801,15 +803,15 @@ final class AdjustmentsPanelViewController: NSViewController {
         colorWellPopoverHost?.close()
         let content = ColorGradingWellPopover(tab: tab)
         content.current = ColorGradingWellButton.tint(adjustments.color[keyPath: wheelPath])
-        content.onPick = { [weak self, weak content] color in
-            guard let self else { return }
-            guard applyGradingColor(color, to: tab) else { return NSSound.beep() }
-            content?.current = ColorGradingWellButton.tint(adjustments.color[keyPath: wheelPath])
+        content.onPick = { [weak self] color in
+            guard let self, applyGradingColor(color, to: tab) else { return NSSound.beep() }
         }
         content.onEyedropper = { [weak self] in
             self?.colorWellPopoverHost?.close()
             self?.onPickGradingColor?(tab)
         }
+        // Dragged onto the photo: the popover stays open, showing the picked color.
+        content.onEyedropperDrop = { [weak self] point in self?.onDropGradingColor?(tab, point) }
         colorWellPopover = content
         if let well, well.window != nil {
             let popover = NSPopover()
@@ -843,6 +845,9 @@ final class AdjustmentsPanelViewController: NSViewController {
             $0.color[keyPath: wheelPath].hue = wheel.hue
             $0.color[keyPath: wheelPath].amount = wheel.amount
             $0.color.isEnabled = true
+        }
+        if let popover = colorWellPopover, popover.tab == tab {
+            popover.current = ColorGradingWellButton.tint(adjustments.color[keyPath: wheelPath])
         }
         return true
     }

@@ -19,6 +19,9 @@ final class FringePickerView: NSView {
 
     override var mouseDownCanMoveWindow: Bool { false }
 
+    /// The click that picks may also be the one that brings the window forward.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: .crosshair)
     }
