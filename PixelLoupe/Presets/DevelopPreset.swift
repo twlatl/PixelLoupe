@@ -222,13 +222,20 @@ nonisolated enum PresetMerge {
             $1.blackAndWhite.intensity = $0.blackAndWhite.intensity
         }
 
-        // Color grading, wheel by wheel (split toning sets the shadow and highlight wheels).
+        // Color grading, wheel by wheel (split toning sets the shadow and highlight wheels). A wheel brings the preset's
+        // process, as Shadows does.
+        func wheel(_ path: WritableKeyPath<PhotoAdjustments.ColorGrading, PhotoAdjustments.ColorWheel> & Sendable) -> Copy {
+            { preset, photo in
+                photo.color[keyPath: path] = preset.color[keyPath: path]
+                if preset.color[keyPath: path].isSet { photo.color.process = preset.color.process }
+            }
+        }
         add(["ColorGradeShadowHue", "ColorGradeShadowSat", "ColorGradeShadowLum", "SplitToningShadowHue", "SplitToningShadowSaturation"],
-            "wheel-shadows") { $1.color.shadows = $0.color.shadows }
-        add(["ColorGradeMidtoneHue", "ColorGradeMidtoneSat", "ColorGradeMidtoneLum"], "wheel-midtones") { $1.color.midtones = $0.color.midtones }
+            "wheel-shadows", wheel(\.shadows))
+        add(["ColorGradeMidtoneHue", "ColorGradeMidtoneSat", "ColorGradeMidtoneLum"], "wheel-midtones", wheel(\.midtones))
         add(["ColorGradeHighlightHue", "ColorGradeHighlightSat", "ColorGradeHighlightLum", "SplitToningHighlightHue",
-             "SplitToningHighlightSaturation"], "wheel-highlights") { $1.color.highlights = $0.color.highlights }
-        add(["ColorGradeGlobalHue", "ColorGradeGlobalSat", "ColorGradeGlobalLum"], "wheel-global") { $1.color.global = $0.color.global }
+             "SplitToningHighlightSaturation"], "wheel-highlights", wheel(\.highlights))
+        add(["ColorGradeGlobalHue", "ColorGradeGlobalSat", "ColorGradeGlobalLum"], "wheel-global", wheel(\.global))
         add(["ColorGradeBlending"], "blending") { $1.color.blending = $0.color.blending }
         add(["SplitToningBalance"], "balance") { $1.color.balance = $0.color.balance }
 

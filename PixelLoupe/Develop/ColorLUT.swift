@@ -322,10 +322,15 @@ nonisolated enum ColorLUT {
             return (shadows, midtones, highlights)
         }
 
-        /// The tonal weights of an sRGB color (0…1, gamma-encoded).
+        /// The tonal weights of an sRGB color (0…1, gamma-encoded) under the grade's process.
         static func toneWeights(_ r: Double, _ g: Double, _ b: Double, _ color: PhotoAdjustments.ColorGrading) -> (shadows: Double, midtones: Double, highlights: Double) {
-            let (pr, pg, pb) = multiply(sRGBToProPhoto, decodeSRGB(r), decodeSRGB(g), decodeSRGB(b))
-            return toneWeights(tone: tone(pr, pg, pb), color)
+            switch color.process {
+            case .additiveTint:
+                return additiveToneWeights(luminance: luminance(r, g, b), color)
+            case .proPhotoGain:
+                let (pr, pg, pb) = multiply(sRGBToProPhoto, decodeSRGB(r), decodeSRGB(g), decodeSRGB(b))
+                return toneWeights(tone: tone(pr, pg, pb), color)
+            }
         }
 
         /// −1 or 1 per channel: which channels `hue` (0…1) raises, blending between them between the primaries.
@@ -335,6 +340,13 @@ nonisolated enum ColorLUT {
         }
 
         static func grade(_ r: Double, _ g: Double, _ b: Double, _ color: PhotoAdjustments.ColorGrading) -> (Double, Double, Double) {
+            switch color.process {
+            case .additiveTint: additiveTint(r, g, b, color)
+            case .proPhotoGain: proPhotoGain(r, g, b, color)
+            }
+        }
+
+        private static func proPhotoGain(_ r: Double, _ g: Double, _ b: Double, _ color: PhotoAdjustments.ColorGrading) -> (Double, Double, Double) {
             let (pr, pg, pb) = multiply(sRGBToProPhoto, decodeSRGB(r), decodeSRGB(g), decodeSRGB(b))
             let y = max(proPhotoLuminance.r * pr + proPhotoLuminance.g * pg + proPhotoLuminance.b * pb, 0)
             let weights = toneWeights(tone: tone(pr, pg, pb), color)
@@ -381,6 +393,46 @@ nonisolated enum ColorLUT {
             }
             let (sr, sg, sb) = multiply(proPhotoToSRGB, or, og, ob)
             return (encodeSRGB(max(sr, 0)), encodeSRGB(max(sg, 0)), encodeSRGB(max(sb, 0)))
+        }
+
+        // MARK: Color Grading before RAW-242
+
+        /// Fully saturated color for `hue` (0…1), offset so its components average zero.
+        private static func tint(hue: Double) -> (r: Double, g: Double, b: Double) {
+            let (r, g, b) = hsvToRGB(h: hue * 360, s: 1, v: 1)
+            let mean = (r + g + b) / 3
+            return (r - mean, g - mean, b - mean)
+        }
+
+        /// How much each tonal wheel acts on a color of luminance `y` (0…1), given Balance and Blending.
+        static func additiveToneWeights(
+            luminance y: Double, _ color: PhotoAdjustments.ColorGrading
+        ) -> (shadows: Double, midtones: Double, highlights: Double) {
+            let pivot = 0.5 + 0.25 * color.balance
+            // Each end's weight falls off over a span around the middle of its half; blending 0.5
+            // is the original span (the half itself), 0 a hard split and 1 twice as wide.
+            let reach = 2 * color.blending.clamped(to: 0...1)
+            let shadowCenter = pivot / 2, highlightCenter = (1 + pivot) / 2
+            let shadowWeight = 1 - smoothstep(shadowCenter - reach * pivot / 2, shadowCenter + reach * pivot / 2, y)
+            let highlightWeight = smoothstep(highlightCenter - reach * (1 - pivot) / 2, highlightCenter + reach * (1 - pivot) / 2, y)
+            return (shadowWeight, max(0, 1 - shadowWeight - highlightWeight), highlightWeight)
+        }
+
+        /// The original process: a zero-mean tint and a luminance lift added in gamma-encoded RGB.
+        private static func additiveTint(_ r: Double, _ g: Double, _ b: Double, _ color: PhotoAdjustments.ColorGrading) -> (Double, Double, Double) {
+            let (shadowWeight, midtoneWeight, highlightWeight) = additiveToneWeights(luminance: luminance(r, g, b), color)
+
+            var (r, g, b) = (r, g, b)
+            for (wheel, weight) in [(color.global, 1.0), (color.shadows, shadowWeight), (color.midtones, midtoneWeight), (color.highlights, highlightWeight)] {
+                guard weight > 0 else { continue }
+                let t = tint(hue: wheel.hue)
+                let strength = wheel.amount * 0.35 * weight
+                let lift = wheel.luminance * 0.25 * weight
+                r += t.r * strength + lift
+                g += t.g * strength + lift
+                b += t.b * strength + lift
+            }
+            return (r, g, b)
         }
 
         static func selective(_ r: Double, _ g: Double, _ b: Double, _ selective: PhotoAdjustments.SelectiveColor) -> (Double, Double, Double) {
