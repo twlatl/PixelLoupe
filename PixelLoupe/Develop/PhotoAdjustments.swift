@@ -127,18 +127,37 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
 
     struct ColorGrading: Codable, Equatable, Sendable {
         var isEnabled = true
-        var shadows = ColorWheel()
-        var midtones = ColorWheel()
-        var highlights = ColorWheel()
+        var shadows = ColorWheel() { didSet { takeCurrentProcessIfUnset() } }
+        var midtones = ColorWheel() { didSet { takeCurrentProcessIfUnset() } }
+        var highlights = ColorWheel() { didSet { takeCurrentProcessIfUnset() } }
         /// Tints the whole photo, whatever the tone.
-        var global = ColorWheel()
+        var global = ColorWheel() { didSet { takeCurrentProcessIfUnset() } }
         /// Shifts the split between shadows and highlights, -1…1.
         var balance = 0.0
         /// How far the shadow, midtone and highlight wheels reach into each other, 0…1 (0.5 is the
         /// default look; 0 splits the tones sharply).
         var blending = 0.5
+        /// How the wheels render. Grades made before RAW-242 keep the original process, so their look
+        /// doesn't change; with every wheel back at the center it takes the current one.
+        var process = Process.current
 
         var isActive: Bool { isEnabled && self != ColorGrading(isEnabled: true) }
+
+        /// Whether any wheel tints or shifts luminance.
+        var hasWheels: Bool { [shadows, midtones, highlights, global].contains(where: \.isSet) }
+
+        enum Process: Int, Codable, Sendable {
+            /// Additive tints in gamma-encoded RGB over smoothstep tonal ranges (v1.2.0).
+            case additiveTint = 1
+            /// Per-channel gains in linear ProPhoto RGB, fitted to Lightroom Classic (RAW-242).
+            case proPhotoGain = 2
+
+            static let current = proPhotoGain
+        }
+
+        private mutating func takeCurrentProcessIfUnset() {
+            if !hasWheels { process = .current }
+        }
     }
 
     struct BlackAndWhite: Codable, Equatable, Sendable {
@@ -774,9 +793,10 @@ nonisolated extension PhotoAdjustments.Curves {
     }
 }
 
-/// Color grading saved before the Global wheel and Blending decode with them at their defaults.
+/// Color grading saved before the Global wheel and Blending decode with them at their defaults. Wheels saved
+/// without a process predate RAW-242, so they keep the original one.
 nonisolated extension PhotoAdjustments.ColorGrading {
-    private enum CodingKeys: String, CodingKey { case isEnabled, shadows, midtones, highlights, global, balance, blending }
+    private enum CodingKeys: String, CodingKey { case isEnabled, shadows, midtones, highlights, global, balance, blending, process }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -788,6 +808,11 @@ nonisolated extension PhotoAdjustments.ColorGrading {
         global = try container.decodeIfPresent(PhotoAdjustments.ColorWheel.self, forKey: .global) ?? global
         balance = try container.decodeIfPresent(Double.self, forKey: .balance) ?? balance
         blending = try container.decodeIfPresent(Double.self, forKey: .blending) ?? blending
+        if hasWheels {
+            // A process this version doesn't know renders with the current one.
+            let stored = (try? container.decodeIfPresent(Int.self, forKey: .process)) ?? Process.additiveTint.rawValue
+            process = Process(rawValue: stored) ?? .current
+        }
     }
 }
 

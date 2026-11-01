@@ -88,9 +88,10 @@ struct ColorMixerTests {
         #expect(try tint(0.9, at: 0.55) > tint(0.1, at: 0.55) + 0.01)
         // Deep shadows get the tint either way.
         #expect(try tint(0.1, at: 0.05) > 0.1)
-        // At the default the original look is kept: shadows full at black, gone by the highlights.
+        // At the default, shadows are tinted at black (Lightroom's export: red minus blue 0.075) and untouched by the
+        // highlights.
         let original = try transform { $0.color.shadows = .init(hue: 0, amount: 1, luminance: 0) }
-        #expect(original.apply(0.02, 0.02, 0.02).r - original.apply(0.02, 0.02, 0.02).b > 0.2)
+        #expect(original.apply(0.02, 0.02, 0.02).r - original.apply(0.02, 0.02, 0.02).b > 0.05)
         #expect(abs(original.apply(0.9, 0.9, 0.9).r - 0.9) < 0.01)
     }
 
