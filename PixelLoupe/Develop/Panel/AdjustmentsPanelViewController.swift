@@ -203,12 +203,14 @@ final class AdjustmentsPanelViewController: NSViewController {
         defaultValue: Section,
         isApplied: @escaping (Adjustments) -> Bool,
         hasAuto: Bool = false,
-        expanded: Bool = false
+        expanded: Bool = false,
+        formerTitle: String? = nil
     ) -> AdjustmentSectionView {
         let section = AdjustmentSectionView(
             // Under a mask only Light starts open; the others are a click away.
             title: title, symbolName: symbol, hasAuto: hasAuto && scope == .photo,
-            expandedByDefault: scope == .mask ? keyPath as AnyKeyPath == \Adjustments.light : expanded, scope: scopeName
+            expandedByDefault: scope == .mask ? keyPath as AnyKeyPath == \Adjustments.light : expanded, scope: scopeName,
+            formerTitle: formerTitle
         )
         stack.addArrangedSubview(section)
         section.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -(stack.edgeInsets.left + stack.edgeInsets.right)).isActive = true
@@ -1221,10 +1223,11 @@ final class AdjustmentsPanelViewController: NSViewController {
     }
 
     private func buildCurves() {
-        let title = "Curves"
+        // Lightroom's name for the panel; it was "Curves" before RAW-247.
+        let title = "Tone Curve"
         let section = addSection(
             title, symbol: "point.bottomleft.forward.to.point.topright.scurvepath", keyPath: \.curves,
-            enabled: \.isEnabled, defaultValue: .init(), isApplied: { $0.curves.isActive }
+            enabled: \.isEnabled, defaultValue: .init(), isApplied: { $0.curves.isActive }, formerTitle: "Curves"
         )
         // Parametric, then the point curve and its red, green and blue channels (as Lightroom orders them).
         let modes: [(title: String, label: String, channel: Adjustments.CurveChannel?)] = [
@@ -1249,7 +1252,7 @@ final class AdjustmentsPanelViewController: NSViewController {
                 to: section, title, name, keyPath: \.curves, enabled: \.isEnabled, range: -1...1,
                 get: { $0.curves.parametric[keyPath: valuePath] }, set: { $0.curves.parametric[keyPath: valuePath] = $1 }
             )
-            row.setAccessibilityIdentifier("slider.Curves.\(name)")
+            row.setAccessibilityIdentifier("slider.Tone Curve.\(name)")
             regionRows.append(row)
         }
 
@@ -1293,6 +1296,8 @@ final class AdjustmentsPanelViewController: NSViewController {
         // The editor and picker go above the sliders addSlider already put in the section.
         section.insertControl(picker, at: 0)
         section.insertControl(editor, at: 1)
+        // Square and as wide as the panel, so inputs and outputs move the same distance per step.
+        editor.heightAnchor.constraint(equalTo: editor.widthAnchor).isActive = true
         showMode()
     }
 

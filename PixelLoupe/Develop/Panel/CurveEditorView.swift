@@ -24,8 +24,6 @@ final class CurveEditorView: NSView {
     private let deleteDistance: CGFloat = 28
     private let handleRadius: CGFloat = 9
 
-    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: 180) }
-
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setAccessibilityElement(true)
@@ -58,22 +56,41 @@ final class CurveEditorView: NSView {
             y: Double((location.y - rect.minY) / rect.height).clamped(to: 0...1))
     }
 
-    private var curveColor: NSColor {
-        if isParametric { return .labelColor }
+    private var isDark: Bool { effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua }
+
+    /// The curve stands out from the plot (white in dark appearance, as in Lightroom), whatever the channel.
+    private var curveColor: NSColor { isDark ? .white : NSColor(white: 0.08, alpha: 1) }
+
+    /// The unchanged diagonal, solid and darker than the curve so it reads under it.
+    private var baselineColor: NSColor { isDark ? .black : NSColor(white: 0.5, alpha: 1) }
+
+    /// Lightroom's channel tint: the channel's color at the top left fading to its complement at the bottom right.
+    private var channelTint: (NSColor, NSColor)? {
+        guard !isParametric else { return nil }
+        let alpha: CGFloat = isDark ? 0.3 : 0.22
         switch channel {
-        case .rgb: return .labelColor
-        case .red: return .systemRed
-        case .green: return .systemGreen
-        case .blue: return .systemBlue
+        case .rgb: return nil
+        case .red: return (NSColor(red: 1, green: 0.15, blue: 0.15, alpha: alpha), NSColor(red: 0, green: 0.85, blue: 0.85, alpha: alpha))
+        case .green: return (NSColor(red: 0.15, green: 0.9, blue: 0.15, alpha: alpha), NSColor(red: 0.9, green: 0, blue: 0.9, alpha: alpha))
+        case .blue: return (NSColor(red: 0.2, green: 0.35, blue: 1, alpha: alpha), NSColor(red: 0.95, green: 0.9, blue: 0, alpha: alpha))
         }
     }
 
     private var splits: [Double] { [parametric.shadowSplit, parametric.midtoneSplit, parametric.highlightSplit] }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         let rect = plotRect
-        NSColor.black.withAlphaComponent(0.15).setFill()
-        NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
+        let plot = NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4)
+        (isDark ? NSColor(white: 0.13, alpha: 1) : NSColor(white: 0.86, alpha: 1)).setFill()
+        plot.fill()
+        if let (start, end) = channelTint {
+            NSGradient(starting: start, ending: end)?.draw(in: plot, angle: -45)
+        }
 
         if isParametric {
             // Alternating shading for the four regions.
@@ -101,8 +118,8 @@ final class CurveEditorView: NSView {
         let diagonal = NSBezierPath()
         diagonal.move(to: CGPoint(x: rect.minX, y: rect.minY))
         diagonal.line(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        diagonal.setLineDash([3, 3], count: 2, phase: 0)
-        diagonal.lineWidth = 0.5
+        diagonal.lineWidth = 1
+        baselineColor.setStroke()
         diagonal.stroke()
 
         let path = NSBezierPath()
@@ -138,9 +155,9 @@ final class CurveEditorView: NSView {
             let center = location(of: point)
             let deleting = isDeleting && index == draggedIndex
             let handle = NSBezierPath(ovalIn: CGRect(x: center.x - 4, y: center.y - 4, width: 8, height: 8))
-            (deleting ? NSColor.systemRed : NSColor.white).setFill()
+            (deleting ? NSColor.systemRed : curveColor).setFill()
             handle.fill()
-            curveColor.setStroke()
+            baselineColor.setStroke()
             handle.stroke()
         }
     }

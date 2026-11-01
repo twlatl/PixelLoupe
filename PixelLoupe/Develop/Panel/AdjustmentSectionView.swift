@@ -30,12 +30,16 @@ final class AdjustmentSectionView: NSView {
         }
     }
 
-    init(title: String, symbolName: String, hasAuto: Bool = false, expandedByDefault: Bool = false, scope: String = "") {
+    /// `formerTitle`: what the section was called before a rename, so it stays open or closed as it was.
+    init(title: String, symbolName: String, hasAuto: Bool = false, expandedByDefault: Bool = false, scope: String = "",
+         formerTitle: String? = nil) {
         self.title = title
         self.scope = scope
         super.init(frame: .zero)
         if Defaults.store.object(forKey: expandedKey) == nil {
-            Defaults.store.set(expandedByDefault, forKey: expandedKey)
+            let formerKey = formerTitle.map { "AdjustSectionExpanded.\(scope)\($0)" }
+            let former = formerKey.flatMap { Defaults.store.object(forKey: $0) as? Bool }
+            Defaults.store.set(former ?? expandedByDefault, forKey: expandedKey)
         }
         setAccessibilityIdentifier("adjustSection.\(scope)\(title)")
 
