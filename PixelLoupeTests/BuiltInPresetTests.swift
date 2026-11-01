@@ -27,6 +27,16 @@ struct BuiltInPresetTests {
         }
     }
 
+    @Test func bundledPresetsNeedNoProfileTheUserMightNotHave() {
+        // Only Adobe's standard looks, which PixelLoupe has stand-ins for: no third-party profiles.
+        let photo = DevelopPreset.Photo(cameraModel: "Canon EOS R5")
+        let profiles = AdobeProfileLibrary(directory: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString))
+        for url in PresetLibrary.bundledPresetFiles {
+            guard let preset = DevelopPreset.load(url, defaultGroup: "") else { continue }
+            #expect(preset.compatibility(with: photo, profiles: profiles) == .compatible, "\(preset.name)")
+        }
+    }
+
     @Test func libraryListsBuiltInPresetsButWontChangeThem() async throws {
         let directory = try TemporaryDirectory()
         let source = try directory.subdirectory("Source")

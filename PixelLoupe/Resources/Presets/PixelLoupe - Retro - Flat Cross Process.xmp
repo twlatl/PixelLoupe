@@ -25,15 +25,11 @@
    crs:ColorGradeGlobalHue="0"
    crs:ColorGradeGlobalLum="0"
    crs:ColorGradeGlobalSat="0"
-   crs:ColorGradeHighlightHue="0"
    crs:ColorGradeHighlightLum="0"
-   crs:ColorGradeHighlightSat="0"
    crs:ColorGradeMidtoneHue="46"
    crs:ColorGradeMidtoneLum="0"
    crs:ColorGradeMidtoneSat="48"
-   crs:ColorGradeShadowHue="236"
    crs:ColorGradeShadowLum="0"
-   crs:ColorGradeShadowSat="77"
    crs:ColorNoiseReduction="0"
    crs:Contrast2012="0"
    crs:ConvertToGrayscale="False"
@@ -102,14 +98,16 @@
    crs:SharpenRadius="1"
    crs:Sharpness="0"
    crs:SplitToningBalance="0"
-   crs:Temperature="3812"
+   crs:SplitToningHighlightHue="0"
+   crs:SplitToningHighlightSaturation="0"
+   crs:SplitToningShadowHue="236"
+   crs:SplitToningShadowSaturation="77"
    crs:Texture="0"
-   crs:Tint="+3"
    crs:ToneCurveName2012="Linear"
    crs:Vibrance="+20"
    crs:VignetteAmount="0"
    crs:VignetteMidpoint="50"
-   crs:WhiteBalance="Auto"
+   crs:WhiteBalance="As Shot"
    crs:Whites2012="0"
    crs:HasSettings="True">
    <crs:Name>
@@ -138,7 +136,7 @@
     </rdf:Alt>
    </crs:Description>
    <crs:Look>
-    <rdf:Description crs:Name="Presetpro - Moody 35mm" crs:Amount="1.0" crs:UUID="5A434E2737B647A6817D9765320CA51E"/>
+    <rdf:Description crs:Name="Adobe Neutral" crs:Amount="1.0"/>
    </crs:Look>
    <crs:ToneCurvePV2012>
     <rdf:Seq>
