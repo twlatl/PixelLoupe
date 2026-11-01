@@ -1230,14 +1230,16 @@ final class AdjustmentsPanelViewController: NSViewController {
             enabled: \.isEnabled, defaultValue: .init(), isApplied: { $0.curves.isActive }, formerTitle: "Curves"
         )
         // Parametric, then the point curve and its red, green and blue channels (as Lightroom orders them).
-        let modes: [(title: String, label: String, channel: Adjustments.CurveChannel?)] = [
-            ("Parametric", "Parametric curve", nil), ("Point", "Point curve", .rgb),
-            ("R", "Red curve", .red), ("G", "Green curve", .green), ("B", "Blue curve", .blue),
+        let modes: [(mode: CurveModePicker.Mode, channel: Adjustments.CurveChannel?)] = [
+            (.init(title: "Parametric Curve", symbol: "point.bottomleft.forward.to.point.topright.scurvepath",
+                   selectedSymbol: "point.bottomleft.forward.to.point.topright.scurvepath", color: .labelColor), nil),
+            (.init(title: "Point Curve", symbol: "circle", selectedSymbol: "circle.inset.filled", color: .labelColor), .rgb),
+            (.init(title: "Red Channel", symbol: "circle", selectedSymbol: "circle.inset.filled", color: .systemRed), .red),
+            (.init(title: "Green Channel", symbol: "circle", selectedSymbol: "circle.inset.filled", color: .systemGreen), .green),
+            (.init(title: "Blue Channel", symbol: "circle", selectedSymbol: "circle.inset.filled", color: .systemBlue), .blue),
         ]
-        let picker = NSSegmentedControl(labels: modes.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
-        picker.controlSize = .small
-        for (index, mode) in modes.enumerated() { picker.setToolTip(mode.label, forSegment: index) }
-        picker.selectedSegment = 1
+        let picker = CurveModePicker(modes: modes.map(\.mode))
+        picker.selectedIndex = 1
         picker.setAccessibilityIdentifier("curveChannel")
         let editor = CurveEditorView()
         editor.setAccessibilityIdentifier("curveEditor")
@@ -1263,18 +1265,21 @@ final class AdjustmentsPanelViewController: NSViewController {
             editor.curve = adjustments.curves[curveChannel]
             editor.parametric = adjustments.curves.parametric
             for row in regionRows { row.isHidden = !curveParametric }
-            picker.selectedSegment = curveParametric ? 0 : modes.firstIndex { $0.channel == curveChannel } ?? 1
+            picker.selectedIndex = curveParametric ? 0 : modes.firstIndex { $0.channel == curveChannel } ?? 1
         }
-        let target = ActionTarget { [weak self] control in
+        // Dots under the changed curves, kept up to date with every edit (not just refreshes).
+        sectionStates.append { [weak self, weak picker] in
+            guard let self, let picker else { return }
+            let curves = adjustments.curves
+            picker.edited = modes.map { $0.channel.map { !curves[$0].isIdentity } ?? !curves.parametric.isIdentity }
+        }
+        picker.onSelect = { [weak self] index in
             guard let self else { return }
-            let mode = modes[(control as! NSSegmentedControl).selectedSegment]
+            let mode = modes[index]
             curveParametric = mode.channel == nil
             if let channel = mode.channel { curveChannel = channel }
             showMode()
         }
-        picker.target = target
-        picker.action = #selector(ActionTarget.fire(_:))
-        actionTargets.append(target)
 
         editor.onChange = { [weak self] curve, isFinal in
             guard let self else { return }
