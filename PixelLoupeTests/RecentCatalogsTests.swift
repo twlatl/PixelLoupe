@@ -200,7 +200,7 @@ struct WelcomeWindowTests {
         #expect(labels.contains(WelcomeWindowController.tagline))
         #expect(labels.contains(WelcomeWindowController.versionString()))
         #expect(labels.contains("FEATURED PHOTO"))
-        #expect(labels.contains("Photo by TED · Joshua Tree National Park, California"))
+        #expect(labels.contains(WelcomeWindowController.FeaturedPhoto.credit))
 
         let newCatalog = try #require(views.first { $0.accessibilityIdentifier() == "newCatalogButton" } as? ProminentButton)
         #expect(newCatalog.label == "New Catalog…")
