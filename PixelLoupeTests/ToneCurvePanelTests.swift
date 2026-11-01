@@ -48,6 +48,28 @@ struct ToneCurvePanelTests {
         #expect(abs(editor.bounds.width - editor.bounds.height) < 0.5)
     }
 
+    @Test("The Adjust buttons pick the curve, and a dot marks each changed curve")
+    func modeButtons() throws {
+        let (panel, _) = makePanel()
+        let picker = try #require(subview("curveChannel", of: CurveModePicker.self, in: panel.view))
+        let editor = try #require(subview("curveEditor", of: CurveEditorView.self, in: panel.view))
+        #expect(picker.selectedIndex == 1 && editor.channel == .rgb && !editor.isParametric, "Point curve to start")
+        #expect(picker.edited == [false, false, false, false, false])
+
+        try #require(subview("curveMode.Red Channel", of: NSButton.self, in: panel.view)).performClick(nil)
+        #expect(picker.selectedIndex == 2 && editor.channel == .red)
+        editor.onChange?(ToneCurve(points: [.init(x: 0, y: 0.1), .init(x: 1, y: 1)]), true)
+        #expect(picker.edited == [false, false, true, false, false])
+        #expect(try #require(subview("curveMode.Red Channel", of: NSButton.self, in: panel.view)).accessibilityValue() as? String == "selected, edited")
+
+        try #require(subview("curveMode.Parametric Curve", of: NSButton.self, in: panel.view)).performClick(nil)
+        #expect(picker.selectedIndex == 0 && editor.isParametric)
+        var parametric = ParametricCurve()
+        parametric.darks = 0.4
+        editor.onParametricChange?(parametric, true)
+        #expect(picker.edited == [true, false, true, false, false])
+    }
+
     @Test("A section renamed keeps whether it was open")
     func renamedSectionKeepsExpansion() {
         let keys = ["AdjustSectionExpanded.Test.Old Name", "AdjustSectionExpanded.Test.New Name"]

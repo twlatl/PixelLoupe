@@ -579,7 +579,8 @@ The `sidebar.right` toolbar button shows or hides the Library's right sidebar, f
 
 ## Tone Curve (Develop)
 
-The Tone Curve section (named as in Lightroom) has **Parametric**, **Point** and **R / G / B** modes. Its graph is square
+The Tone Curve section (named as in Lightroom) has **Parametric**, **Point** and **R / G / B** modes, picked with the
+**Adjust** buttons (a dot under a button means that curve has been changed). Its graph is square
 and as wide as the panel; the curve is drawn in white over the unchanged diagonal, and the R / G / B graphs are tinted
 from the channel's color to its complement, as in Lightroom. In a point mode, click the graph to add a point
 (up to 16), drag a point to move it, drag it off the graph or double-click it to delete it, and double-click empty space to
