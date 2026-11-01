@@ -589,8 +589,10 @@ reset the curve. **Input** and **Output** under the graph show the selected poin
 0–255; type in either to move it. Hovering over the graph shows the input and the curve's output there in its corner.
 The **Point Curve** menu under the graph has Lightroom's Linear, Medium Contrast and Strong Contrast
 curves: choosing one replaces the point curve and resets the red, green and blue curves; it shows Custom once the curves
-are edited. Parametric mode shows the four regions (Shadows, Darks, Lights, Highlights) as sliders and lets you drag
-the dividers between them. The parametric curve is applied before the point curve; both are baked into the color table.
+are edited. Parametric mode shows the four regions (Shadows, Darks, Lights, Highlights) as sliders; drag up or down in the graph
+to change the region under the pointer, which is named in the graph (with its amount and a shaded band showing how far
+it can move the curve) and bolded among the sliders. Drag the triangles under the graph to move the splits between
+regions, and double-click one to put it back. The parametric curve is applied before the point curve; both are baked into the color table.
 
 ## Color (Develop)
 

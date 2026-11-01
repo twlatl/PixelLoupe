@@ -108,15 +108,77 @@ struct CurveEditorTests {
         #expect(editor.readoutPoint == nil)
     }
 
-    @Test("In parametric mode, dragging a divider moves the split")
-    func dragSplit() {
+    @Test("In parametric mode, dragging up or down changes the region under the pointer; a click alone changes nothing")
+    func dragRegion() {
         editor.isParametric = true
         editor.parametric = ParametricCurve()
-        editor.mouseDown(with: event(.leftMouseDown, at: point(0.25, 0.5)))
-        editor.mouseDragged(with: event(.leftMouseDragged, at: point(0.15, 0.5)))
-        editor.mouseUp(with: event(.leftMouseUp, at: point(0.15, 0.5)))
-        #expect(abs(editor.parametric.shadowSplit - 0.15) < 0.02)
+        var highlighted: [Int?] = []
+        editor.onHighlightRegion = { highlighted.append($0) }
+
+        // Darks (0.25…0.5): a quarter of the graph's height up is +0.5.
+        editor.mouseDown(with: event(.leftMouseDown, at: point(0.4, 0.3)))
+        #expect(editor.highlightedRegion == 1 && highlighted.last == 1)
+        editor.mouseDragged(with: event(.leftMouseDragged, at: point(0.9, 0.55)))
+        editor.mouseUp(with: event(.leftMouseUp, at: point(0.9, 0.55)))
+        #expect(abs(editor.parametric.darks - 0.5) < 0.02, "the region where the drag began, wherever it goes")
+        #expect(editor.parametric.lights == 0)
         #expect(changes.parametric.last?.isFinal == true)
+        #expect(editor.parametric.splits == ParametricCurve.defaultSplits, "the splits are on the bar now")
         #expect(changes.values.isEmpty, "the point curve is untouched")
+
+        changes.parametric.removeAll()
+        click(0.9, 0.5)
+        #expect(changes.parametric.isEmpty)
+
+        // Far past the top clamps at +1.
+        editor.mouseDown(with: event(.leftMouseDown, at: point(0.9, 0.5)))
+        editor.mouseDragged(with: event(.leftMouseDragged, at: point(0.9, 3)))
+        editor.mouseUp(with: event(.leftMouseUp, at: point(0.9, 3)))
+        #expect(editor.parametric.highlights == 1)
+    }
+
+    @Test("Hovering in parametric mode highlights the region under the pointer")
+    func hoverRegion() {
+        editor.isParametric = true
+        editor.mouseMoved(with: event(.mouseMoved, at: point(0.1, 0.5)))
+        #expect(editor.highlightedRegion == 0)
+        editor.mouseMoved(with: event(.mouseMoved, at: point(0.6, 0.5)))
+        #expect(editor.highlightedRegion == 2)
+        editor.mouseExited(with: event(.mouseMoved, at: point(0.6, 0.5)))
+        #expect(editor.highlightedRegion == nil)
+        editor.mouseMoved(with: event(.mouseMoved, at: point(0.6, 0.5)))
+        editor.isParametric = false
+        #expect(editor.highlightedRegion == nil, "only in parametric mode")
+    }
+
+    @Test("The split bar: drag a triangle to move its split, double-click it to put it back; a click alone changes nothing")
+    func splitBar() {
+        let bar = ParametricSplitBar(frame: NSRect(x: 0, y: 200, width: 212, height: 16))
+        window.contentView?.addSubview(bar)
+        var log: [(ParametricCurve, Bool)] = []
+        bar.onChange = { log.append(($0, $1)) }
+        func at(_ split: Double) -> NSPoint { bar.convert(NSPoint(x: 6 + split * 200, y: 4), to: nil) }
+
+        bar.mouseDown(with: event(.leftMouseDown, at: at(0.25)))
+        bar.mouseUp(with: event(.leftMouseUp, at: at(0.25)))
+        #expect(log.isEmpty)
+
+        bar.mouseDown(with: event(.leftMouseDown, at: at(0.25)))
+        bar.mouseDragged(with: event(.leftMouseDragged, at: at(0.15)))
+        bar.mouseUp(with: event(.leftMouseUp, at: at(0.15)))
+        #expect(abs(bar.parametric.shadowSplit - 0.15) < 0.01 && log.last?.1 == true)
+
+        bar.mouseDown(with: event(.leftMouseDown, at: at(0.15), clicks: 2))
+        #expect(bar.parametric.shadowSplit == 0.25 && log.last?.1 == true)
+    }
+
+    @Test("Parametric regions: which one an input falls in, and amounts by region clamped to -1…1")
+    func regions() {
+        var curve = ParametricCurve()
+        #expect([0.1, 0.3, 0.6, 0.9].map(curve.region(at:)) == [0, 1, 2, 3])
+        curve[region: 2] = 1.7
+        #expect(curve.lights == 1)
+        curve[region: 0] = -0.4
+        #expect(curve.shadows == -0.4 && curve[region: 0] == -0.4)
     }
 }

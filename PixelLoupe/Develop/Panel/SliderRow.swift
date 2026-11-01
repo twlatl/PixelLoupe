@@ -154,6 +154,14 @@ final class SliderRow: NSView, NSTextFieldDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
+    /// Bold title, for the slider whose region is under the pointer in the parametric curve (as in Lightroom).
+    var isEmphasized = false {
+        didSet {
+            titleLabel.font = isEmphasized ? .boldSystemFont(ofSize: NSFont.smallSystemFontSize) : .systemFont(ofSize: NSFont.smallSystemFontSize)
+            titleLabel.textColor = isEmphasized ? .labelColor : .secondaryLabelColor
+        }
+    }
+
     private func showValue() {
         valueLabel.stringValue = format(value)
         valueLabel.textColor = isModified ? .labelColor : .secondaryLabelColor
