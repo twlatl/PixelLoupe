@@ -585,7 +585,9 @@ and as wide as the panel, with the photo's histogram behind the curve (that chan
 together otherwise); the curve is drawn in white over the unchanged diagonal, and the R / G / B graphs are tinted
 from the channel's color to its complement, as in Lightroom. In a point mode, click the graph to add a point
 (up to 16), drag a point to move it, drag it off the graph or double-click it to delete it, and double-click empty space to
-reset the curve. Parametric mode shows the four regions (Shadows, Darks, Lights, Highlights) as sliders and lets you drag
+reset the curve. The **Point Curve** menu under the graph has Lightroom's Linear, Medium Contrast and Strong Contrast
+curves: choosing one replaces the point curve and resets the red, green and blue curves; it shows Custom once the curves
+are edited. Parametric mode shows the four regions (Shadows, Darks, Lights, Highlights) as sliders and lets you drag
 the dividers between them. The parametric curve is applied before the point curve; both are baked into the color table.
 
 ## Color (Develop)

@@ -438,6 +438,24 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
         }
 
         var isActive: Bool { isEnabled && self != Curves(isEnabled: true) }
+
+        /// What the Point Curve menu shows: the preset the point curve draws while the red, green and
+        /// blue curves are untouched, or `nil` for Custom. Worked out from the curves, not stored.
+        var pointCurvePreset: PointCurvePreset? {
+            guard red.isIdentity, green.isIdentity, blue.isIdentity else { return nil }
+            return PointCurvePreset(matching: rgb)
+        }
+
+        /// Lightroom's `ToneCurveName2012` for these curves.
+        var pointCurveName: String { pointCurvePreset?.rawValue ?? "Custom" }
+
+        /// As choosing a preset in the Point Curve menu: it replaces the point curve and resets red, green and blue.
+        mutating func apply(_ preset: PointCurvePreset) {
+            rgb = preset.curve
+            red = .identity
+            green = .identity
+            blue = .identity
+        }
     }
 
     struct Levels: Codable, Equatable, Sendable {

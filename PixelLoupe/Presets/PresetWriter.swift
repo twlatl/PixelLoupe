@@ -128,8 +128,7 @@ nonisolated enum PresetWriter {
         }
         if sections.contains(.toneCurve) {
             func curve(_ curve: ToneCurve) -> Value { .curve(curve.points.map { (($0.x * 255).rounded(), ($0.y * 255).rounded()) }) }
-            out["ToneCurveName2012"] = .text(a.curves.rgb.isIdentity && a.curves.red.isIdentity && a.curves.green.isIdentity
-                                              && a.curves.blue.isIdentity ? "Linear" : "Custom")
+            out["ToneCurveName2012"] = .text(a.curves.pointCurveName)
             out["ToneCurvePV2012"] = curve(a.curves.rgb)
             out["ToneCurvePV2012Red"] = curve(a.curves.red)
             out["ToneCurvePV2012Green"] = curve(a.curves.green)
