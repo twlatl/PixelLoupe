@@ -9,9 +9,19 @@ import AppKit
 final class CurveEditorView: NSView {
     var curve = ToneCurve.identity { didSet { needsDisplay = true; updateAccessibility() } }
     var parametric = ParametricCurve() { didSet { needsDisplay = true } }
-    var channel = PhotoAdjustments.CurveChannel.rgb { didSet { needsDisplay = true } }
+    var channel = PhotoAdjustments.CurveChannel.rgb { didSet { needsDisplay = true; histogramHeights = nil } }
     /// Whether the graph shows the parametric curve (its dividers draggable) instead of the point curve.
-    var isParametric = false { didSet { needsDisplay = true; updateAccessibility() } }
+    var isParametric = false { didSet { needsDisplay = true; histogramHeights = nil; updateAccessibility() } }
+    /// The photo's histogram as drawn, shown behind the curve.
+    var histogram: Histogram? {
+        didSet {
+            guard histogram != oldValue else { return }
+            histogramHeights = nil
+            needsDisplay = true
+        }
+    }
+    /// The histogram's bins for the current mode as 0…1, worked out once per histogram and mode.
+    private var histogramHeights: [Double]?
     var onChange: ((ToneCurve, Bool) -> Void)?
     var onParametricChange: ((ParametricCurve, Bool) -> Void)?
 
@@ -91,6 +101,7 @@ final class CurveEditorView: NSView {
         if let (start, end) = channelTint {
             NSGradient(starting: start, ending: end)?.draw(in: plot, angle: -45)
         }
+        drawHistogram(in: rect, clippedTo: plot)
 
         if isParametric {
             // Alternating shading for the four regions.
@@ -160,6 +171,37 @@ final class CurveEditorView: NSView {
             baselineColor.setStroke()
             handle.stroke()
         }
+    }
+
+    /// The channel's histogram in R, G or B; the three added together (a gray histogram) for the point
+    /// and parametric curves.
+    static func histogramHeights(_ histogram: Histogram, channel: PhotoAdjustments.CurveChannel?) -> [Double] {
+        let counts: [UInt32] = switch channel {
+        case .red: histogram.red
+        case .green: histogram.green
+        case .blue: histogram.blue
+        case .rgb, nil: (0..<Histogram.binCount).map { histogram.red[$0] &+ histogram.green[$0] &+ histogram.blue[$0] }
+        }
+        return Histogram.normalizedHeights([counts])[0]
+    }
+
+    private func drawHistogram(in rect: CGRect, clippedTo plot: NSBezierPath) {
+        guard let histogram else { return }
+        let heights = histogramHeights ?? Self.histogramHeights(histogram, channel: isParametric ? nil : channel)
+        histogramHeights = heights
+        let path = NSBezierPath()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        for (bin, height) in heights.enumerated() {
+            let x = rect.minX + CGFloat(bin) / CGFloat(heights.count - 1) * rect.width
+            path.line(to: CGPoint(x: x, y: rect.minY + CGFloat(height) * rect.height * 0.94))
+        }
+        path.line(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.close()
+        NSGraphicsContext.saveGraphicsState()
+        plot.addClip()
+        (isDark ? NSColor.white.withAlphaComponent(0.13) : NSColor.black.withAlphaComponent(0.1)).setFill()
+        path.fill()
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     // MARK: - Mouse

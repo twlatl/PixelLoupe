@@ -512,12 +512,19 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         computeHistogram(input, key: key)
     }
 
+    /// Shows the photo's histogram in the Histogram and behind the Tone Curves.
+    private func showHistogram(_ histogram: Histogram?) {
+        histogramView.histogram = histogram
+        panel.histogram = histogram
+        maskPanel.histogram = histogram
+    }
+
     private func computeHistogram(_ input: HistogramCalculator.Input, key: HistogramKey) {
         histogramTask = Task { [weak self] in
             let histogram = await HistogramCalculator.histogram(of: input)
             guard let self else { return }
             histogramTask = nil
-            if key.photo == displayedPhotoID { histogramView.histogram = histogram }
+            if key.photo == displayedPhotoID { showHistogram(histogram) }
             if let pending = pendingHistogram {
                 pendingHistogram = nil
                 computeHistogram(pending.input, key: pending.key)
@@ -1672,7 +1679,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             endFringePicking()
             closeColorWells()
             histogramView.isEditingEnabled = false
-            histogramView.histogram = nil
+            showHistogram(nil)
             histogramView.shootingInfo = ShootingInfo()
             histogramView.sourceStatus = nil
             histogramKey = nil
@@ -1699,7 +1706,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         panel.isEditingEnabled = false
         presetsPanel.isEditingEnabled = false
         histogramView.isEditingEnabled = false
-        histogramView.histogram = nil
+        showHistogram(nil)
         histogramView.shootingInfo = ShootingInfo()
         histogramView.sourceStatus = store.sourceStatus(of: photo)
         histogramKey = nil

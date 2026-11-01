@@ -274,7 +274,7 @@ private final class HistogramPlotView: NSView {
         }
 
         guard let histogram = source?.plotHistogram, let context = NSGraphicsContext.current?.cgContext else { return }
-        let heights = Self.normalizedHeights(histogram)
+        let heights = Histogram.normalizedHeights(histogram.channels)
         let scale = window?.backingScaleFactor ?? 2
         let columns = max(1, Int(bounds.width * scale))
         let columnWidth = bounds.width / CGFloat(columns)
@@ -308,21 +308,6 @@ private final class HistogramPlotView: NSView {
                 covered &= ~(1 << channel)
             }
         }
-    }
-
-    /// Each channel's bins as 0…1, lightly smoothed. Scaled so a few very tall bins (a blown sky,
-    /// a black background) run off the top, like Lightroom's, rather than flattening everything else.
-    static func normalizedHeights(_ histogram: Histogram) -> [[Double]] {
-        let smoothed = histogram.channels.map { counts in
-            counts.indices.map { i -> Double in
-                let window = max(0, i - 1)...min(counts.count - 1, i + 1)
-                return window.reduce(0) { $0 + Double(counts[$1]) } / Double(window.count)
-            }
-        }
-        // The 5th-tallest bin of each channel, ignoring the end bins (where clipped pixels pile up).
-        let peak = smoothed.map { Array($0[1..<(Histogram.binCount - 1)].sorted().suffix(5)).first ?? 0 }.max() ?? 0
-        guard peak > 0 else { return smoothed.map { $0.map { _ in 0 } } }
-        return smoothed.map { $0.map { min(1, $0 / peak) } }
     }
 }
 

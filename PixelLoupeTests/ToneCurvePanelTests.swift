@@ -70,6 +70,28 @@ struct ToneCurvePanelTests {
         #expect(picker.edited == [true, false, true, false, false])
     }
 
+    @Test("The graph shows the photo's histogram: the channel's in R, G or B, all three added together otherwise")
+    func histogram() throws {
+        // Wide peaks: the scaling goes by the 5th-tallest bin, so a single-bin spike would run off the top.
+        var red = [UInt32](repeating: 10, count: Histogram.binCount), green = red, blue = red
+        for bin in 30...50 { red[bin] = 100 }
+        for bin in 190...210 { green[bin] = 100; blue[bin] = 100 }
+        let histogram = Histogram(red: red, green: green, blue: blue)
+
+        let redHeights = CurveEditorView.histogramHeights(histogram, channel: .red)
+        #expect(redHeights[40] > 0.9 && redHeights[200] < 0.2)
+        let gray = CurveEditorView.histogramHeights(histogram, channel: .rgb)
+        #expect(gray[40] > 0 && gray[200] > gray[40], "green and blue add up at 200")
+        #expect(CurveEditorView.histogramHeights(histogram, channel: nil) == gray, "parametric shows the gray one")
+
+        let (panel, _) = makePanel()
+        let editor = try #require(subview("curveEditor", of: CurveEditorView.self, in: panel.view))
+        panel.histogram = histogram
+        #expect(editor.histogram == histogram)
+        panel.histogram = nil
+        #expect(editor.histogram == nil)
+    }
+
     @Test("A section renamed keeps whether it was open")
     func renamedSectionKeepsExpansion() {
         let keys = ["AdjustSectionExpanded.Test.Old Name", "AdjustSectionExpanded.Test.New Name"]
