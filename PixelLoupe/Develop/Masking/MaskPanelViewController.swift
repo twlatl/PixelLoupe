@@ -19,6 +19,12 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         get { sections.ungradedPixels }
         set { sections.ungradedPixels = newValue }
     }
+
+    /// The photo's histogram, drawn behind the mask's Tone Curve.
+    var histogram: Histogram? {
+        get { sections.histogram }
+        set { sections.histogram = newValue }
+    }
     /// A color well's eyedropper was switched on for one of the mask's wheels, or off (`nil`).
     var onPickGradingColor: ((ColorGradingTab?) -> Void)? {
         get { sections.onPickGradingColor }

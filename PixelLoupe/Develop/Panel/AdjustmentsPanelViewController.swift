@@ -65,6 +65,11 @@ final class AdjustmentsPanelViewController: NSViewController {
     private var sectionStates: [() -> Void] = []
     private var selectedSelectiveColor = Adjustments.SelectiveColorRange.red
     private var curveChannel = Adjustments.CurveChannel.rgb
+    private weak var curveEditor: CurveEditorView?
+    /// The photo's histogram, drawn behind the Tone Curve.
+    var histogram: Histogram? {
+        didSet { curveEditor?.histogram = histogram }
+    }
     private var curveParametric = false
     private var mixerTab = 3
     private var mixerSection: AdjustmentSectionView?
@@ -1243,6 +1248,8 @@ final class AdjustmentsPanelViewController: NSViewController {
         picker.setAccessibilityIdentifier("curveChannel")
         let editor = CurveEditorView()
         editor.setAccessibilityIdentifier("curveEditor")
+        editor.histogram = histogram
+        curveEditor = editor
 
         // The four region sliders, shown with the parametric curve.
         let regions: [(String, WritableKeyPath<ParametricCurve, Double>)] = [

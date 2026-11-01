@@ -35,6 +35,23 @@ nonisolated struct Histogram: Equatable, Sendable {
     }
 }
 
+nonisolated extension Histogram {
+    /// Each channel's bins as 0…1, lightly smoothed. Scaled so a few very tall bins (a blown sky,
+    /// a black background) run off the top, like Lightroom's, rather than flattening everything else.
+    static func normalizedHeights(_ channels: [[UInt32]]) -> [[Double]] {
+        let smoothed = channels.map { counts in
+            counts.indices.map { i -> Double in
+                let window = max(0, i - 1)...min(counts.count - 1, i + 1)
+                return window.reduce(0) { $0 + Double(counts[$1]) } / Double(window.count)
+            }
+        }
+        // The 5th-tallest bin of each channel, ignoring the end bins (where clipped pixels pile up).
+        let peak = smoothed.map { Array($0[1..<(Histogram.binCount - 1)].sorted().suffix(5)).first ?? 0 }.max() ?? 0
+        guard peak > 0 else { return smoothed.map { $0.map { _ in 0 } } }
+        return smoothed.map { $0.map { min(1, $0 / peak) } }
+    }
+}
+
 /// Computes histograms on the GPU: a Core Image processor kernel hands the rendered photo's Metal
 /// texture to `MPSImageHistogram`, so the photo never comes back to the CPU (only the 3 × 256 counts do).
 nonisolated enum HistogramCalculator {
