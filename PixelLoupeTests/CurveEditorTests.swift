@@ -74,6 +74,40 @@ struct CurveEditorTests {
         #expect(editor.curve.isIdentity)
     }
 
+    @Test("The last point clicked or added is selected; typing an input or output moves it")
+    func selection() {
+        var selectionChanges = 0
+        editor.onSelectionChange = { selectionChanges += 1 }
+        #expect(editor.selectedPoint == nil)
+        click(0.5, 0.6)
+        let added = editor.selectedPoint
+        #expect(added.map { abs($0.x - 0.5) < 0.01 && abs($0.y - 0.6) < 0.01 } == true)
+        #expect(selectionChanges > 0)
+
+        changes.values.removeAll()
+        editor.moveSelectedPoint(x: 100.0 / 255)
+        #expect(editor.selectedPoint.map(CurveEditorView.levels)?.input == 100)
+        editor.moveSelectedPoint(y: 200.0 / 255)
+        #expect(editor.selectedPoint.map(CurveEditorView.levels)?.output == 200)
+        #expect(changes.values.count == 2 && changes.values.allSatisfy(\.isFinal), "each typed value is one edit")
+
+        click(0, 0)
+        #expect(editor.selectedPoint == ToneCurve.Point(x: 0, y: 0), "clicking an existing point selects it")
+        editor.channel = .red
+        #expect(editor.selectedPoint == nil, "a different curve has nothing selected")
+    }
+
+    @Test("Hovering shows the input under the pointer and the curve's output there")
+    func hoverReadout() {
+        editor.curve = ToneCurve(points: [.init(x: 0, y: 0.2), .init(x: 1, y: 1)])
+        #expect(editor.readoutPoint == nil)
+        editor.mouseMoved(with: event(.mouseMoved, at: point(0.5, 0.1)))
+        let readout = editor.readoutPoint.map(CurveEditorView.levels)
+        #expect(readout?.input == 128 && readout?.output == Int((editor.curve.value(at: 128.0 / 255) * 255).rounded()))
+        editor.mouseExited(with: event(.mouseMoved, at: point(0.5, 0.1)))
+        #expect(editor.readoutPoint == nil)
+    }
+
     @Test("In parametric mode, dragging a divider moves the split")
     func dragSplit() {
         editor.isParametric = true

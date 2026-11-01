@@ -143,6 +143,38 @@ struct ToneCurvePanelTests {
         #expect(popUp.superview?.isHidden == true, "not shown with the parametric curve")
     }
 
+    @Test("Input and Output show the selected point in 0…255, and typing moves it")
+    func inputOutput() throws {
+        let (panel, changes) = makePanel()
+        let window = NSWindow(contentRect: panel.view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = panel.view
+        panel.view.layoutSubtreeIfNeeded()
+        let editor = try #require(subview("curveEditor", of: CurveEditorView.self, in: panel.view))
+        let input = try #require(subview("curveInput", of: NSTextField.self, in: panel.view))
+        let output = try #require(subview("curveOutput", of: NSTextField.self, in: panel.view))
+        #expect(!input.isEnabled && input.stringValue.isEmpty && !output.isEnabled, "nothing selected")
+
+        // Click the graph at (64, 96).
+        let plot = editor.bounds.insetBy(dx: 6, dy: 6)
+        let location = editor.convert(NSPoint(x: plot.minX + plot.width * 64 / 255, y: plot.minY + plot.height * 96 / 255), to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                                           context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+            type == .leftMouseDown ? editor.mouseDown(with: event) : editor.mouseUp(with: event)
+        }
+        #expect(input.isEnabled && abs(input.integerValue - 64) <= 1 && abs(output.integerValue - 96) <= 1)
+
+        changes.list.removeAll()
+        output.stringValue = "150"
+        _ = output.target?.perform(output.action, with: output)
+        #expect(output.integerValue == 150 && editor.selectedPoint.map(CurveEditorView.levels)?.output == 150)
+        #expect(panel.adjustments.curves.rgb == editor.curve)
+        #expect(changes.list.count == 1 && changes.list.first?.isFinal == true && changes.list.first?.action == "Adjust Tone Curve")
+
+        try #require(subview("curveMode.Parametric Curve", of: NSButton.self, in: panel.view)).performClick(nil)
+        #expect(input.superview?.isHidden == true, "not shown with the parametric curve")
+    }
+
     @Test("A section renamed keeps whether it was open")
     func renamedSectionKeepsExpansion() {
         let keys = ["AdjustSectionExpanded.Test.Old Name", "AdjustSectionExpanded.Test.New Name"]
