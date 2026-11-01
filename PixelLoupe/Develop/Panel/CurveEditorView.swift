@@ -3,15 +3,36 @@ import AppKit
 /// Edits a `ToneCurve`, or Lightroom's parametric curve.
 ///
 /// Point mode: click the graph to add a point (up to 16), drag a point freely, drag it off the graph
-/// or double-click it to delete it, and double-click empty space to reset the curve. Parametric mode
+/// or double-click it to delete it, and double-click empty space to reset the curve. The last point clicked
+/// or dragged is selected, for the Input and Output fields; hovering shows the input and output under the
+/// pointer in the graph's corner. Parametric mode
 /// shows the four regions; drag the dividers between them to move the splits (the region amounts are
 /// sliders under the graph).
 final class CurveEditorView: NSView {
-    var curve = ToneCurve.identity { didSet { needsDisplay = true; updateAccessibility() } }
+    var curve = ToneCurve.identity {
+        didSet {
+            if let selectedIndex, !curve.points.indices.contains(selectedIndex) { self.selectedIndex = nil }
+            needsDisplay = true
+            updateAccessibility()
+        }
+    }
     var parametric = ParametricCurve() { didSet { needsDisplay = true } }
-    var channel = PhotoAdjustments.CurveChannel.rgb { didSet { needsDisplay = true; histogramHeights = nil } }
+    var channel = PhotoAdjustments.CurveChannel.rgb {
+        didSet {
+            if channel != oldValue { selectedIndex = nil }
+            needsDisplay = true
+            histogramHeights = nil
+        }
+    }
     /// Whether the graph shows the parametric curve (its dividers draggable) instead of the point curve.
-    var isParametric = false { didSet { needsDisplay = true; histogramHeights = nil; updateAccessibility() } }
+    var isParametric = false {
+        didSet {
+            if isParametric { selectedIndex = nil }
+            needsDisplay = true
+            histogramHeights = nil
+            updateAccessibility()
+        }
+    }
     /// The photo's histogram as drawn, shown behind the curve.
     var histogram: Histogram? {
         didSet {
@@ -24,6 +45,20 @@ final class CurveEditorView: NSView {
     private var histogramHeights: [Double]?
     var onChange: ((ToneCurve, Bool) -> Void)?
     var onParametricChange: ((ParametricCurve, Bool) -> Void)?
+    /// The selection changed, or the selected point moved.
+    var onSelectionChange: (() -> Void)?
+
+    /// The point the Input and Output fields show: the one last clicked, added or dragged.
+    private(set) var selectedIndex: Int? {
+        didSet {
+            guard selectedIndex != oldValue else { return }
+            needsDisplay = true
+            onSelectionChange?()
+        }
+    }
+    var selectedPoint: ToneCurve.Point? { selectedIndex.map { curve.points[$0] } }
+    /// Where the pointer is over the graph, for the readout in its corner.
+    private var hoverLocation: CGPoint? { didSet { needsDisplay = true } }
 
     private var draggedIndex: Int?
     private var draggedSplit: Int?
@@ -162,10 +197,12 @@ final class CurveEditorView: NSView {
             return
         }
 
+        drawReadout(in: rect)
         for (index, point) in curve.points.enumerated() {
             let center = location(of: point)
             let deleting = isDeleting && index == draggedIndex
-            let handle = NSBezierPath(ovalIn: CGRect(x: center.x - 4, y: center.y - 4, width: 8, height: 8))
+            let radius: CGFloat = index == selectedIndex ? 5 : 4
+            let handle = NSBezierPath(ovalIn: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
             (deleting ? NSColor.systemRed : curveColor).setFill()
             handle.fill()
             baselineColor.setStroke()
@@ -204,7 +241,55 @@ final class CurveEditorView: NSView {
         NSGraphicsContext.restoreGraphicsState()
     }
 
+    /// Input / output in 0…255, as Lightroom shows them.
+    static func levels(_ point: ToneCurve.Point) -> (input: Int, output: Int) {
+        (Int((point.x * 255).rounded()), Int((point.y * 255).rounded()))
+    }
+
+    /// What the corner readout shows: the point being dragged, or the curve's output under the pointer.
+    var readoutPoint: ToneCurve.Point? {
+        if let draggedIndex, curve.points.indices.contains(draggedIndex) { return curve.points[draggedIndex] }
+        guard let hoverLocation, plotRect.contains(hoverLocation) else { return nil }
+        let x = curvePoint(at: hoverLocation).x
+        return ToneCurve.Point(x: x, y: curve.value(at: x))
+    }
+
+    private func drawReadout(in rect: CGRect) {
+        guard let point = readoutPoint else { return }
+        let levels = Self.levels(point)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular),
+            .foregroundColor: curveColor.withAlphaComponent(0.75),
+        ]
+        let text = NSAttributedString(string: "\(levels.input) / \(levels.output)", attributes: attributes)
+        text.draw(at: CGPoint(x: rect.minX + 6, y: rect.maxY - 6 - text.size().height))
+    }
+
+    /// Moves the selected point to a typed input and/or output (0…1), as one final change.
+    func moveSelectedPoint(x: Double? = nil, y: Double? = nil) {
+        guard let index = selectedIndex else { return }
+        let point = curve.points[index]
+        curve.movePoint(index, toX: x ?? point.x, y: y ?? point.y)
+        onChange?(curve, true)
+        onSelectionChange?()
+    }
+
     // MARK: - Mouse
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                       owner: self))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        hoverLocation = convert(event.locationInWindow, from: nil)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hoverLocation = nil
+    }
 
     override func mouseDown(with event: NSEvent) {
         let location = convert(event.locationInWindow, from: nil)
@@ -223,6 +308,7 @@ final class CurveEditorView: NSView {
         }
         let hit = pointIndex(near: location)
         if event.clickCount == 2 {
+            selectedIndex = nil
             if let hit {
                 if curve.removePoint(hit) { onChange?(curve, true) }
             } else {
@@ -238,6 +324,7 @@ final class CurveEditorView: NSView {
             draggedIndex = curve.addPoint(x: point.x, y: point.y)
             if draggedIndex != nil { onChange?(curve, false) }
         }
+        if draggedIndex != nil { selectedIndex = draggedIndex }
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -285,13 +372,17 @@ final class CurveEditorView: NSView {
         isDeleting = outside && curve.canRemovePoint
         if isDeleting {
             // The point stays where it was until the mouse is released.
-            if isFinal, curve.removePoint(index) { onChange?(curve, true) }
+            if isFinal, curve.removePoint(index) {
+                selectedIndex = nil
+                onChange?(curve, true)
+            }
             needsDisplay = true
             return
         }
         let point = curvePoint(at: location)
         curve.movePoint(index, toX: point.x, y: point.y)
         onChange?(curve, isFinal)
+        onSelectionChange?()
     }
 
     private func dragSplit(_ index: Int, to location: CGPoint, isFinal: Bool) {

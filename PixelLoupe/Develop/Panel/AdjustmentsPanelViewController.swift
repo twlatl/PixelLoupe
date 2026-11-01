@@ -1307,13 +1307,69 @@ final class AdjustmentsPanelViewController: NSViewController {
         presetRow.spacing = 6
         presetRow.distribution = .gravityAreas
 
-        // Dots under the changed curves and the Point Curve menu, kept up to date with every edit (not just refreshes).
-        sectionStates.append { [weak self, weak picker, weak presetPopUp, weak presetRow] in
-            guard let self, let picker, let presetPopUp, let presetRow else { return }
+        // Input and Output of the selected point in 0…255, as Lightroom shows them; typing one moves the point.
+        let levelsFormatter = NumberFormatter()
+        levelsFormatter.allowsFloats = false
+        levelsFormatter.minimum = 0
+        levelsFormatter.maximum = 255
+        func levelsLabel(_ text: String) -> NSTextField {
+            let label = NSTextField(labelWithString: text)
+            label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+            label.textColor = .secondaryLabelColor
+            return label
+        }
+        func levelsField(_ name: String, move: @escaping (CurveEditorView, Double) -> Void) -> NSTextField {
+            let field = NSTextField()
+            field.controlSize = .small
+            field.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+            field.formatter = levelsFormatter
+            field.alignment = .right
+            field.cell?.sendsActionOnEndEditing = true
+            field.setAccessibilityLabel("\(name) level")
+            field.setAccessibilityIdentifier("curve\(name)")
+            field.widthAnchor.constraint(equalToConstant: 38).isActive = true
+            let target = ActionTarget { [weak editor] control in
+                guard let editor, let field = control as? NSTextField, !field.stringValue.isEmpty,
+                      editor.selectedPoint != nil else { return }
+                move(editor, Double(field.integerValue.clamped(to: 0...255)) / 255)
+                // Show where the point ended up (it stays between its neighbors), even while the field is focused.
+                if let levels = editor.selectedPoint.map(CurveEditorView.levels) {
+                    field.stringValue = String(name == "Input" ? levels.input : levels.output)
+                }
+            }
+            field.target = target
+            field.action = #selector(ActionTarget.fire(_:))
+            actionTargets.append(target)
+            return field
+        }
+        let inputField = levelsField("Input") { $0.moveSelectedPoint(x: $1) }
+        let outputField = levelsField("Output") { $0.moveSelectedPoint(y: $1) }
+        let levelsRow = NSStackView(views: [levelsLabel("Input:"), inputField, levelsLabel("Output:"), outputField])
+        levelsRow.orientation = .horizontal
+        levelsRow.spacing = 6
+        levelsRow.setCustomSpacing(14, after: inputField)
+        levelsRow.distribution = .gravityAreas
+        let showLevels = { [weak editor, weak inputField, weak outputField] in
+            guard let editor, let inputField, let outputField else { return }
+            let levels = editor.selectedPoint.map(CurveEditorView.levels)
+            for (field, value) in [(inputField, levels?.input), (outputField, levels?.output)] {
+                field.isEnabled = value != nil
+                // Leave a field being typed in alone.
+                if field.currentEditor() == nil { field.stringValue = value.map(String.init) ?? "" }
+            }
+        }
+        editor.onSelectionChange = showLevels
+
+        // Dots under the changed curves, the levels and the Point Curve menu, kept up to date with every edit
+        // (not just refreshes).
+        sectionStates.append { [weak self, weak picker, weak presetPopUp, weak presetRow, weak levelsRow] in
+            guard let self, let picker, let presetPopUp, let presetRow, let levelsRow else { return }
             let curves = adjustments.curves
             picker.edited = modes.map { $0.channel.map { !curves[$0].isIdentity } ?? !curves.parametric.isIdentity }
             presetPopUp.selectItem(withTitle: curves.pointCurveName)
             presetRow.isHidden = curveParametric
+            levelsRow.isHidden = curveParametric
+            showLevels()
         }
         picker.onSelect = { [weak self] index in
             guard let self else { return }
@@ -1343,7 +1399,8 @@ final class AdjustmentsPanelViewController: NSViewController {
         // The editor and picker go above the sliders addSlider already put in the section.
         section.insertControl(picker, at: 0)
         section.insertControl(editor, at: 1)
-        section.insertControl(presetRow, at: 2)
+        section.insertControl(levelsRow, at: 2)
+        section.insertControl(presetRow, at: 3)
         // Square and as wide as the panel, so inputs and outputs move the same distance per step.
         editor.heightAnchor.constraint(equalTo: editor.widthAnchor).isActive = true
         showMode()
