@@ -1272,13 +1272,48 @@ final class AdjustmentsPanelViewController: NSViewController {
             editor.curve = adjustments.curves[curveChannel]
             editor.parametric = adjustments.curves.parametric
             for row in regionRows { row.isHidden = !curveParametric }
+            updateSectionStates()
             picker.selectedIndex = curveParametric ? 0 : modes.firstIndex { $0.channel == curveChannel } ?? 1
         }
-        // Dots under the changed curves, kept up to date with every edit (not just refreshes).
-        sectionStates.append { [weak self, weak picker] in
-            guard let self, let picker else { return }
+        // Lightroom's Point Curve menu, under the point and channel curves: a preset replaces the point curve and
+        // resets red, green and blue. It shows Custom once the curves are edited (choosing Custom does nothing).
+        let presetPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+        presetPopUp.controlSize = .small
+        presetPopUp.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        presetPopUp.addItems(withTitles: PointCurvePreset.allCases.map(\.rawValue))
+        presetPopUp.menu?.addItem(.separator())
+        presetPopUp.addItem(withTitle: "Custom")
+        presetPopUp.setAccessibilityLabel("Point Curve")
+        presetPopUp.setAccessibilityIdentifier("pointCurvePopUp")
+        let presetTarget = ActionTarget { [weak self] control in
+            guard let self else { return }
+            let presets = PointCurvePreset.allCases
+            let index = (control as! NSPopUpButton).indexOfSelectedItem
+            guard presets.indices.contains(index) else { refresh(); return }
+            change(title, isFinal: true) {
+                $0.curves.apply(presets[index])
+                $0.curves.isEnabled = true
+            }
+            refresh()
+        }
+        presetPopUp.target = presetTarget
+        presetPopUp.action = #selector(ActionTarget.fire(_:))
+        actionTargets.append(presetTarget)
+        let presetLabel = NSTextField(labelWithString: "Point Curve:")
+        presetLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        presetLabel.textColor = .secondaryLabelColor
+        let presetRow = NSStackView(views: [presetLabel, presetPopUp])
+        presetRow.orientation = .horizontal
+        presetRow.spacing = 6
+        presetRow.distribution = .gravityAreas
+
+        // Dots under the changed curves and the Point Curve menu, kept up to date with every edit (not just refreshes).
+        sectionStates.append { [weak self, weak picker, weak presetPopUp, weak presetRow] in
+            guard let self, let picker, let presetPopUp, let presetRow else { return }
             let curves = adjustments.curves
             picker.edited = modes.map { $0.channel.map { !curves[$0].isIdentity } ?? !curves.parametric.isIdentity }
+            presetPopUp.selectItem(withTitle: curves.pointCurveName)
+            presetRow.isHidden = curveParametric
         }
         picker.onSelect = { [weak self] index in
             guard let self else { return }
@@ -1308,6 +1343,7 @@ final class AdjustmentsPanelViewController: NSViewController {
         // The editor and picker go above the sliders addSlider already put in the section.
         section.insertControl(picker, at: 0)
         section.insertControl(editor, at: 1)
+        section.insertControl(presetRow, at: 2)
         // Square and as wide as the panel, so inputs and outputs move the same distance per step.
         editor.heightAnchor.constraint(equalTo: editor.widthAnchor).isActive = true
         showMode()
