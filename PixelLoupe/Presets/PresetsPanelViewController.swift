@@ -360,7 +360,7 @@ final class PresetsPanelViewController: NSViewController, NSOutlineViewDataSourc
         name.placeholderString = "Preset name"
         name.setAccessibilityIdentifier("newPresetName")
         let group = NSComboBox()
-        group.addItems(withObjectValues: Array(Set(library.presets.map(\.group) + ["User Presets"])).sorted())
+        group.addItems(withObjectValues: Array(Set(library.presets.filter { !library.isBuiltIn($0) }.map(\.group) + ["User Presets"])).sorted())
         group.stringValue = "User Presets"
         group.setAccessibilityLabel("Group")
         var boxes: [(PresetSection, NSButton)] = []
@@ -463,6 +463,8 @@ final class PresetsPanelViewController: NSViewController, NSOutlineViewDataSourc
         if let preset = (item as? Item)?.preset {
             add("Apply") { [weak self] in if self?.isEditingEnabled == true { self?.onApply?(preset) } }
             add("Copy") { SettingsClipboard.content = .preset(preset) }
+            // PixelLoupe's own presets are read-only.
+            guard !library.isBuiltIn(preset) else { return }
             menu.addItem(.separator())
             add("Update with Current Settings") { [weak self] in
                 guard let self, let settings = currentSettings() else { return }
@@ -478,7 +480,7 @@ final class PresetsPanelViewController: NSViewController, NSOutlineViewDataSourc
             add("Delete") { [weak self] in
                 Task { do { try await self?.library.delete(preset) } catch { self?.show(error) } }
             }
-        } else if let group = item as? Group {
+        } else if let group = item as? Group, !group.presets.contains(where: library.isBuiltIn) {
             add("Rename Group…") { [weak self] in
                 self?.askName(title: "Rename Group", initial: group.name) { name in
                     Task { do { try await self?.library.renameGroup(group.name, to: name) } catch { self?.show(error) } }
