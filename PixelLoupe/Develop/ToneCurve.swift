@@ -235,6 +235,32 @@ nonisolated struct ParametricCurve: Codable, Equatable, Sendable {
 
     var amounts: [Double] { [shadows, darks, lights, highlights] }
 
+    /// The regions' names, in the order of ``amounts``.
+    static let regionNames = ["Shadows", "Darks", "Lights", "Highlights"]
+    /// Where the splits start, and where double-clicking one puts it back.
+    static let defaultSplits = [0.25, 0.5, 0.75]
+
+    var splits: [Double] { [shadowSplit, midtoneSplit, highlightSplit] }
+
+    /// The region (an index into ``amounts``) input `x` falls in.
+    func region(at x: Double) -> Int {
+        splits.firstIndex { x < $0 } ?? 3
+    }
+
+    /// A region's amount, by its index in ``amounts``; set values are clamped to -1…1.
+    subscript(region region: Int) -> Double {
+        get { amounts[region] }
+        set {
+            let value = newValue.clamped(to: -1...1)
+            switch region {
+            case 0: shadows = value
+            case 1: darks = value
+            case 2: lights = value
+            default: highlights = value
+            }
+        }
+    }
+
     /// Output for input `x` (0…1). Each region is a raised-cosine bump over its span, reaching into
     /// its neighbors; the outer regions hold full strength out to the ends. The shift fades to zero
     /// at black and white.

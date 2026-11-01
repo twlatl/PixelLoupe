@@ -1248,6 +1248,8 @@ final class AdjustmentsPanelViewController: NSViewController {
         picker.setAccessibilityIdentifier("curveChannel")
         let editor = CurveEditorView()
         editor.setAccessibilityIdentifier("curveEditor")
+        let splitBar = ParametricSplitBar()
+        splitBar.setAccessibilityIdentifier("parametricSplits")
         editor.histogram = histogram
         curveEditor = editor
 
@@ -1271,6 +1273,8 @@ final class AdjustmentsPanelViewController: NSViewController {
             editor.channel = curveChannel
             editor.curve = adjustments.curves[curveChannel]
             editor.parametric = adjustments.curves.parametric
+            splitBar.parametric = adjustments.curves.parametric
+            splitBar.isHidden = !curveParametric
             for row in regionRows { row.isHidden = !curveParametric }
             updateSectionStates()
             picker.selectedIndex = curveParametric ? 0 : modes.firstIndex { $0.channel == curveChannel } ?? 1
@@ -1387,7 +1391,7 @@ final class AdjustmentsPanelViewController: NSViewController {
                 $0.curves.isEnabled = true
             }
         }
-        editor.onParametricChange = { [weak self] parametric, isFinal in
+        let changeParametric = { [weak self] (parametric: ParametricCurve, isFinal: Bool) in
             guard let self else { return }
             change(title, isFinal: isFinal) {
                 $0.curves.parametric = parametric
@@ -1395,12 +1399,20 @@ final class AdjustmentsPanelViewController: NSViewController {
             }
             refresh()
         }
+        editor.onParametricChange = changeParametric
+        splitBar.onChange = changeParametric
+        // The slider for the region under the pointer (or being dragged) gets a bold title. The rows run
+        // Highlights to Shadows, the reverse of the regions' order.
+        editor.onHighlightRegion = { region in
+            for (index, row) in regionRows.enumerated() { row.isEmphasized = region == regionRows.count - 1 - index }
+        }
         refreshers.append(showMode)
         // The editor and picker go above the sliders addSlider already put in the section.
         section.insertControl(picker, at: 0)
         section.insertControl(editor, at: 1)
-        section.insertControl(levelsRow, at: 2)
-        section.insertControl(presetRow, at: 3)
+        section.insertControl(splitBar, at: 2)
+        section.insertControl(levelsRow, at: 3)
+        section.insertControl(presetRow, at: 4)
         // Square and as wide as the panel, so inputs and outputs move the same distance per step.
         editor.heightAnchor.constraint(equalTo: editor.widthAnchor).isActive = true
         showMode()

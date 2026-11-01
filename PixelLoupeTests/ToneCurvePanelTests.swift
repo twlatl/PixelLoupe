@@ -175,6 +175,30 @@ struct ToneCurvePanelTests {
         #expect(input.superview?.isHidden == true, "not shown with the parametric curve")
     }
 
+    @Test("Parametric mode: the split bar shows, and the region under the pointer bolds its slider's title")
+    func parametricPanel() throws {
+        let (panel, changes) = makePanel()
+        let bar = try #require(subview("parametricSplits", of: ParametricSplitBar.self, in: panel.view))
+        let editor = try #require(subview("curveEditor", of: CurveEditorView.self, in: panel.view))
+        #expect(bar.isHidden, "not with the point curve")
+        try #require(subview("curveMode.Parametric Curve", of: NSButton.self, in: panel.view)).performClick(nil)
+        #expect(!bar.isHidden)
+
+        editor.onHighlightRegion?(1)
+        let darks = try #require(subview("slider.Tone Curve.Darks", of: SliderRow.self, in: panel.view))
+        let lights = try #require(subview("slider.Tone Curve.Lights", of: SliderRow.self, in: panel.view))
+        #expect(darks.isEmphasized && !lights.isEmphasized)
+        editor.onHighlightRegion?(nil)
+        #expect(!darks.isEmphasized)
+
+        var moved = panel.adjustments.curves.parametric
+        moved.setSplit(2, to: 0.8)
+        bar.onChange?(moved, true)
+        #expect(panel.adjustments.curves.parametric.highlightSplit == 0.8)
+        #expect(changes.list.last?.action == "Adjust Tone Curve" && changes.list.last?.isFinal == true)
+        #expect(editor.parametric.highlightSplit == 0.8, "the graph follows")
+    }
+
     @Test("A section renamed keeps whether it was open")
     func renamedSectionKeepsExpansion() {
         let keys = ["AdjustSectionExpanded.Test.Old Name", "AdjustSectionExpanded.Test.New Name"]
