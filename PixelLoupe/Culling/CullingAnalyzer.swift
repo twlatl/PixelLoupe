@@ -83,7 +83,7 @@ nonisolated enum CullingAnalyzer {
     /// Smart Preview can be read. Returns nil when there's nothing to analyze.
     @concurrent
     static func analyze(_ location: PhotoSourceLocation, thumbnail: URL) async -> CullingScores? {
-        if let source = DevelopSource.open(location) {
+        if let source = source(for: location) {
             let overview = source.image(with: .default, scale: source.scale(toFit: overviewLongEdge))
             guard let overviewImage = context.createCGImage(overview, from: overview.extent) else { return nil }
             let detail = source.image(with: .default, scale: source.scale(toFit: focusLongEdge))
@@ -92,6 +92,17 @@ nonisolated enum CullingAnalyzer {
         guard let source = CGImageSourceCreateWithURL(thumbnail as CFURL, nil),
               let thumbnail = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
         return await analyze(overview: thumbnail, detail: nil)
+    }
+
+    /// What a photo is analyzed from: its Smart Preview when it has one that's current, since that's the size focus
+    /// is measured at and decodes about three times faster than a large RAW file (RAW-210); otherwise the original,
+    /// or a stale Smart Preview when that's all there is.
+    static func source(for location: PhotoSourceLocation) -> DevelopSource? {
+        if let url = location.smartPreview, let preview = DevelopSource(smartPreview: url),
+           preview.smartPreview?.isCurrent(for: location.original) == true {
+            return preview
+        }
+        return DevelopSource.open(location)
     }
 
     /// Scores a photo from `overview`, a small render, and `detail`, the same photo at ``focusLongEdge`` (or as
