@@ -1,6 +1,7 @@
 import CoreData
 import Foundation
 import ImageIO
+import Synchronization
 import Testing
 import UniformTypeIdentifiers
 @testable import PixelLoupe
@@ -61,6 +62,53 @@ struct CullingAnalysisTests {
         let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil))
         CGImageDestinationAddImage(destination, image, nil)
         guard CGImageDestinationFinalize(destination) else { throw CocoaError(.fileWriteUnknown) }
+    }
+
+    /// `count` more photos in the setup's folder, without files: for a stand-in analyzer.
+    private func addPhotos(_ count: Int, to setup: Setup) throws -> [Photo] {
+        let context = setup.store.viewContext
+        let photos = (0..<count).map { index in
+            let photo = Photo(context: context)
+            photo.id = UUID()
+            photo.fileName = "EXTRA_\(index).jpg"
+            photo.filePath = setup.directory.url.appending(path: photo.fileName).path(percentEncoded: false)
+            photo.fileType = "JPG"
+            photo.captureDate = Date(timeIntervalSince1970: Double(100 + index))
+            photo.importDate = Date()
+            photo.editDate = Date()
+            photo.folder = setup.photos[0].folder
+            return photo
+        }
+        try context.save()
+        return photos
+    }
+
+    /// Counts the analyses running at once, for a stand-in analyzer; each waits until `isReleased`.
+    private final class Analyses: Sendable {
+        let state = Mutex((running: 0, peak: 0, started: 0, finished: 0))
+        let isReleased = Atomic(false)
+
+        func analyze() async -> CullingScores? {
+            state.withLock {
+                $0.running += 1
+                $0.started += 1
+                $0.peak = max($0.peak, $0.running)
+            }
+            while !isReleased.load(ordering: .relaxed) {
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+            state.withLock {
+                $0.running -= 1
+                $0.finished += 1
+            }
+            return CullingScores(subjectFocus: 0.5)
+        }
+
+        func waitUntil(_ condition: @escaping @Sendable ((running: Int, peak: Int, started: Int, finished: Int)) -> Bool) async {
+            while !state.withLock({ condition($0) }) {
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+        }
     }
 
     private func analyze(_ setup: Setup, _ photos: [Photo], again: Bool = false) async {
@@ -153,5 +201,42 @@ struct CullingAnalysisTests {
         await setup.analysis.waitUntilIdle()
         #expect(!photo.cullFocusPending)
         #expect(photo.cullSubjectFocus >= 0)
+    }
+
+    @Test func aFewPhotosAreAnalyzedAtOnce() async throws {
+        let setup = try makeSetup()
+        let photos = try addPhotos(7, to: setup)
+        let analyses = Analyses()
+        setup.analysis.analyzer = { _, _ in await analyses.analyze() }
+        setup.analysis.start(after: .zero)
+        defer { setup.analysis.stop() }
+
+        setup.analysis.analyze(photos)
+        await analyses.waitUntil { $0.running == CullingAnalysis.concurrentPhotos }
+        analyses.isReleased.store(true, ordering: .relaxed)
+        await setup.analysis.waitUntilIdle()
+
+        #expect(analyses.state.withLock { $0.peak } == CullingAnalysis.concurrentPhotos)
+        #expect(photos.allSatisfy { $0.cullVersion == CullingAnalyzer.version && $0.cullSubjectFocus == 0.5 })
+        #expect(setup.analysis.progress == nil)
+    }
+
+    @Test func photosStillBeingAnalyzedWhenStoppedAreLeftUnscored() async throws {
+        let setup = try makeSetup()
+        let photos = try addPhotos(5, to: setup)
+        let analyses = Analyses()
+        setup.analysis.analyzer = { _, _ in await analyses.analyze() }
+        setup.analysis.start(after: .zero)
+
+        setup.analysis.analyze(photos)
+        await analyses.waitUntil { $0.running == CullingAnalysis.concurrentPhotos }
+        setup.analysis.stop()
+        analyses.isReleased.store(true, ordering: .relaxed)
+        await analyses.waitUntil { $0.finished == $0.started }
+        // Let the stopped run get back from its analyses, which is when it would write.
+        try await Task.sleep(for: .milliseconds(200))
+
+        #expect(photos.allSatisfy { $0.cullVersion == 0 })
+        #expect(analyses.state.withLock { $0.started } == CullingAnalysis.concurrentPhotos, "nothing more is started")
     }
 }

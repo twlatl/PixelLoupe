@@ -1,7 +1,9 @@
 import CoreGraphics
 import CoreImage
 import Foundation
+import ImageIO
 import Testing
+import UniformTypeIdentifiers
 @testable import PixelLoupe
 
 /// Assisted Culling's measures (RAW-71).
@@ -136,6 +138,42 @@ struct CullingAnalyzerTests {
         }
         print(report)
     }
+
+    /// A JPEG original of grey noise in `directory`, with a Smart Preview.
+    private func originalWithSmartPreview(in directory: TemporaryDirectory) throws -> PhotoSourceLocation {
+        let original = directory.url.appending(path: "IMG_0001.jpg")
+        var bytes = (0..<(640 * 480)).map { _ in UInt8.random(in: 40...215) }
+        let image = try #require(bytes.withUnsafeMutableBytes { buffer in
+            CGContext(
+                data: buffer.baseAddress, width: 640, height: 480, bitsPerComponent: 8, bytesPerRow: 640,
+                space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue
+            )?.makeImage()
+        })
+        let destination = try #require(CGImageDestinationCreateWithURL(original as CFURL, UTType.jpeg.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        #expect(CGImageDestinationFinalize(destination))
+        let preview = directory.url.appending(path: "IMG_0001.heic")
+        try SmartPreviewWriter.write(original: original, to: preview)
+        return PhotoSourceLocation(original: original, smartPreview: preview)
+    }
+
+    @Test func aCurrentSmartPreviewIsAnalyzedEvenWithTheOriginalOnline() throws {
+        let directory = try TemporaryDirectory()
+        let location = try originalWithSmartPreview(in: directory)
+        #expect(CullingAnalyzer.source(for: location)?.isSmartPreview == true)
+
+        try FileManager.default.removeItem(at: location.original)
+        #expect(CullingAnalyzer.source(for: location)?.isSmartPreview == true, "and with it offline")
+    }
+
+    @Test func aStaleSmartPreviewGivesWayToTheOriginal() throws {
+        let directory = try TemporaryDirectory()
+        let location = try originalWithSmartPreview(in: directory)
+        // The original changed after its Smart Preview was made.
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: 3600)], ofItemAtPath: location.original.path(percentEncoded: false))
+        #expect(CullingAnalyzer.source(for: location)?.isSmartPreview == false)
+
+        try FileManager.default.removeItem(at: location.original)
+        #expect(CullingAnalyzer.source(for: location)?.isSmartPreview == true, "it's all there is with the original offline")
+    }
 }
-
-
