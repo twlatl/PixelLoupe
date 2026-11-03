@@ -50,6 +50,10 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     private(set) var zoomAnimationsStarted = 0
     /// Whether the photo has been drawn (for tests: a zoom only animates from a photo already on screen).
     var hasDrawnPhoto: Bool { lastDrawnRect != nil }
+    /// The preview's layer (for tests: how a frame drawn for another size is shown).
+    var canvasLayer: CALayer? { metalView.layer }
+    /// The scale the photo was last rendered at (for tests).
+    var renderedScale: CGFloat? { lastPreviewScale }
     private let cropPanel = CropPanelViewController()
     private let cropOverlay = CropOverlayView()
     /// The crop when the crop tool was opened for the current photo, restored by Esc.
@@ -146,10 +150,12 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         // graphic drawn over it.
         metalView.presentsWithTransaction = true
         metalView.layer?.isOpaque = false
-        // A frame drawn for the old size is letterboxed over the matte behind until the next one, not
-        // stretched to the new shape (RAW-254).
-        metalView.layerContentsPlacement = .scaleProportionallyToFit
-        metalView.layer?.contentsGravity = .resizeAspect
+        // A frame drawn for the old size stays as drawn, centred over the matte behind, until the next
+        // one: not stretched to the new shape, or shrunk into it (RAW-254). The photo is centred in each
+        // frame, so where its size doesn't change (a portrait photo as the panels slide), this is what
+        // the next frame shows.
+        metalView.layerContentsPlacement = .center
+        metalView.layer?.contentsGravity = .center
         metalView.setAccessibilityElement(true)
         metalView.setAccessibilityRole(.image)
         metalView.setAccessibilityIdentifier("developImageView")
