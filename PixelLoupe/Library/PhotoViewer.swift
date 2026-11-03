@@ -19,8 +19,13 @@ final class PhotoViewer: NSView {
     private let clickView = ZoomClickView()
     private let inset: CGFloat
     private var photoID: NSManagedObjectID?
-    private var renderedSize: CGFloat = 0
+    /// The size of the last full-size render shown, or 0 while only the thumbnail shows.
+    private(set) var renderedSize: CGFloat = 0
+    /// The size of the full-size render in flight, or 0 when none is.
+    private var requestedSize: CGFloat = 0
     private var loadTask: Task<Void, Never>?
+    /// Where full-size renders run: one at a time, off the cooperative pool (RAW-256).
+    private let renderQueue: RenderQueue
     /// Plays a video (the enlarged view and full screen show movies in it).
     private let playerView = AVPlayerView()
     /// "The file … could not be found" with a Locate… button, over the thumbnail.
@@ -49,9 +54,10 @@ final class PhotoViewer: NSView {
     private var detailTask: Task<Void, Never>?
     private var detailGeneration = 0
 
-    init(store: CatalogStore, inset: CGFloat) {
+    init(store: CatalogStore, inset: CGFloat, renderQueue: RenderQueue = .fullSize) {
         self.store = store
         self.inset = inset
+        self.renderQueue = renderQueue
         super.init(frame: .zero)
         wantsLayer = true
         layerContentsRedrawPolicy = .never
@@ -142,8 +148,9 @@ final class PhotoViewer: NSView {
         clickView.frame = bounds
         playerView.frame = bounds.insetBy(dx: inset, dy: inset)
         layoutImage()
-        // Re-render if the view has grown noticeably since the last full-size render.
-        if photoID != nil, targetPixels > renderedSize * 1.25 { loadFullSize() }
+        // Re-render if the view has grown noticeably since the last full-size render (or the one on its way:
+        // restarting it on every layout pass while a sidebar slides would never let one finish).
+        if photoID != nil, targetPixels > max(renderedSize, requestedSize) * 1.25 { loadFullSize() }
     }
 
     private var targetPixels: CGFloat {
@@ -168,6 +175,7 @@ final class PhotoViewer: NSView {
         guard id != photoID else { return }
         photoID = id
         renderedSize = 0
+        requestedSize = 0
         loadTask?.cancel()
         zoomSourceTask?.cancel()
         zoomSource = nil
@@ -211,14 +219,20 @@ final class PhotoViewer: NSView {
         let adjustments = photo.adjustments
         let pixels = max(targetPixels, 512)
         let thumbnails = store.thumbnails
+        let queue = renderQueue
+        // Cancelling the previous render drops it from the queue if it hasn't started, so moving quickly
+        // through photos leaves at most the one rendering and the latest waiting (RAW-256).
         loadTask?.cancel()
+        requestedSize = pixels
         loadTask = Task { [weak self] in
             if self?.imageLayer.contents == nil, let thumbnail = await thumbnails.image(for: uuid) {
                 guard let self, !Task.isCancelled, photoID == id else { return }
                 imageLayer.contents = thumbnail
             }
-            let rendered = await PhotoRenderer.render(location, adjustments: adjustments, maxPixels: pixels)
-            guard let self, !Task.isCancelled, photoID == id, let rendered else { return }
+            let rendered = await PhotoRenderer.render(location, adjustments: adjustments, maxPixels: pixels, queue: queue)
+            guard let self, !Task.isCancelled, photoID == id else { return }
+            requestedSize = 0
+            guard let rendered else { return }
             imageLayer.contents = rendered.image
             renderedSize = pixels
         }
