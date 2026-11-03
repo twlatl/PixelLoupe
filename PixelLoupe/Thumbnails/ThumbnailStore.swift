@@ -96,18 +96,40 @@ final class ThumbnailStore {
 
     nonisolated private static let renderContext = CIContext(options: [.cacheIntermediates: false])
 
-    @concurrent
+    /// Stills are drawn on ``RenderQueue/thumbnails``, one at a time and off the cooperative pool: pasting
+    /// settings to many photos used to start a blocking render for each at once (RAW-256). A redraw whose
+    /// task is cancelled before its turn (a newer edit to the same photo) is dropped.
     nonisolated private static func renderThumbnail(
         from location: PhotoSourceLocation, to destination: URL, adjustments: PhotoAdjustments
     ) async -> Drawn? {
-        let temporary = destination.deletingLastPathComponent().appending(path: ".\(UUID().uuidString).jpg")
+        if SupportedImageTypes.isVideo(location.original) {
+            return await renderVideoThumbnail(from: location.original, to: destination)
+        }
+        return (try? await RenderQueue.thumbnails.run { drawStill(from: location, to: destination, adjustments: adjustments) }) ?? nil
+    }
+
+    @concurrent
+    nonisolated private static func renderVideoThumbnail(from source: URL, to destination: URL) async -> Drawn? {
+        let temporary = temporaryURL(beside: destination)
         defer { try? FileManager.default.removeItem(at: temporary) }
-        let source = location.original
+        do {
+            try await VideoSupport.writeThumbnail(from: source, to: temporary)
+            try replace(destination, with: temporary)
+            return .original
+        } catch {
+            return nil
+        }
+    }
+
+    /// Draws a still's thumbnail on the calling thread, which it blocks until done.
+    nonisolated private static func drawStill(
+        from location: PhotoSourceLocation, to destination: URL, adjustments: PhotoAdjustments
+    ) -> Drawn? {
+        let temporary = temporaryURL(beside: destination)
+        defer { try? FileManager.default.removeItem(at: temporary) }
         var drawn = Drawn.original
         do {
-            if SupportedImageTypes.isVideo(source) {
-                try await VideoSupport.writeThumbnail(from: source, to: temporary)
-            } else if adjustments.isDefault, (try? generateThumbnail(from: source, to: temporary)) != nil {
+            if adjustments.isDefault, (try? generateThumbnail(from: location.original, to: temporary)) != nil {
                 // The embedded preview, or a quick decode.
             } else {
                 guard let developSource = DevelopSource.open(location) else { return nil }
@@ -118,14 +140,22 @@ final class ThumbnailStore {
                 try writeJPEG(cgImage, to: temporary)
                 if developSource.isSmartPreview { drawn = .smartPreview }
             }
-            if FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)) {
-                _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporary)
-            } else {
-                try FileManager.default.moveItem(at: temporary, to: destination)
-            }
+            try replace(destination, with: temporary)
             return drawn
         } catch {
             return nil
+        }
+    }
+
+    nonisolated private static func temporaryURL(beside destination: URL) -> URL {
+        destination.deletingLastPathComponent().appending(path: ".\(UUID().uuidString).jpg")
+    }
+
+    nonisolated private static func replace(_ destination: URL, with temporary: URL) throws {
+        if FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)) {
+            _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporary)
+        } else {
+            try FileManager.default.moveItem(at: temporary, to: destination)
         }
     }
 
