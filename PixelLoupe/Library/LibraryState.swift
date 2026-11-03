@@ -93,7 +93,7 @@ final class LibraryState {
         didSet { if filter != oldValue { notify(.filter) } }
     }
 
-    /// Selected photos in grid order.
+    /// Selected photos in grid order, except that the active photo (the first) stays first when the grid re-fetches.
     var selectedPhotoIDs: [NSManagedObjectID] = [] {
         didSet { if selectedPhotoIDs != oldValue { notify(.selection) } }
     }

@@ -146,12 +146,49 @@ struct SidebarStateTests {
         controller.showWindow(nil)
         #expect(controller.state.filter.scope == .folder(path: "/Photos/2025"))
         let selected = controller.state.selectedPhotoIDs.compactMap { (try? reopened.viewContext.existingObject(with: $0) as? Photo)?.id }
-        // (The grid keeps its selection in grid order.)
-        #expect(Set(selected) == [ids[2], ids[0]])
+        // The active photo stays first; the rest are in grid order.
+        #expect(selected == [ids[2], ids[0]])
         // The sidebar shows the folder selected (and its parents expanded).
         let outline = try #require(controller.window?.contentView?.descendants.compactMap { $0 as? NSOutlineView }.first)
         let selectedRow = try #require(outline.item(atRow: outline.selectedRow) as? SidebarViewController.Item)
         if case .folder(let path) = selectedRow.kind { #expect(path == "/Photos/2025") } else { Issue.record("no folder selected") }
+    }
+
+    /// RAW-258: the photo left active is centred in the grid and the filmstrip when the catalog opens, after the
+    /// window fills the screen and the sidebars take their remembered widths (both reflow the grid), and a
+    /// multi-selection keeps it as the active photo rather than re-sorting it away.
+    @Test func theRestoredPhotoIsScrolledIntoView() throws {
+        let directory = try TemporaryDirectory()
+        defer { withExtendedLifetime(directory) {} }
+        let store = try makeCatalog(at: directory.url.appending(path: "State.pixelloupe", directoryHint: .isDirectory))
+        let ids = try addPhotos((0..<400).map { ("\($0).jpg", "/Photos/2026") }, to: store)
+        store.viewState = CatalogViewState(folderPath: "/Photos/2026", selectedPhotos: [ids[350], ids[200]])
+        Defaults.store.set(420.0, forKey: "LeftSidebarWidth")
+        Defaults.store.set(420.0, forKey: "RightSidebarWidth")
+        defer {
+            Defaults.store.removeObject(forKey: "LeftSidebarWidth")
+            Defaults.store.removeObject(forKey: "RightSidebarWidth")
+        }
+
+        let controller = CatalogWindowController(store: store)
+        defer { controller.close() }
+        controller.fillScreen()
+        controller.showWindow(nil)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.5))
+
+        let active = try #require(controller.state.selectedPhotoIDs.first)
+        #expect((try? store.viewContext.existingObject(with: active) as? Photo)?.id == ids[350])
+        #expect(controller.state.selectedPhotoIDs.count == 2)
+        let index = try #require(controller.state.photoOrder.firstIndex(of: active))
+        let collectionViews = controller.window?.contentView?.descendants.compactMap { $0 as? NSCollectionView } ?? []
+        for identifier in ["photoGrid", "filmstrip"] {
+            let view = try #require(collectionViews.first { $0.accessibilityIdentifier() == identifier })
+            let frame = view.frameForItem(at: index)
+            #expect(view.visibleRect.contains(frame), "\(identifier): \(frame) not in \(view.visibleRect)")
+            // Centred (as far as the ends of the list allow): within a cell of the middle.
+            let middle = identifier == "filmstrip" ? (view.visibleRect.midX, frame.midX, frame.width) : (view.visibleRect.midY, frame.midY, frame.height)
+            #expect(abs(middle.0 - middle.1) <= middle.2, "\(identifier) isn't centred")
+        }
     }
 
     @Test func aMissingFolderFallsBackToAllPhotographs() throws {
