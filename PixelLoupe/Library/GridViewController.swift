@@ -76,6 +76,8 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
     }
 
     private var hasAppeared = false
+    /// The source the grid last showed, to tell switching to another from re-fetching this one (RAW-259).
+    private var shownScope: LibraryFilter.Scope?
     /// Keeps the photo the catalog opened with centred while the window settles (RAW-258).
     private lazy var restoredSelectionPin = RestoredSelectionPin(collectionView: collectionView, axis: .vertical) { [weak self] in
         self?.dataSource.indexPath(for: $0)
@@ -123,6 +125,7 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
             fetchRequest: request, managedObjectContext: context, sectionNameKeyPath: nil, cacheName: nil
         )
         fetchedResultsController.delegate = self
+        shownScope = state.filter.scope
         refetch()
         restoredSelectionPin.pin(state.selectedPhotoIDs.first)
 
@@ -357,17 +360,50 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
     }
 
     private func apply(_ snapshot: NSDiffableDataSourceSnapshot<String, NSManagedObjectID>, animated: Bool) {
-        let selected = Set(state.selectedPhotoIDs)
-        let active = state.selectedPhotoIDs.first
+        let live = state.selectedPhotoIDs
+        let isNewSource = shownScope.map { !Self.isSameSource($0, state.filter.scope) } ?? false
+        shownScope = state.filter.scope
         dataSource.apply(snapshot, animatingDifferences: animated && view.window != nil)
         refreshPublishDecorations()
         updateScopePhotoCount(shown: snapshot.numberOfItems)
         state.photoOrder = snapshot.itemIdentifiers
 
-        // Preserve selection across re-sorts and filter changes where those photos remain visible.
-        let indexPaths = Set(selected.compactMap { dataSource.indexPath(for: $0) })
-        collectionView.selectionIndexPaths = indexPaths
-        syncSelection(keepingActive: active)
+        // Which photos to select (RAW-259): in another source, the selection carries over if any of it is there,
+        // else the photos that source remembers. Re-fetching the same source (a re-sort, a filter, an edit) shows
+        // what it remembers, so photos a filter or a collapsed stack hid come back when they're shown again.
+        let remembered = state.selectionMemory?.selection(for: state.filter.scope)
+        let carriesOver = isNewSource && live.contains { dataSource.indexPath(for: $0) != nil }
+        let wanted = carriesOver ? live : isNewSource ? remembered ?? [] : remembered ?? live
+        let selection = shown(wanted)
+        collectionView.selectionIndexPaths = Set(selection.compactMap { dataSource.indexPath(for: $0) })
+        // Only a selection carried over is new for the source; otherwise it's what the source already remembers.
+        syncSelection(keepingActive: selection.first, remembering: carriesOver)
+        if isNewSource {
+            restoredSelectionPin.pin(state.selectedPhotoIDs.first)
+            restoredSelectionPin.settle()
+        }
+    }
+
+    /// Whether two scopes are the same source: a smart collection whose rules changed still is.
+    private static func isSameSource(_ a: LibraryFilter.Scope, _ b: LibraryFilter.Scope) -> Bool {
+        if let source = SelectionSource(a) { source == SelectionSource(b) } else { a == b }
+    }
+
+    /// `ids` as the grid can show them, in order and without repeats: a photo hidden in a collapsed stack becomes
+    /// the stack's top photo, and photos the grid doesn't have (filtered out, or not in the source) are left out.
+    private func shown(_ ids: [NSManagedObjectID]) -> [NSManagedObjectID] {
+        var result: [NSManagedObjectID] = []
+        var seen = Set<NSManagedObjectID>()
+        for id in ids {
+            var shownID = id
+            if dataSource.indexPath(for: id) == nil, let photo = try? store.viewContext.existingObject(with: id) as? Photo,
+               photo.isHiddenInStack, let top = photo.stack?.topPhoto {
+                shownID = top.objectID
+            }
+            guard dataSource.indexPath(for: shownID) != nil, seen.insert(shownID).inserted else { continue }
+            result.append(shownID)
+        }
+        return result
     }
 
     /// Refreshes visible cells for photos whose rating, flag or tags changed (including via undo
@@ -443,14 +479,15 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
     }
 
     /// Records the grid's selection in grid order, except that `active`, if still selected, stays first (so the
-    /// active photo survives a re-fetch, such as the one restoring a catalog's selection).
-    private func syncSelection(keepingActive active: NSManagedObjectID? = nil) {
+    /// active photo survives a re-fetch, such as the one restoring a catalog's selection). Unless `remembering`,
+    /// the source keeps remembering the selection it had (the grid is only showing part of it).
+    private func syncSelection(keepingActive active: NSManagedObjectID? = nil, remembering: Bool = true) {
         var ids = collectionView.selectionIndexPaths.sorted().compactMap { dataSource.itemIdentifier(for: $0) }
         if let active, let index = ids.firstIndex(of: active), index > 0 {
             ids.remove(at: index)
             ids.insert(active, at: 0)
         }
-        state.selectedPhotoIDs = ids
+        if remembering { state.selectedPhotoIDs = ids } else { state.showSelection(ids) }
     }
 
     /// Mirrors selection changes made elsewhere, such as stepping through photos while enlarged.
