@@ -96,6 +96,10 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     private var lastPreview: (image: CIImage, rect: CGRect)?
     /// The scale `lastPreview` was rendered at.
     private var lastPreviewScale: CGFloat?
+    /// Keeps the render scale while the canvas changes size, so each frame is only re-fitted.
+    private var scaleHold = PreviewScaleHold()
+    /// Ends `scaleHold`'s resize once the size has stopped changing.
+    private var resizeSettle: DispatchWorkItem?
     private let histogramView = HistogramView()
     /// The clipping overlays drawn on the preview (switched on, or previewed by hovering).
     private var clippingDisplay: (shadows: Bool, highlights: Bool) = (false, false)
@@ -142,6 +146,10 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         // graphic drawn over it.
         metalView.presentsWithTransaction = true
         metalView.layer?.isOpaque = false
+        // A frame drawn for the old size is letterboxed over the matte behind until the next one, not
+        // stretched to the new shape (RAW-254).
+        metalView.layerContentsPlacement = .scaleProportionallyToFit
+        metalView.layer?.contentsGravity = .resizeAspect
         metalView.setAccessibilityElement(true)
         metalView.setAccessibilityRole(.image)
         metalView.setAccessibilityIdentifier("developImageView")
@@ -1884,8 +1892,22 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     // MARK: - MTKViewDelegate
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+        // The side panels slide (or the window resizes) a frame at a time: redraw each one at the
+        // scale already rendered, then sharp once the size has settled.
+        scaleHold.isResizing = true
+        resizeSettle?.cancel()
+        let settle = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            scaleHold.isResizing = false
+            metalView.needsDisplay = true
+        }
+        resizeSettle = settle
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.resizeSettleDelay, execute: settle)
         view.needsDisplay = true
     }
+
+    /// How long the canvas size must stay put before the preview renders at its new scale.
+    static let resizeSettleDelay: TimeInterval = 0.15
 
     func draw(in view: MTKView) {
         guard let drawable = view.currentDrawable,
@@ -1921,9 +1943,11 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             // A preset under the pointer in the Presets panel is previewed.
             let shownAdjustments = presetPreview ?? drawnAdjustments
             // A cropped photo renders at the size it's shown; the crop tool shows the whole frame.
-            let previewScale = cropping
+            let wantedScale = cropping
                 ? source.scale(toFit: max(bounds.width, bounds.height))
                 : source.scale(toFit: max(bounds.width, bounds.height), adjustments: shownAdjustments)
+            // While the canvas changes size, the scale already rendered (RAW-254).
+            let previewScale = scaleHold.scale(for: wantedScale, source: ObjectIdentifier(source))
             // View ▸ Before/After (not in the tools that show the photo their own way).
             let beforeAfter = cropping || masking ? nil : state.beforeAfter
             let beforeAdjustments = shownAdjustments.before
@@ -2000,7 +2024,9 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
                         return rect
                     }
                     let shown = decorate(preview, scale: previewScale)
-                    let fit = min(pane.width / preview.extent.width, pane.height / preview.extent.height, 1)
+                    // Up to the size it would be at the scale asked for: a held, smaller render is enlarged
+                    // to follow the canvas as it grows.
+                    let fit = min(pane.width / preview.extent.width, pane.height / preview.extent.height, wantedScale / previewScale)
                     let scaled = shown
                         .transformed(by: CGAffineTransform(translationX: -preview.extent.minX, y: -preview.extent.minY))
                         .transformed(by: CGAffineTransform(scaleX: fit, y: fit))
