@@ -329,6 +329,31 @@ struct NavigatorZoomTests {
         while state.zoomVisibleRect != nil, Date().timeIntervalSince(fitStart) < 30 { await pump(0.1) }
         #expect(state.zoomVisibleRect == nil, "fitted again")
     }
+
+    /// RAW-254: hiding the panels widens the preview a frame at a time.
+    @Test(.timeLimit(.minutes(3))) func developPreviewKeepsItsShapeAsThePanelsSlide() async throws {
+        let setup = try setup(count: 1, withFile: true)
+        defer { setup.controller.close() }
+        let window = try #require(setup.controller.window)
+        // Narrow enough that the 1200-pixel photo is rendered below full size with the panels showing.
+        window.setFrame(NSRect(x: 0, y: 0, width: 900, height: 700), display: true)
+        setup.state.mode = .develop
+        let develop = setup.controller.rootViewController.main.develop
+        let start = Date()
+        while !(develop.canAutoLight && develop.hasDrawnPhoto), Date().timeIntervalSince(start) < 90 { await pump(0.1) }
+        #expect(develop.hasDrawnPhoto, "the photo decoded and was drawn")
+
+        let layer = try #require(develop.canvasLayer)
+        #expect(layer.contentsGravity == .center, "a frame drawn for the old size is neither stretched nor shrunk")
+        #expect(layer.contentsScale == window.backingScaleFactor, "and shows at its own size, not doubled or halved")
+
+        let before = try #require(develop.renderedScale)
+        #expect(before < 1)
+        setup.controller.rootViewController.main.toggleSidebars()
+        let settleStart = Date()
+        while (develop.renderedScale ?? 0) <= before, Date().timeIntervalSince(settleStart) < 30 { await pump(0.1) }
+        #expect((develop.renderedScale ?? 0) > before, "rendered at the wider preview's scale once it settles")
+    }
 }
 
 private extension CGImage {
