@@ -1,7 +1,7 @@
 import Foundation
 
-/// How a web gallery (Window ▸ Web Gallery) is laid out. The layout choices are remembered between
-/// galleries; the headline and description belong to one gallery and start empty.
+/// How a web gallery (Window ▸ Web Gallery) is laid out. The layout choices and logo are remembered
+/// between galleries; the headline and description belong to one gallery and start empty.
 nonisolated struct WebGallerySettings: Codable, Equatable, Sendable {
     typealias Color = WatermarkSettings.Color
     typealias CaptionField = ContactSheetSettings.CaptionField
@@ -19,6 +19,8 @@ nonisolated struct WebGallerySettings: Codable, Equatable, Sendable {
     var headline = ""
     var description = ""
 
+    /// The logo shown above the headline: its name in ``LogoImages``, or nil for none.
+    var logoName: String?
     var textColor = Color(red: 0, green: 0, blue: 0)
     var backgroundColor = Color.white
     var columns = 4
@@ -44,6 +46,7 @@ nonisolated struct WebGallerySettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case textColor, backgroundColor, columns, showsBorder, showsShadow, showsCaption, captionField
         case showsPageNumbers, photosPerPage, jpegQuality, watermarkName, email, headHTML, bodyHTML
+        case logoName
     }
 
     // Tolerant decoding: missing or unknown values keep their defaults, so saved settings survive new options.
@@ -68,6 +71,7 @@ nonisolated struct WebGallerySettings: Codable, Equatable, Sendable {
         email = value(.email, defaults.email)
         headHTML = value(.headHTML, defaults.headHTML)
         bodyHTML = value(.bodyHTML, defaults.bodyHTML)
+        logoName = value(.logoName, defaults.logoName)
     }
 
     /// `quality` in the slider's range, on its steps.
