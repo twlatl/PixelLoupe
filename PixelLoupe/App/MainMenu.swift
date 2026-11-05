@@ -134,6 +134,7 @@ import AppKit
     @objc optional func showMaskOverlay(_ sender: Any?)
     @objc optional func cycleCropGuideOverlay(_ sender: Any?)
     @objc optional func cycleCropGuideOrientation(_ sender: Any?)
+    @objc optional func chooseCropGuideOverlays(_ sender: Any?)
     @objc optional func chooseCropGuideOverlay(_ sender: NSMenuItem)
     @objc optional func showBeforeAfter(_ sender: NSMenuItem)
     @objc optional func removePhoto(_ sender: Any?)
@@ -425,6 +426,8 @@ enum MainMenu {
         menu.addItem(.separator())
         menu.addItem(item("Cycle Overlay", #selector(PixelLoupeActions.cycleCropGuideOverlay(_:)), "o", modifiers: []))
         menu.addItem(item("Cycle Orientation", #selector(PixelLoupeActions.cycleCropGuideOrientation(_:)), "o", modifiers: [.shift]))
+        menu.addItem(.separator())
+        menu.addItem(item("Choose Overlays to Cycle…", #selector(PixelLoupeActions.chooseCropGuideOverlays(_:))))
         return menu
     }
 

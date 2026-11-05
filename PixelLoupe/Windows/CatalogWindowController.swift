@@ -603,6 +603,11 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
     @objc func cycleCropGuideOverlay(_ sender: Any?) { _ = perform(.maskOverlay) }
     @objc func cycleCropGuideOrientation(_ sender: Any?) { _ = perform(.cropGuideOrientation) }
 
+    @objc func chooseCropGuideOverlays(_ sender: Any?) {
+        guard state.mode == .develop, state.developTool == .crop else { return }
+        rootViewController.main.develop.showCropGuideOptions()
+    }
+
     /// View ▸ Crop Guide Overlay: the item's tag is the guide's index in ``CropGuideOverlay/allCases``.
     @objc func chooseCropGuideOverlay(_ sender: NSMenuItem) {
         guard state.mode == .develop, state.developTool == .crop,
@@ -1250,6 +1255,8 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
             let typing = (window?.firstResponder as? NSText)?.isEditable ?? false
             return !typing && state.mode == .develop && state.developTool == .crop
                 && rootViewController.main.develop.cropGuideOverlay.orientationCount > 1
+        case #selector(chooseCropGuideOverlays(_:)):
+            return state.mode == .develop && state.developTool == .crop
         case #selector(chooseCropGuideOverlay(_:)):
             let cropping = state.mode == .develop && state.developTool == .crop
             let current = rootViewController.main.develop.cropGuideOverlay

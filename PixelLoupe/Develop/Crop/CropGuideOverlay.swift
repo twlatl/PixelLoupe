@@ -5,7 +5,7 @@ import Foundation
 /// through them in this order while cropping, and ⇧O turns the asymmetric ones; the Tool Overlay setting
 /// decides when the guide shows.
 enum CropGuideOverlay: String, CaseIterable {
-    case thirds, fifths, diagonal, halves, triangle, goldenRatio, goldenSpiral, grid
+    case thirds, fifths, diagonal, halves, triangle, goldenRatio, goldenSpiral, aspectRatios, grid
 
     static let `default` = CropGuideOverlay.thirds
     /// Grid cells across the crop's long side.
@@ -14,6 +14,30 @@ enum CropGuideOverlay: String, CaseIterable {
 
     private static let key = "CropGuideOverlay"
     private static let orientationsKey = "CropGuideOrientations"
+    private static let cycleKey = "CropGuideCycle"
+    private static let aspectsKey = "CropGuideAspectRatios"
+
+    /// The guides O visits (Choose Overlays to Cycle…); never empty.
+    static var cycle: Set<CropGuideOverlay> {
+        get {
+            guard let saved = Defaults.store.stringArray(forKey: cycleKey) else { return Set(allCases) }
+            let cycle = Set(saved.compactMap(CropGuideOverlay.init(rawValue:)))
+            return cycle.isEmpty ? Set(allCases) : cycle
+        }
+        set {
+            guard !newValue.isEmpty else { return }
+            Defaults.store.set(allCases.filter(newValue.contains).map(\.rawValue), forKey: cycleKey)
+        }
+    }
+
+    /// The ratios the Aspect Ratios guide shows (Choose Overlays to Cycle…).
+    static var shownAspectRatios: Set<AspectRatio> {
+        get {
+            guard let saved = Defaults.store.stringArray(forKey: aspectsKey) else { return Set(AspectRatio.allCases) }
+            return Set(saved.compactMap(AspectRatio.init(rawValue:)))
+        }
+        set { Defaults.store.set(AspectRatio.allCases.filter(newValue.contains).map(\.rawValue), forKey: aspectsKey) }
+    }
 
     /// The overlay last chosen, kept across launches.
     static var saved: CropGuideOverlay {
@@ -43,6 +67,7 @@ enum CropGuideOverlay: String, CaseIterable {
         case .triangle: "Triangle"
         case .goldenRatio: "Golden Ratio"
         case .goldenSpiral: "Golden Spiral"
+        case .aspectRatios: "Aspect Ratios"
         case .grid: "Grid"
         }
     }
@@ -57,10 +82,13 @@ enum CropGuideOverlay: String, CaseIterable {
         }
     }
 
-    /// The overlay O moves to.
-    var next: CropGuideOverlay {
+    /// The overlay O moves to: the next one in the cycle, skipping guides left out of it.
+    var next: CropGuideOverlay { next(in: Self.cycle) }
+
+    func next(in cycle: Set<CropGuideOverlay>) -> CropGuideOverlay {
         let all = Self.allCases
-        return all[(all.firstIndex(of: self)! + 1) % all.count]
+        let index = all.firstIndex(of: self)!
+        return (1...all.count).lazy.map { all[(index + $0) % all.count] }.first(where: cycle.contains) ?? self
     }
 
     struct Segment: Equatable {
@@ -77,7 +105,7 @@ enum CropGuideOverlay: String, CaseIterable {
         case .goldenRatio: Self.divisions(rect, at: [1 - 1 / Self.phi, 1 / Self.phi])
         case .diagonal: Self.diagonals(rect)
         case .triangle: Self.triangle(rect, mirrored: orientation % 2 == 1)
-        case .goldenSpiral: []
+        case .goldenSpiral, .aspectRatios: []
         case .grid: Self.grid(rect, cells: Self.gridCells)
         }
     }
@@ -86,6 +114,56 @@ enum CropGuideOverlay: String, CaseIterable {
     func curves(in rect: CGRect, orientation: Int = 0) -> [[CGPoint]] {
         guard self == .goldenSpiral else { return [] }
         return [Self.spiral(rect, orientation: orientation)]
+    }
+
+    /// The print and screen shapes the Aspect Ratios guide outlines, as in Lightroom.
+    enum AspectRatio: String, CaseIterable {
+        case square, fourByFive, letter, fiveBySeven, twoByThree, sixteenByNine
+
+        var title: String {
+            switch self {
+            case .square: "1 x 1"
+            case .fourByFive: "4 x 5"
+            case .letter: "8.5 x 11"
+            case .fiveBySeven: "5 x 7"
+            case .twoByThree: "2 x 3"
+            case .sixteenByNine: "16 x 9"
+            }
+        }
+
+        /// Long side over short side.
+        var ratio: CGFloat {
+            switch self {
+            case .square: 1
+            case .fourByFive: 5.0 / 4
+            case .letter: 11 / 8.5
+            case .fiveBySeven: 7.0 / 5
+            case .twoByThree: 3.0 / 2
+            case .sixteenByNine: 16.0 / 9
+            }
+        }
+    }
+
+    struct AspectBox: Equatable {
+        var aspect: AspectRatio
+        var rect: CGRect
+    }
+
+    /// Each ratio's largest box that fits the crop, centred and turned the crop's way. A ratio within 1%
+    /// of the crop's own is left out, since its box would be the crop.
+    static func aspectBoxes(in rect: CGRect, showing aspects: Set<AspectRatio>) -> [AspectBox] {
+        guard rect.width > 0, rect.height > 0 else { return [] }
+        let portrait = rect.height > rect.width
+        let cropRatio = max(rect.width, rect.height) / min(rect.width, rect.height)
+        return AspectRatio.allCases.filter(aspects.contains).compactMap { aspect in
+            guard abs(aspect.ratio / cropRatio - 1) > 0.01 else { return nil }
+            let shape = portrait ? 1 / aspect.ratio : aspect.ratio // width over height
+            let size = rect.width / rect.height > shape
+                ? CGSize(width: rect.height * shape, height: rect.height)
+                : CGSize(width: rect.width, height: rect.width / shape)
+            return AspectBox(aspect: aspect, rect: CGRect(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2,
+                                                          width: size.width, height: size.height))
+        }
     }
 
     /// Lines across the crop at fractions of each side.

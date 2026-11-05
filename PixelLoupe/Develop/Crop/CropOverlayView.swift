@@ -14,6 +14,8 @@ final class CropOverlayView: NSView {
     var guideOverlay = CropGuideOverlay.default { didSet { needsDisplay = true } }
     /// The guide's ⇧O orientation (see ``CropGuideOverlay/orientationCount``).
     var guideOrientation = 0 { didSet { needsDisplay = true } }
+    /// The ratios the Aspect Ratios guide outlines.
+    var aspectRatios = Set(CropGuideOverlay.AspectRatio.allCases) { didSet { needsDisplay = true } }
     /// The guide's name, shown briefly after O changes it.
     private(set) var flashedName: String?
     private var flashGeneration = 0
@@ -108,7 +110,10 @@ final class CropOverlayView: NSView {
                 guide.move(to: first)
                 for point in curve.dropFirst() { guide.line(to: point) }
             }
+            let boxes = guideOverlay == .aspectRatios ? CropGuideOverlay.aspectBoxes(in: rect, showing: aspectRatios) : []
+            for box in boxes { guide.append(NSBezierPath(rect: box.rect)) }
             strokeGuide(guide)
+            drawAspectLabels(boxes, in: rect)
         }
 
         let border = NSBezierPath(rect: rect.insetBy(dx: 0.5, dy: 0.5))
@@ -188,6 +193,25 @@ final class CropOverlayView: NSView {
             guard let self, flashGeneration == generation else { return }
             flashedName = nil
             needsDisplay = true
+        }
+    }
+
+    /// Labels each box on one of its inner edges, stepped so neighbouring labels don't overlap, like
+    /// Lightroom's.
+    private func drawAspectLabels(_ boxes: [CropGuideOverlay.AspectBox], in rect: CGRect) {
+        let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
+        for (index, box) in boxes.enumerated() {
+            let text = NSAttributedString(string: box.aspect.title, attributes: [.font: font, .foregroundColor: NSColor.white])
+            let size = text.size()
+            let step = CGFloat(index) * (size.height + 10)
+            // Narrower than the crop: on the box's left side; shorter: on its top.
+            let origin = box.rect.width < rect.width - 1
+                ? CGPoint(x: box.rect.minX - size.width / 2, y: rect.maxY - 28 - size.height - step)
+                : CGPoint(x: rect.minX + 28 + step * 3, y: box.rect.maxY - size.height / 2)
+            let badge = CGRect(origin: origin, size: size).insetBy(dx: -4, dy: -2)
+            NSColor.black.withAlphaComponent(0.6).setFill()
+            NSBezierPath(roundedRect: badge, xRadius: 3, yRadius: 3).fill()
+            text.draw(at: origin)
         }
     }
 
