@@ -14,6 +14,11 @@ final class CropOverlayView: NSView {
     var guideOverlay = CropGuideOverlay.default { didSet { needsDisplay = true } }
     /// The guide's ⇧O orientation (see ``CropGuideOverlay/orientationCount``).
     var guideOrientation = 0 { didSet { needsDisplay = true } }
+    /// The Grid guide's cells across the long side (⌥-scroll).
+    var gridCells = CropGuideOverlay.defaultGridCells { didSet { needsDisplay = true } }
+    /// Called when ⌥-scroll changes the grid's density.
+    var onGridCellsChange: (Int) -> Void = { _ in }
+    private var gridScroll: Double = 0
     /// The ratios the Aspect Ratios guide outlines.
     var aspectRatios = Set(CropGuideOverlay.AspectRatio.allCases) { didSet { needsDisplay = true } }
     /// The guide's name, shown briefly after O changes it.
@@ -101,7 +106,7 @@ final class CropOverlayView: NSView {
 
         if showsGuide {
             let guide = NSBezierPath()
-            for segment in guideOverlay.segments(in: rect, orientation: guideOrientation) {
+            for segment in guideOverlay.segments(in: rect, orientation: guideOrientation, gridCells: gridCells) {
                 guide.move(to: segment.start)
                 guide.line(to: segment.end)
             }
@@ -181,12 +186,13 @@ final class CropOverlayView: NSView {
         }
     }
 
-    /// Shows the guide's name for a second, centred near the top of the crop.
-    func flashGuideName() {
+    /// Shows the guide's name (or other text) for a second, centred near the top of the crop.
+    func flashGuideName(_ text: String? = nil) {
         flashGeneration += 1
         let generation = flashGeneration
-        flashedName = guideOverlay.title
-        setAccessibilityValue(guideOverlay.title)
+        let text = text ?? guideOverlay.title
+        flashedName = text
+        setAccessibilityValue(text)
         needsDisplay = true
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(1))
@@ -227,6 +233,38 @@ final class CropOverlayView: NSView {
         NSBezierPath(roundedRect: badge, xRadius: badge.height / 2, yRadius: badge.height / 2).fill()
         text.draw(at: CGPoint(x: badge.minX + 10, y: badge.minY + 4))
     }
+
+    // MARK: - Scrolling
+
+    /// ⌥ and two fingers up or down: a finer or coarser Grid guide, as in Lightroom. Anything else
+    /// scrolls as usual.
+    override func scrollWheel(with event: NSEvent) {
+        guard event.modifierFlags.contains(.option), guideOverlay == .grid, showsGuideForScrolling else {
+            super.scrollWheel(with: event)
+            return
+        }
+        if event.phase == .began { gridScroll = 0 }
+        var vertical = Double(event.scrollingDeltaY)
+        // ⌥ doesn't turn a wheel sideways, but ⇧ might be held too.
+        if vertical == 0 { vertical = Double(event.scrollingDeltaX) }
+        // Lines from a wheel, points from a trackpad.
+        if !event.hasPreciseScrollingDeltas { vertical *= Self.scrollPointsPerCell }
+        // Fingers moving up, whichever way the system scrolls.
+        gridScroll += event.isDirectionInvertedFromDevice ? -vertical : vertical
+        let steps = Int((gridScroll / Self.scrollPointsPerCell).rounded(.towardZero))
+        guard steps != 0 else { return }
+        gridScroll -= Double(steps) * Self.scrollPointsPerCell
+        let cells = (gridCells + steps).clamped(to: CropGuideOverlay.gridCellRange)
+        guard cells != gridCells else { return }
+        gridCells = cells
+        onGridCellsChange(cells)
+        flashGuideName("Grid: \(cells) across")
+    }
+
+    private static let scrollPointsPerCell = 8.0
+
+    /// The Grid guide changes size only when it can be seen (or would be, with Auto).
+    private var showsGuideForScrolling: Bool { toolOverlay != .never }
 
     // MARK: - Cursors
 

@@ -960,6 +960,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         cropOverlay.guideOverlay = .saved
         cropOverlay.guideOrientation = CropGuideOverlay.saved.savedOrientation
         cropOverlay.aspectRatios = CropGuideOverlay.shownAspectRatios
+        cropOverlay.gridCells = CropGuideOverlay.gridCells
+        cropOverlay.onGridCellsChange = { CropGuideOverlay.gridCells = $0 }
         cropPanel.onOverlayChange = { [weak self] overlay in self?.cropOverlay.toolOverlay = overlay }
         cropPanel.onAspect = { [weak self] aspect in self?.setCropAspect(aspect) }
         cropPanel.onAuto = { [weak self] in self?.autoStraighten() }

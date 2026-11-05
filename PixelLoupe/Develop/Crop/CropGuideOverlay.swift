@@ -8,14 +8,25 @@ enum CropGuideOverlay: String, CaseIterable {
     case thirds, fifths, diagonal, halves, triangle, goldenRatio, goldenSpiral, aspectRatios, grid
 
     static let `default` = CropGuideOverlay.thirds
-    /// Grid cells across the crop's long side.
-    static let gridCells = 20
+    /// Grid cells across the crop's long side: 20 unless changed with ⌥-scroll.
+    static let defaultGridCells = 20
+    static let gridCellRange = 4...40
     static let phi: CGFloat = (1 + sqrt(5)) / 2
 
     private static let key = "CropGuideOverlay"
     private static let orientationsKey = "CropGuideOrientations"
     private static let cycleKey = "CropGuideCycle"
     private static let aspectsKey = "CropGuideAspectRatios"
+    private static let gridCellsKey = "CropGuideGridCells"
+
+    /// The Grid guide's density last set with ⌥-scroll, kept across launches.
+    static var gridCells: Int {
+        get {
+            let saved = Defaults.store.integer(forKey: gridCellsKey)
+            return saved == 0 ? defaultGridCells : saved.clamped(to: gridCellRange)
+        }
+        set { Defaults.store.set(newValue.clamped(to: gridCellRange), forKey: gridCellsKey) }
+    }
 
     /// The guides O visits (Choose Overlays to Cycle…); never empty.
     static var cycle: Set<CropGuideOverlay> {
@@ -97,7 +108,7 @@ enum CropGuideOverlay: String, CaseIterable {
     }
 
     /// The guide's straight lines for a crop rectangle.
-    func segments(in rect: CGRect, orientation: Int = 0) -> [Segment] {
+    func segments(in rect: CGRect, orientation: Int = 0, gridCells: Int = Self.defaultGridCells) -> [Segment] {
         switch self {
         case .thirds: Self.divisions(rect, at: [1.0 / 3, 2.0 / 3])
         case .fifths: Self.divisions(rect, at: [0.2, 0.4, 0.6, 0.8])
@@ -106,7 +117,7 @@ enum CropGuideOverlay: String, CaseIterable {
         case .diagonal: Self.diagonals(rect)
         case .triangle: Self.triangle(rect, mirrored: orientation % 2 == 1)
         case .goldenSpiral, .aspectRatios: []
-        case .grid: Self.grid(rect, cells: Self.gridCells)
+        case .grid: Self.grid(rect, cells: gridCells)
         }
     }
 
