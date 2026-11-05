@@ -297,3 +297,56 @@ struct WebGalleryLogoWindowTests {
         #expect(try await waitFor(size + " + ' ' + window.marker", toBe: "none 1"), "swapped without reloading the page")
     }
 }
+
+@Suite("Web gallery logo typing") @MainActor
+struct WebGalleryLogoTypingTests {
+    @Test func typingTheHeadlineKeepsTheLogoAsItIs() async throws {
+        let suite = "WebGalleryLogoTypingTests.typing"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let directory = try TemporaryDirectory()
+        let logos = LogoImages(directory: directory.url.appending(path: "Logos"))
+        let logo = try logos.importImage(from: try writeLogo(to: directory.url.appending(path: "Wide.png"), width: 300, height: 100))
+        var settings = WebGallerySettings()
+        settings.logoName = logo
+        settings.remember(in: defaults)
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "C.pixelloupe"))
+        let photo = ContactSheetPhoto(source: PhotoSourceLocation(original: URL(filePath: "/missing/IMG_1.jpg")), fileName: "IMG_1.jpg")
+        let controller = WebGalleryWindowController(photos: [photo], thumbnails: store.thumbnails, sourceName: "Dunes",
+                                                    defaults: defaults, logos: logos)
+        controller.showWindow(nil)
+        defer { controller.close() }
+        let webView = controller.webView
+        func waitFor(_ script: String, toBe expected: String) async throws -> Bool {
+            for _ in 0..<200 {
+                if !webView.isLoading, let value = try? await webView.evaluateJavaScript(script), "\(value)" == expected { return true }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            return false
+        }
+        let loaded = "(function () { const logo = document.querySelector('header img.logo'); "
+            + "return logo && logo.complete ? String(logo.naturalWidth) : 'none'; })()"
+        #expect(try await waitFor(loaded, toBe: "300"))
+        // The logo's element and the image requests so far, to compare after typing.
+        _ = try await webView.evaluateJavaScript("""
+            window.marker = 1;
+            document.querySelector('header img.logo').marked = 1;
+            window.logoRequests = performance.getEntriesByType('resource').filter(e => e.name.includes('logo')).length;
+            """)
+
+        for headline in ["P", "Pr", "Pro", "Proofs"] { controller.model.settings.headline = headline }
+        controller.model.settings.description = "Day one"
+        controller.model.settings.email = "ted@example.com"
+        let state = """
+            [document.querySelector('header h1') && document.querySelector('header h1').textContent,
+             document.querySelector('header img.logo').marked, document.querySelector('header img.logo').alt,
+             performance.getEntriesByType('resource').filter(e => e.name.includes('logo')).length - window.logoRequests,
+             window.marker].join(' ')
+            """
+        #expect(try await waitFor(state, toBe: "Proofs 1  0 1"), "the same logo element, not fetched again, and the page not reloaded")
+
+        controller.model.settings.headline = ""
+        #expect(try await waitFor("document.querySelector('header img.logo').alt + ' ' + document.querySelector('header img.logo').marked",
+                                  toBe: "Logo 1"), "the alt text follows the headline on the same element")
+    }
+}
