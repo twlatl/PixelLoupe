@@ -301,6 +301,12 @@ final class LibraryState {
         didSet { if standardPreviewStatus != oldValue { notify(.importStatus) } }
     }
 
+    /// Progress of drawing missing thumbnails in the background (see ``ThumbnailMaintenance``), shown under the grid
+    /// when nothing else is.
+    var thumbnailStatus: ImportStatus? {
+        didSet { if thumbnailStatus != oldValue { notify(.importStatus) } }
+    }
+
     /// The editor Edit In is preparing photos for, for the progress label.
     var editInApplicationName = ""
 
