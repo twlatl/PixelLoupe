@@ -6,6 +6,10 @@ struct LightroomImportRequest {
     var info: CatalogInfo
     /// Also bring in each photo's develop history and snapshots (off by default: there can be tens of thousands).
     var importsHistory = false
+    /// Build Previews, as on the Import window: Standard queues the RAW photos for Standard previews after the import.
+    var previews = ImportPreviewLevel.minimal
+    /// Build Smart Previews: every photo is queued for a Smart Preview after the import.
+    var buildsSmartPreviews = false
 }
 
 /// The sheet shown after a Lightroom catalog is opened: what it holds, and the name and location of
@@ -19,6 +23,8 @@ final class LightroomImportSheetController: NSWindowController, NSTextFieldDeleg
     private let locationControl = NSPathControl()
     private let importButton = NSButton(title: "Import", target: nil, action: nil)
     private let historyCheckbox = NSButton(checkboxWithTitle: "Import develop history and snapshots", target: nil, action: nil)
+    private let previewsPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let smartPreviewsCheckbox = NSButton(checkboxWithTitle: "Build Smart Previews", target: nil, action: nil)
     private let photosValue = NSTextField(labelWithString: "Reading catalog…")
     private var valueFields: [String: NSTextField] = [:]
     private var locationURL: URL
@@ -131,11 +137,25 @@ final class LightroomImportSheetController: NSWindowController, NSTextFieldDeleg
         locationRow.spacing = 8
         locationRow.distribution = .fill
 
+        // As on the Import window (RAW-84). Thumbnails are always made: from Lightroom's previews, else the originals.
+        for level in ImportPreviewLevel.allCases {
+            previewsPopUp.addItem(withTitle: level.title)
+            previewsPopUp.lastItem?.representedObject = level.rawValue
+        }
+        previewsPopUp.selectItem(at: ImportPreviewLevel.allCases.firstIndex(of: .minimal) ?? 0)
+        previewsPopUp.setAccessibilityIdentifier("lightroomImportBuildPreviews")
+        previewsPopUp.setAccessibilityLabel("Build Previews")
+        previewsPopUp.toolTip = "Minimal uses Lightroom’s previews and the previews embedded in the files. Standard renders large previews of RAW photos with their settings in the background after the import, so they look right and open faster in the loupe."
+        smartPreviewsCheckbox.setAccessibilityIdentifier("lightroomImportBuildsSmartPreviews")
+        smartPreviewsCheckbox.toolTip = "Builds Smart Previews of the imported photos in the background, so they can be edited while the originals are offline"
+
         let nameLabel = NSTextField(labelWithString: "Name:")
         let locationLabel = NSTextField(labelWithString: "Save in:")
-        let form = NSGridView(views: [[nameLabel, nameField], [locationLabel, locationRow]])
+        let previewsLabel = NSTextField(labelWithString: "Build Previews:")
+        let form = NSGridView(views: [[nameLabel, nameField], [locationLabel, locationRow], [previewsLabel, previewsPopUp]])
         form.column(at: 0).xPlacement = .trailing
         form.column(at: 1).xPlacement = .fill
+        form.cell(for: previewsPopUp)?.xPlacement = .leading
         form.rowSpacing = 10
         form.columnSpacing = 8
 
@@ -157,7 +177,7 @@ final class LightroomImportSheetController: NSWindowController, NSTextFieldDeleg
         separator.boxType = .separator
         historyCheckbox.setAccessibilityIdentifier("lightroomImportHistory")
         historyCheckbox.toolTip = "Adds Lightroom’s edit history and snapshots to each photo’s History panel. A big catalog can have tens of thousands of steps."
-        let stack = NSStackView(views: [heading, versionValue, summaryGrid, separator, form, historyCheckbox, note, buttons])
+        let stack = NSStackView(views: [heading, versionValue, summaryGrid, separator, form, smartPreviewsCheckbox, historyCheckbox, note, buttons])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
@@ -221,7 +241,9 @@ final class LightroomImportSheetController: NSWindowController, NSTextFieldDeleg
         let packageURL = locationURL.appending(path: "\(name).\(CatalogPackage.fileExtension)", directoryHint: .isDirectory)
         finish(with: LightroomImportRequest(
             packageURL: packageURL, info: CatalogInfo(name: name, storageMode: .referenced, storagePath: nil),
-            importsHistory: historyCheckbox.state == .on))
+            importsHistory: historyCheckbox.state == .on,
+            previews: (previewsPopUp.selectedItem?.representedObject as? String).flatMap(ImportPreviewLevel.init(rawValue:)) ?? .minimal,
+            buildsSmartPreviews: smartPreviewsCheckbox.state == .on))
     }
 
     private func finish(with request: LightroomImportRequest?) {
