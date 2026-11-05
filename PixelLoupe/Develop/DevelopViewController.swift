@@ -959,6 +959,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         cropOverlay.toolOverlay = cropPanel.toolOverlay
         cropOverlay.guideOverlay = .saved
         cropOverlay.guideOrientation = CropGuideOverlay.saved.savedOrientation
+        cropOverlay.aspectRatios = CropGuideOverlay.shownAspectRatios
         cropPanel.onOverlayChange = { [weak self] overlay in self?.cropOverlay.toolOverlay = overlay }
         cropPanel.onAspect = { [weak self] aspect in self?.setCropAspect(aspect) }
         cropPanel.onAuto = { [weak self] in self?.autoStraighten() }
@@ -1060,6 +1061,20 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         cropOverlay.guideOrientation = overlay.savedOrientation
         if cropPanel.toolOverlay == .never { cropPanel.setToolOverlay(.always) }
         cropOverlay.flashGuideName()
+    }
+
+    /// View ▸ Crop Guide Overlay ▸ Choose Overlays to Cycle…: a sheet of the guides O visits and the
+    /// ratios the Aspect Ratios guide shows. Changes show on the crop as they're made.
+    func showCropGuideOptions() {
+        guard let window = view.window else { return }
+        let options = CropGuideOptionsView()
+        options.onChange = { [weak self] in self?.cropOverlay.aspectRatios = CropGuideOverlay.shownAspectRatios }
+        let alert = NSAlert()
+        alert.messageText = "Choose Overlays to Cycle"
+        alert.informativeText = "O cycles through the ticked overlays. View ▸ Crop Guide Overlay can still show any of them."
+        alert.accessoryView = options
+        alert.addButton(withTitle: "Done")
+        alert.beginSheetModal(for: window)
     }
 
     /// ⇧O while cropping: turns Triangle or the Golden Spiral. Returns false for the symmetric guides.

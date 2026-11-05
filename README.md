@@ -827,9 +827,11 @@ The icons at the top of Develop's right sidebar switch between the Adjust tools 
   Restore Orientation from Metadata. The crop turns with the photo.
 - **Constrain to Image** keeps the crop inside the photo (no empty corners). **Tool Overlay** shows the guide
   overlay while dragging (Auto), always or never.
-- **Guide overlay:** `O` cycles Thirds, Fifths, Diagonal, Halves, Triangle, Golden Ratio, Golden Spiral and Grid (as
-  in Lightroom), flashing the name; View ▸ Crop Guide Overlay picks one directly. `⇧O` turns Triangle (either
-  diagonal) and the Golden Spiral (its eye in any quarter, winding either way). The choice is remembered. With Tool Overlay on Never, `O` switches it to Always.
+- **Guide overlay:** `O` cycles Thirds, Fifths, Diagonal, Halves, Triangle, Golden Ratio, Golden Spiral, Aspect Ratios
+  and Grid (as in Lightroom), flashing the name; View ▸ Crop Guide Overlay picks one directly. `⇧O` turns Triangle (either
+  diagonal) and the Golden Spiral (its eye in any quarter, winding either way). **Aspect Ratios** outlines 1 x 1,
+  4 x 5, 8.5 x 11, 5 x 7, 2 x 3 and 16 x 9 boxes inside the crop. **Choose Overlays to Cycle…** in the same menu sets
+  which overlays `O` visits and which ratios show. The choice is remembered. With Tool Overlay on Never, `O` switches it to Always.
 - Drag the corners or edges to resize and inside to move. `Return`, `R`, **Close** or switching tools applies the crop
   (one undoable edit); `Esc` cancels. Like every edit it's non-destructive, and it shows everywhere: grid,
   filmstrip, enlarged view, Compare and the loupe.

@@ -3,7 +3,7 @@ import CoreData
 import Testing
 @testable import PixelLoupe
 
-/// Serialized: the tests share the saved guide and Tool Overlay settings.
+/// Serialized, with the key tests nested inside: they all share the saved guide settings.
 @Suite("Crop guide overlay", .serialized)
 struct CropGuideOverlayTests {
     let rect = CGRect(x: 10, y: 20, width: 300, height: 200)
@@ -17,14 +17,107 @@ struct CropGuideOverlayTests {
     }
 
     @Test func cycleFollowsLightroomAndWraps() {
+        let all = Set(CropGuideOverlay.allCases)
         var overlay = CropGuideOverlay.default
         var seen: [CropGuideOverlay] = []
         for _ in CropGuideOverlay.allCases {
             seen.append(overlay)
-            overlay = overlay.next
+            overlay = overlay.next(in: all)
         }
-        #expect(seen == [.thirds, .fifths, .diagonal, .halves, .triangle, .goldenRatio, .goldenSpiral, .grid])
+        #expect(seen == [.thirds, .fifths, .diagonal, .halves, .triangle, .goldenRatio, .goldenSpiral, .aspectRatios, .grid])
         #expect(overlay == .thirds, "O wraps back to Thirds")
+    }
+
+    @Test func cycleSkipsGuidesLeftOut() {
+        let cycle: Set<CropGuideOverlay> = [.thirds, .goldenSpiral, .grid]
+        #expect(CropGuideOverlay.thirds.next(in: cycle) == .goldenSpiral)
+        #expect(CropGuideOverlay.goldenSpiral.next(in: cycle) == .grid)
+        #expect(CropGuideOverlay.grid.next(in: cycle) == .thirds)
+        #expect(CropGuideOverlay.diagonal.next(in: cycle) == .goldenSpiral, "a guide picked from the menu moves on to the next ticked one")
+        #expect(CropGuideOverlay.grid.next(in: [.grid]) == .grid)
+    }
+
+    @Test func savedSetsFallBackSensibly() {
+        let keys = ["CropGuideCycle", "CropGuideAspectRatios"]
+        let previous = keys.map { Defaults.store.object(forKey: $0) }
+        defer { for (key, value) in zip(keys, previous) { Defaults.store.set(value, forKey: key) } }
+        keys.forEach { Defaults.store.removeObject(forKey: $0) }
+
+        #expect(CropGuideOverlay.cycle == Set(CropGuideOverlay.allCases), "every guide by default")
+        #expect(CropGuideOverlay.shownAspectRatios == Set(CropGuideOverlay.AspectRatio.allCases))
+        CropGuideOverlay.cycle = [.thirds, .grid]
+        #expect(CropGuideOverlay.cycle == [.thirds, .grid])
+        CropGuideOverlay.cycle = []
+        #expect(CropGuideOverlay.cycle == [.thirds, .grid], "the cycle is never emptied")
+        CropGuideOverlay.shownAspectRatios = []
+        #expect(CropGuideOverlay.shownAspectRatios.isEmpty, "showing no ratios is allowed")
+        CropGuideOverlay.shownAspectRatios = [.square]
+        #expect(CropGuideOverlay.shownAspectRatios == [.square])
+    }
+
+    @Test func aspectBoxesFitInsideTheCrop() throws {
+        let crop = CGRect(x: 0, y: 0, width: 300, height: 200) // 2 x 3
+        let boxes = CropGuideOverlay.aspectBoxes(in: crop, showing: Set(CropGuideOverlay.AspectRatio.allCases))
+        #expect(boxes.map(\.aspect) == [.square, .fourByFive, .letter, .fiveBySeven, .sixteenByNine], "2 x 3 is the crop itself")
+        func box(_ aspect: CropGuideOverlay.AspectRatio) throws -> CGRect {
+            try #require(boxes.first { $0.aspect == aspect }).rect
+        }
+        #expect(try box(.square) == CGRect(x: 50, y: 0, width: 200, height: 200))
+        #expect(try box(.fourByFive) == CGRect(x: 25, y: 0, width: 250, height: 200))
+        #expect(try box(.fiveBySeven) == CGRect(x: 10, y: 0, width: 280, height: 200))
+        let wide = try box(.sixteenByNine)
+        #expect(wide.minX == 0 && wide.width == 300 && abs(wide.height - 168.75) < 0.001 && abs(wide.midY - 100) < 0.001,
+                "wider than the crop: full width, centred top to bottom")
+        for box in boxes { #expect(crop.insetBy(dx: -0.001, dy: -0.001).contains(box.rect)) }
+
+        // A portrait crop turns the boxes upright.
+        let portrait = CropGuideOverlay.aspectBoxes(in: CGRect(x: 0, y: 0, width: 200, height: 300), showing: [.fourByFive, .twoByThree])
+        #expect(portrait.map(\.aspect) == [.fourByFive])
+        #expect(portrait.first?.rect == CGRect(x: 0, y: 25, width: 200, height: 250))
+
+        #expect(CropGuideOverlay.aspectBoxes(in: crop, showing: []).isEmpty)
+        #expect(CropGuideOverlay.aspectRatios.segments(in: crop).isEmpty && CropGuideOverlay.aspectRatios.curves(in: crop).isEmpty)
+    }
+
+    @Test func optionsSheetSavesAndKeepsOneGuide() throws {
+        let keys = ["CropGuideCycle", "CropGuideAspectRatios"]
+        let previous = keys.map { Defaults.store.object(forKey: $0) }
+        defer { for (key, value) in zip(keys, previous) { Defaults.store.set(value, forKey: key) } }
+        keys.forEach { Defaults.store.removeObject(forKey: $0) }
+
+        let options = CropGuideOptionsView()
+        var changes = 0
+        options.onChange = { changes += 1 }
+        #expect(options.overlayBoxes.values.allSatisfy { $0.state == .on && $0.isEnabled })
+        for overlay in CropGuideOverlay.allCases where overlay != .grid {
+            try #require(options.overlayBoxes[overlay]).performClick(nil)
+        }
+        #expect(CropGuideOverlay.cycle == [.grid])
+        let grid = try #require(options.overlayBoxes[.grid])
+        #expect(!grid.isEnabled, "the last guide in the cycle can't be unticked")
+        try #require(options.overlayBoxes[.thirds]).performClick(nil)
+        #expect(grid.isEnabled)
+        #expect(CropGuideOverlay.cycle == [.thirds, .grid])
+
+        try #require(options.aspectBoxes[.letter]).performClick(nil)
+        #expect(CropGuideOverlay.shownAspectRatios == Set(CropGuideOverlay.AspectRatio.allCases).subtracting([.letter]))
+        #expect(changes == CropGuideOverlay.allCases.count + 1, "every click")
+
+        // A new sheet shows what was saved.
+        let reopened = CropGuideOptionsView()
+        #expect(reopened.overlayBoxes[.fifths]?.state == .off && reopened.overlayBoxes[.thirds]?.state == .on)
+        #expect(reopened.aspectBoxes[.letter]?.state == .off)
+    }
+
+    @Test func aspectBoxesAreDrawn() throws {
+        let view = CropOverlayView(frame: CGRect(x: 0, y: 0, width: 300, height: 200))
+        view.frameRect = view.bounds
+        view.toolOverlay = .always
+        view.guideOverlay = .aspectRatios
+        view.aspectRatios = [.square]
+        #expect(try alpha(of: view, columns: 48...52, y: 100) > 0, "the 1 x 1 box's left side")
+        view.aspectRatios = []
+        #expect(try alpha(of: view, columns: 48...52, y: 100) == 0)
     }
 
     @Test func divisions() {
@@ -192,8 +285,9 @@ struct CropGuideOverlayTests {
     }
 }
 
-@Suite("Crop guide overlay keys", .serialized)
-struct CropGuideOverlayKeyTests {
+extension CropGuideOverlayTests {
+@Suite("Crop guide overlay keys")
+struct Keys {
     let directory: TemporaryDirectory
     let store: CatalogStore
     let ids: [NSManagedObjectID]
@@ -242,6 +336,10 @@ struct CropGuideOverlayKeyTests {
         #expect(overlay.guideOverlay == .halves)
         #expect(controller.validateUserInterfaceItem(item) && item.state == .on)
 
+        let chooseItem = NSMenuItem(title: "Choose Overlays to Cycle…",
+                                    action: #selector(CatalogWindowController.chooseCropGuideOverlays(_:)), keyEquivalent: "")
+        #expect(controller.validateUserInterfaceItem(chooseItem))
+
         // ⇧O turns the Golden Spiral and remembers it; the symmetric guides don't turn.
         let orientationItem = NSMenuItem(title: "Cycle Orientation",
                                          action: #selector(CatalogWindowController.cycleCropGuideOrientation(_:)), keyEquivalent: "")
@@ -267,6 +365,7 @@ struct CropGuideOverlayKeyTests {
         #expect(controller.perform(.maskOverlay))
         #expect(overlay.guideOverlay == .halves)
         #expect(!controller.validateUserInterfaceItem(item))
+        #expect(!controller.validateUserInterfaceItem(chooseItem), "Choose Overlays to Cycle… is the crop tool's")
         #expect(!controller.perform(.cropGuideOrientation), "⇧O does nothing outside the crop tool")
     }
 
@@ -275,4 +374,5 @@ struct CropGuideOverlayKeyTests {
                                                   context: nil, characters: "O", charactersIgnoringModifiers: "O", isARepeat: false, keyCode: 31))
         #expect(KeyCommand(event: event) == .cropGuideOrientation)
     }
+}
 }
