@@ -12,6 +12,8 @@ final class CropOverlayView: NSView {
     var crop = PhotoAdjustments.Crop() { didSet { needsDisplay = true } }
     var toolOverlay = CropPanelViewController.ToolOverlay.auto { didSet { needsDisplay = true } }
     var guideOverlay = CropGuideOverlay.default { didSet { needsDisplay = true } }
+    /// The guide's ⇧O orientation (see ``CropGuideOverlay/orientationCount``).
+    var guideOrientation = 0 { didSet { needsDisplay = true } }
     /// The guide's name, shown briefly after O changes it.
     private(set) var flashedName: String?
     private var flashGeneration = 0
@@ -97,9 +99,14 @@ final class CropOverlayView: NSView {
 
         if showsGuide {
             let guide = NSBezierPath()
-            for segment in guideOverlay.segments(in: rect) {
+            for segment in guideOverlay.segments(in: rect, orientation: guideOrientation) {
                 guide.move(to: segment.start)
                 guide.line(to: segment.end)
+            }
+            for curve in guideOverlay.curves(in: rect, orientation: guideOrientation) {
+                guard let first = curve.first else { continue }
+                guide.move(to: first)
+                for point in curve.dropFirst() { guide.line(to: point) }
             }
             guide.lineWidth = 0.5
             NSColor.white.withAlphaComponent(0.6).setStroke()

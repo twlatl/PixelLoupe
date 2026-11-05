@@ -156,7 +156,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `⌘F11` / `⇧⌘F11` | Show or hide the secondary window / make it full screen, on the display chosen in Settings ▸ Displays (also the toolbar's display button and Window ▸ Secondary Display; the button shows when more than one display is connected) |
 | `⇧G` / `⇧E` / `⇧C` / `⇧N` | Secondary window: Grid / Loupe – Normal / Compare / Survey (opens it if it's hidden). Window ▸ Secondary Display also has Loupe – Live (the photo under the pointer in the main window) and Show Second Monitor Preview (while it's full screen). In the secondary window `=` / `-` size its own thumbnails, `E` or `Return` switches views, `←` / `→` step through photos (or candidates in Compare) and `Esc` returns to the grid |
 | `⇧⌘Return` | Secondary window: Loupe – Locked (keeps the photo on show until you choose another view; again to unlock) |
-| `R` | Crop & Straighten (Develop); in the crop tool `Return` applies, `Esc` cancels, `X` flips the orientation, `O` cycles the guide overlay |
+| `R` | Crop & Straighten (Develop); in the crop tool `Return` applies, `Esc` cancels, `X` flips the orientation, `O` cycles the guide overlay, `⇧O` turns it |
 | `J` | Show or hide shadow and highlight clipping on the Develop preview |
 | `Y` / `⌥Y` / `⇧Y` | Develop's Before/After (View ▸ Before/After): the photo before its edits left of / above the edited photo, or Split Screen (one photo, before left of a line down the middle and after right of it); the same key again goes back to the edited photo |
 | `\` | Library: show or hide the Library Filter bar (View ▸ Hide Filter Bar; hiding it keeps its filters, and the filmstrip shows "42 of 310 photos" while they leave photos out). Develop: Before Only, the photo before its edits; `\` again shows it edited |
@@ -827,8 +827,9 @@ The icons at the top of Develop's right sidebar switch between the Adjust tools 
   Restore Orientation from Metadata. The crop turns with the photo.
 - **Constrain to Image** keeps the crop inside the photo (no empty corners). **Tool Overlay** shows the guide
   overlay while dragging (Auto), always or never.
-- **Guide overlay:** `O` cycles Thirds, Fifths, Diagonal, Halves and Grid (as in Lightroom), flashing the name; View ▸
-  Crop Guide Overlay picks one directly. The choice is remembered. With Tool Overlay on Never, `O` switches it to Always.
+- **Guide overlay:** `O` cycles Thirds, Fifths, Diagonal, Halves, Triangle, Golden Ratio, Golden Spiral and Grid (as
+  in Lightroom), flashing the name; View ▸ Crop Guide Overlay picks one directly. `⇧O` turns Triangle (either
+  diagonal) and the Golden Spiral (its eye in any quarter, winding either way). The choice is remembered. With Tool Overlay on Never, `O` switches it to Always.
 - Drag the corners or edges to resize and inside to move. `Return`, `R`, **Close** or switching tools applies the crop
   (one undoable edit); `Esc` cancels. Like every edit it's non-destructive, and it shows everywhere: grid,
   filmstrip, enlarged view, Compare and the loupe.

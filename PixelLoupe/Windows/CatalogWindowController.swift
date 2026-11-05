@@ -280,6 +280,9 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
             case .maskOverlay:
                 develop.cycleCropGuideOverlay()
                 return true
+            case .cropGuideOrientation:
+                if !develop.cycleCropGuideOrientation() { NSSound.beep() }
+                return true
             case .toggleEnlarge:
                 state.developTool = .adjust
                 return true
@@ -428,6 +431,8 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         case .maskOverlay:
             guard state.mode == .develop, state.developTool == .mask else { return false }
             develop.toggleMaskOverlay()
+        case .cropGuideOrientation:
+            return false // ⇧O only turns the crop tool's guide (handled above).
         case .beforeAfter(.beforeOnly) where state.mode.showsLibraryInspector:
             // \ is Lightroom's Library Filter bar key in Library (and Map, which shows the bar too),
             // Before Only in Develop.
@@ -592,6 +597,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
     }
     @objc func showMaskOverlay(_ sender: Any?) { _ = perform(.maskOverlay) }
     @objc func cycleCropGuideOverlay(_ sender: Any?) { _ = perform(.maskOverlay) }
+    @objc func cycleCropGuideOrientation(_ sender: Any?) { _ = perform(.cropGuideOrientation) }
 
     /// View ▸ Crop Guide Overlay: the item's tag is the guide's index in ``CropGuideOverlay/allCases``.
     @objc func chooseCropGuideOverlay(_ sender: NSMenuItem) {
@@ -1233,6 +1239,11 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
             // Shown with O, which is Show Mask Overlay outside the crop tool.
             let typing = (window?.firstResponder as? NSText)?.isEditable ?? false
             return !typing && state.mode == .develop && state.developTool == .crop
+        case #selector(cycleCropGuideOrientation(_:)):
+            // Shown with ⇧O; only Triangle and the Golden Spiral turn.
+            let typing = (window?.firstResponder as? NSText)?.isEditable ?? false
+            return !typing && state.mode == .develop && state.developTool == .crop
+                && rootViewController.main.develop.cropGuideOverlay.orientationCount > 1
         case #selector(chooseCropGuideOverlay(_:)):
             let cropping = state.mode == .develop && state.developTool == .crop
             let current = rootViewController.main.develop.cropGuideOverlay
