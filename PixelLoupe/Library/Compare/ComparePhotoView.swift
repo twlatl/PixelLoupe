@@ -174,16 +174,23 @@ final class ComparePhotoView: NSView {
         loadTask?.cancel()
         refreshInfo()
         guard let photo else { return }
-        baseLayer.contents = store.thumbnails.cachedImage(for: photo.id)
+        baseLayer.contents = store.standardPreviews.cachedImage(for: photo.id) ?? store.thumbnails.cachedImage(for: photo.id)
         layoutLayers()
 
         let location = store.sourceLocation(of: photo)
         let uuid = photo.id
         let thumbnails = store.thumbnails
+        let previews = store.standardPreviews
+        let showsPreview = previews.isCurrent(uuid) && previews.cachedImage(for: uuid) == nil
         loadTask = Task { [weak self] in
             if self?.baseLayer.contents == nil, let thumbnail = await thumbnails.image(for: uuid) {
                 guard let self, photoID == id else { return }
                 baseLayer.contents = thumbnail
+            }
+            // The Standard preview, a larger rendering, until the photo is decoded (RAW-84).
+            if showsPreview, let preview = await previews.image(for: uuid) {
+                guard let self, photoID == id, source == nil else { return }
+                baseLayer.contents = preview
             }
             let loaded = await CompareSource.load(location)
             guard let self, !Task.isCancelled, photoID == id else { return }

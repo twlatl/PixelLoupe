@@ -21,6 +21,8 @@ final class ImportOptionsModel {
     var addUnavailableReason: String? { didSet { if addUnavailableReason != oldValue { changed() } } }
 
     // File Handling
+    /// Build Previews (Minimal by default).
+    var previews: ImportPreviewLevel { didSet { changed() } }
     /// Build Smart Previews (off by default).
     var buildsSmartPreviews: Bool { didSet { changed() } }
     /// Don't Import Suspected Duplicates (on by default).
@@ -81,6 +83,7 @@ final class ImportOptionsModel {
         layout = settings.destination.layout
         organize = settings.destination.organize
         let handling = settings.handling ?? ImportHandling()
+        previews = handling.previews
         buildsSmartPreviews = handling.buildsSmartPreviews
         skipsDuplicates = !handling.allowsDuplicates
         skipsRejected = handling.skipsRejected
@@ -100,7 +103,7 @@ final class ImportOptionsModel {
             allowsDuplicates: !skipsDuplicates, skipsRejected: skipsRejected, makesSecondCopy: makesSecondCopy,
             secondCopy: secondCopy, addsToCollection: addsToCollection, collectionID: collectionID,
             developPresetPath: developPresetPath, metadataPresetID: metadataPresetID, renaming: renaming,
-            buildsSmartPreviews: buildsSmartPreviews))
+            buildsSmartPreviews: buildsSmartPreviews, previews: previews))
     }
 
     var destination: ImportDestination {
@@ -127,6 +130,7 @@ final class ImportOptionsModel {
         extras.developPreset = developPreset
         extras.renaming = renaming.isOn ? renaming : nil
         extras.buildsSmartPreviews = buildsSmartPreviews
+        extras.previews = previews
         if addsToCollection {
             if let collectionID {
                 extras.collection = .existing(collectionID)
@@ -155,6 +159,7 @@ final class ImportOptionsModel {
         subfolderName = settings.destination.subfolder ?? ""
         layout = settings.destination.layout
         organize = settings.destination.organize
+        previews = handling.previews
         buildsSmartPreviews = handling.buildsSmartPreviews
         skipsDuplicates = !handling.allowsDuplicates
         skipsRejected = handling.skipsRejected
@@ -257,6 +262,13 @@ struct ImportOptionsPanel: View {
     private var fileHandling: some View {
         Section(isExpanded: $model.fileHandlingExpanded) {
             // First, as in Lightroom.
+            Picker("Build Previews", selection: $model.previews) {
+                ForEach(ImportPreviewLevel.allCases, id: \.self) { level in
+                    Text(level.title).tag(level)
+                }
+            }
+            .help("Minimal uses the previews embedded in the files. Standard renders large previews of RAW photos with their settings in the background after the import, so they look right and open faster in the loupe.")
+            .accessibilityIdentifier("importBuildPreviews")
             Toggle("Build Smart Previews", isOn: $model.buildsSmartPreviews)
                 .tint(switchTint)
                 .help("Builds Smart Previews of the imported photos in the background, so they can be edited while the originals are offline")

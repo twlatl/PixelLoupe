@@ -199,7 +199,8 @@ final class ImportService {
     /// The develop preset and collection from Apply During Import and File Handling, on the new photos.
     /// (On the view context, where presets judge which photos they suit.)
     private func applyAfterImport(_ ids: [UUID], extras: ImportExtras) {
-        guard !ids.isEmpty, extras.developPreset != nil || extras.collection != nil || extras.buildsSmartPreviews else { return }
+        guard !ids.isEmpty, extras.developPreset != nil || extras.collection != nil || extras.buildsSmartPreviews
+                || extras.previews == .standard else { return }
         let context = store.viewContext
         let request = Photo.fetchRequest()
         request.predicate = NSPredicate(format: "id IN %@", ids)
@@ -233,6 +234,7 @@ final class ImportService {
         store.save()
         // Built in the background, after the import (which they'd only slow down).
         if extras.buildsSmartPreviews { store.smartPreviewBuilder.build(photos) }
+        if extras.previews == .standard { store.standardPreviewBuilder.build(photos) }
     }
 
     // MARK: - Scanning

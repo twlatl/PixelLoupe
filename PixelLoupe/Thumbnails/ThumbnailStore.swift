@@ -55,15 +55,20 @@ final class ThumbnailStore {
 
     private var regenerations: [UUID: Task<Void, Never>] = [:]
 
+    /// Whether a photo's thumbnail is always rendered through Develop, even with default settings, instead of
+    /// using the file's embedded preview: true for photos with a Standard preview (RAW-84). Set by the catalog.
+    var rendersThroughDevelop: (UUID) -> Bool = { _ in false }
+
     /// Rewrites the thumbnail for a photo after its Develop settings change. Rapid successive
     /// changes for the same photo cancel earlier renders.
     func regenerate(id: UUID, source: PhotoSourceLocation, adjustments: PhotoAdjustments) {
         regenerations[id]?.cancel()
         let destination = url(for: id)
+        let rendered = rendersThroughDevelop(id)
         regenerations[id] = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
-            let drawn = await Self.renderThumbnail(from: source, to: destination, adjustments: adjustments)
+            let drawn = await Self.renderThumbnail(from: source, to: destination, adjustments: adjustments, rendered: rendered)
             guard let self, !Task.isCancelled else { return }
             regenerations[id] = nil
             guard let drawn else { return }
@@ -74,9 +79,18 @@ final class ThumbnailStore {
     /// Redraws the thumbnail for a photo now (unlike ``regenerate(id:source:adjustments:)``, without
     /// waiting) and tells the grid. Returns whether it worked. For background passes.
     func render(id: UUID, source: PhotoSourceLocation, adjustments: PhotoAdjustments) async -> Bool {
-        guard let drawn = await Self.renderThumbnail(from: source, to: url(for: id), adjustments: adjustments) else { return false }
+        let rendered = rendersThroughDevelop(id)
+        guard let drawn = await Self.renderThumbnail(from: source, to: url(for: id), adjustments: adjustments, rendered: rendered)
+        else { return false }
         didDraw(id, from: drawn)
         return true
+    }
+
+    /// Records a thumbnail written in place by someone else (a Standard preview's render) and tells the grid.
+    func didRender(_ id: UUID, fromSmartPreview: Bool) {
+        regenerations[id]?.cancel()
+        regenerations[id] = nil
+        didDraw(id, from: fromSmartPreview ? .smartPreview : .original)
     }
 
     /// Photos whose thumbnail was drawn from their Smart Preview, while the original was missing.
@@ -100,12 +114,14 @@ final class ThumbnailStore {
     /// settings to many photos used to start a blocking render for each at once (RAW-256). A redraw whose
     /// task is cancelled before its turn (a newer edit to the same photo) is dropped.
     nonisolated private static func renderThumbnail(
-        from location: PhotoSourceLocation, to destination: URL, adjustments: PhotoAdjustments
+        from location: PhotoSourceLocation, to destination: URL, adjustments: PhotoAdjustments, rendered: Bool
     ) async -> Drawn? {
         if SupportedImageTypes.isVideo(location.original) {
             return await renderVideoThumbnail(from: location.original, to: destination)
         }
-        return (try? await RenderQueue.thumbnails.run { drawStill(from: location, to: destination, adjustments: adjustments) }) ?? nil
+        return (try? await RenderQueue.thumbnails.run {
+            drawStill(from: location, to: destination, adjustments: adjustments, rendered: rendered)
+        }) ?? nil
     }
 
     @concurrent
@@ -121,15 +137,16 @@ final class ThumbnailStore {
         }
     }
 
-    /// Draws a still's thumbnail on the calling thread, which it blocks until done.
+    /// Draws a still's thumbnail on the calling thread, which it blocks until done. Unless `rendered`, a photo with
+    /// default settings uses its embedded preview.
     nonisolated private static func drawStill(
-        from location: PhotoSourceLocation, to destination: URL, adjustments: PhotoAdjustments
+        from location: PhotoSourceLocation, to destination: URL, adjustments: PhotoAdjustments, rendered: Bool
     ) -> Drawn? {
         let temporary = temporaryURL(beside: destination)
         defer { try? FileManager.default.removeItem(at: temporary) }
         var drawn = Drawn.original
         do {
-            if adjustments.isDefault, (try? generateThumbnail(from: location.original, to: temporary)) != nil {
+            if !rendered, adjustments.isDefault, (try? generateThumbnail(from: location.original, to: temporary)) != nil {
                 // The embedded preview, or a quick decode.
             } else {
                 guard let developSource = DevelopSource.open(location) else { return nil }

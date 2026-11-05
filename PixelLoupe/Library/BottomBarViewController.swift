@@ -109,7 +109,8 @@ final class BottomBarViewController: NSViewController {
         let merging = state.mergeStatus
         let editingIn = state.editInStatus
         let importing = state.importStatus
-        if let status = exporting ?? publishing ?? merging ?? editingIn ?? importing ?? state.smartPreviewStatus {
+        let smartPreviews = state.smartPreviewStatus
+        if let status = exporting ?? publishing ?? merging ?? editingIn ?? importing ?? smartPreviews ?? state.standardPreviewStatus {
             progressIndicator.isHidden = false
             progressLabel.isHidden = false
             progressIndicator.maxValue = Double(max(status.total, 1))
@@ -124,8 +125,10 @@ final class BottomBarViewController: NSViewController {
                 "Preparing \(status.total.formatted()) photo\(status.total == 1 ? "" : "s") for \(state.editInApplicationName)"
             } else if importing != nil {
                 "Importing \(status.completed.formatted()) of \(status.total.formatted())"
-            } else {
+            } else if smartPreviews != nil {
                 "Building Smart Previews \(status.completed.formatted()) of \(status.total.formatted())"
+            } else {
+                "Building Previews \(status.completed.formatted()) of \(status.total.formatted())"
             }
         } else if let message = state.mergeMessage {
             progressIndicator.isHidden = true

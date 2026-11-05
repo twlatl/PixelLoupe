@@ -1759,7 +1759,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         historyCursor = nil
         source = nil
         loupeSource = nil
-        placeholder = store.thumbnails.cachedImage(for: photo.id).map { CIImage(cgImage: $0) }
+        placeholder = (store.standardPreviews.cachedImage(for: photo.id) ?? store.thumbnails.cachedImage(for: photo.id))
+            .map { CIImage(cgImage: $0) }
         adjustments = photo.adjustments
         if state.developTool == .crop {
             cropSessionStart = adjustments.crop
@@ -1799,13 +1800,21 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         show(message: nil)
         spinner.startAnimation(nil)
         let thumbnails = store.thumbnails
+        let previews = store.standardPreviews
         let uuid = photo.id
+        let showsPreview = previews.isCurrent(uuid) && previews.cachedImage(for: uuid) == nil
         loadTask = Task { [weak self] in
             let info = await Self.readShootingInfo(location)
             if self?.displayedPhotoID == id { self?.histogramView.shootingInfo = info }
             if self?.placeholder == nil, let thumbnail = await thumbnails.image(for: uuid) {
                 guard let self, displayedPhotoID == id, source == nil else { return }
                 placeholder = CIImage(cgImage: thumbnail)
+                metalView.needsDisplay = true
+            }
+            // The Standard preview, a larger rendering, until the photo is decoded (RAW-84).
+            if showsPreview, let preview = await previews.image(for: uuid) {
+                guard let self, displayedPhotoID == id, source == nil else { return }
+                placeholder = CIImage(cgImage: preview)
                 metalView.needsDisplay = true
             }
             let loaded = await Self.loadSource(location)

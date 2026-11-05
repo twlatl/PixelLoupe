@@ -21,6 +21,8 @@ nonisolated struct ImportExtras: Sendable {
     var renaming: ImportRenaming?
     /// Build Smart Previews: the imported photos are queued for Smart Previews once they're in.
     var buildsSmartPreviews = false
+    /// Build Previews: Standard queues the imported RAW photos for Standard previews once they're in.
+    var previews = ImportPreviewLevel.minimal
 
     enum CollectionChoice: Sendable, Equatable {
         case existing(UUID)

@@ -193,6 +193,22 @@ nonisolated struct ImportSettings: Codable, Equatable, Sendable {
     }
 }
 
+/// File Handling ▸ Build Previews (RAW-84): how the imported photos' previews are made, with Lightroom's names.
+nonisolated enum ImportPreviewLevel: String, Codable, CaseIterable, Sendable {
+    /// The file's embedded preview, as the grid thumbnail.
+    case minimal
+    /// A Standard preview (see ``StandardPreviewStore``) and a grid thumbnail rendered through Develop, for camera
+    /// RAW files; built in the background after the import.
+    case standard
+
+    var title: String {
+        switch self {
+        case .minimal: "Minimal"
+        case .standard: "Standard"
+        }
+    }
+}
+
 /// The import window's remembered File Handling and Apply During Import choices.
 nonisolated struct ImportHandling: Codable, Equatable, Sendable {
     var allowsDuplicates = false
@@ -207,6 +223,8 @@ nonisolated struct ImportHandling: Codable, Equatable, Sendable {
     var renaming: ImportRenaming?
     /// Build Smart Previews: the imported photos get Smart Previews in the background once they're in.
     var buildsSmartPreviews = false
+    /// Build Previews: Minimal (the default) or Standard.
+    var previews = ImportPreviewLevel.minimal
 }
 
 nonisolated extension ImportHandling {
@@ -224,5 +242,6 @@ nonisolated extension ImportHandling {
         metadataPresetID = try container.decodeIfPresent(UUID.self, forKey: .metadataPresetID)
         renaming = try container.decodeIfPresent(ImportRenaming.self, forKey: .renaming)
         buildsSmartPreviews = try container.decodeIfPresent(Bool.self, forKey: .buildsSmartPreviews) ?? false
+        previews = (try? container.decodeIfPresent(ImportPreviewLevel.self, forKey: .previews)) ?? .minimal
     }
 }
