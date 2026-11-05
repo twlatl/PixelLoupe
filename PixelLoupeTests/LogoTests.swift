@@ -332,6 +332,15 @@ struct WebGalleryLogoTypingTests {
             window.marker = 1;
             document.querySelector('header img.logo').marked = 1;
             window.logoRequests = performance.getEntriesByType('resource').filter(e => e.name.includes('logo')).length;
+            // Taking the logo (or the header holding it) out of the page, even to put it straight back,
+            // makes WebKit drop its drawing: the logo blinks out for a frame and the photos jump.
+            const logo = document.querySelector('header img.logo');
+            window.logoDetached = 0;
+            new MutationObserver(records => {
+                for (const record of records) {
+                    for (const node of record.removedNodes) if (node === logo || node.contains(logo)) window.logoDetached += 1;
+                }
+            }).observe(document.body, { childList: true, subtree: true });
             """)
 
         for headline in ["P", "Pr", "Pro", "Proofs"] { controller.model.settings.headline = headline }
@@ -341,12 +350,58 @@ struct WebGalleryLogoTypingTests {
             [document.querySelector('header h1') && document.querySelector('header h1').textContent,
              document.querySelector('header img.logo').marked, document.querySelector('header img.logo').alt,
              performance.getEntriesByType('resource').filter(e => e.name.includes('logo')).length - window.logoRequests,
-             window.marker].join(' ')
+             window.logoDetached, window.marker].join(' ')
             """
-        #expect(try await waitFor(state, toBe: "Proofs 1  0 1"), "the same logo element, not fetched again, and the page not reloaded")
+        #expect(try await waitFor(state, toBe: "Proofs 1  0 0 1"),
+                "the same logo element, never taken out of the page or fetched again, and the page not reloaded")
 
         controller.model.settings.headline = ""
         #expect(try await waitFor("document.querySelector('header img.logo').alt + ' ' + document.querySelector('header img.logo').marked",
                                   toBe: "Logo 1"), "the alt text follows the headline on the same element")
+    }
+
+    /// What the viewer sees: the logo is drawn in every frame after every key, not blinking out and
+    /// back (which the element checks above can't see).
+    @Test func theLogoStaysDrawnWhileTyping() async throws {
+        let suite = "WebGalleryLogoTypingTests.drawn"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let directory = try TemporaryDirectory()
+        let logos = LogoImages(directory: directory.url.appending(path: "Logos"))
+        var settings = WebGallerySettings()
+        settings.logoName = try logos.importImage(from: try writeLogo(to: directory.url.appending(path: "Red.png"), width: 300, height: 100))
+        settings.backgroundColor = .white
+        settings.remember(in: defaults)
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "C.pixelloupe"))
+        let photo = ContactSheetPhoto(source: PhotoSourceLocation(original: URL(filePath: "/missing/IMG_1.jpg")), fileName: "IMG_1.jpg")
+        let controller = WebGalleryWindowController(photos: [photo], thumbnails: store.thumbnails, sourceName: "Dunes",
+                                                    defaults: defaults, logos: logos)
+        controller.showWindow(nil)
+        defer { controller.close() }
+        let webView = controller.webView
+        var center: [Double] = []
+        for _ in 0..<200 where center.isEmpty {
+            try await Task.sleep(for: .milliseconds(50))
+            guard !webView.isLoading, let value = try? await webView.evaluateJavaScript("""
+                (logo => logo && logo.complete && logo.naturalWidth
+                    ? (r => r.left + r.width / 2 + ',' + (r.top + r.height / 2))(logo.getBoundingClientRect()) : '')
+                (document.querySelector('header img.logo'))
+                """) as? String else { continue }
+            center = value.split(separator: ",").compactMap { Double($0) }
+        }
+        try #require(center.count == 2, "the logo loaded")
+
+        var blank: [String] = []
+        for headline in ["H", "He", "Her", "Here", "Here's", "Here's a"] {
+            controller.model.settings.headline = headline
+            for frame in 0..<4 {
+                let snapshot = try await webView.takeSnapshot(configuration: nil)
+                let bitmap = try #require(snapshot.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+                let scale = Double(bitmap.pixelsWide) / snapshot.size.width
+                let color = bitmap.colorAt(x: Int(center[0] * scale), y: Int(center[1] * scale))?.usingColorSpace(.sRGB)
+                if (color?.redComponent ?? 0) < 0.8 || (color?.greenComponent ?? 1) > 0.3 { blank.append("\(headline) #\(frame)") }
+            }
+        }
+        #expect(blank.isEmpty, "the logo wasn't drawn after: \(blank)")
     }
 }

@@ -154,12 +154,13 @@ final class WebGalleryWindowController: NSWindowController, NSWindowDelegate, WK
         return settings
     }
 
-    /// Swaps the page's header and title for the current settings' in place, so typing a headline
+    /// Updates the page's header and title for the current settings in place, so typing a headline
     /// doesn't reload the page (and its photos) with every key. The page served next has them too.
     ///
-    /// The logo's element is kept as it is (only its alt text follows the headline) unless the logo
-    /// itself changed: replacing it would fetch the image again with every key, and the header would
-    /// collapse and spring back while it loaded, jolting the whole page.
+    /// The header element and its logo stay in the page: only the text after the logo is swapped
+    /// (and the logo's alt text updated). Taking the logo out, even to put it straight back, makes
+    /// WebKit drop its drawing, so it would blink out for a frame and the photos jump up under it
+    /// with every key. It's replaced only when the logo itself changed.
     private func replaceHeader(logoChanged: Bool) {
         let pages = model.pages
         let title = WebGalleryHTML.title(currentPage, pages: pages, settings: model.settings, sourceName: sourceName)
@@ -168,18 +169,24 @@ final class WebGalleryWindowController: NSWindowController, NSWindowDelegate, WK
             const template = document.createElement("template");
             template.innerHTML = header;
             const fresh = template.content.firstElementChild;
-            const oldLogo = old && old.querySelector("img.logo");
-            const freshLogo = fresh && fresh.querySelector("img.logo");
-            if (oldLogo && freshLogo && !logoChanged) {
-                oldLogo.alt = freshLogo.alt;
-                freshLogo.replaceWith(oldLogo);
-            } else if (freshLogo) {
-                // A newly chosen logo has the same path as the last one: ask for it afresh.
-                freshLogo.src = freshLogo.getAttribute("src") + "?" + Date.now();
+            const freshLogo = fresh && fresh.querySelector(":scope > img.logo");
+            // A newly chosen logo has the same path as the last one: ask for it afresh.
+            if (freshLogo && logoChanged) freshLogo.src = freshLogo.getAttribute("src") + "?" + Date.now();
+            if (!fresh) {
+                if (old) old.remove();
+            } else if (!old) {
+                document.body.prepend(fresh);
+            } else {
+                const oldLogo = old.querySelector(":scope > img.logo");
+                for (const node of [...old.childNodes]) if (node !== oldLogo) node.remove();
+                for (const node of [...fresh.childNodes]) if (node !== freshLogo) old.append(node);
+                if (oldLogo && freshLogo && !logoChanged) {
+                    if (oldLogo.alt !== freshLogo.alt) oldLogo.alt = freshLogo.alt;
+                } else {
+                    if (oldLogo) oldLogo.remove();
+                    if (freshLogo) old.prepend(freshLogo);
+                }
             }
-            if (old && fresh) old.replaceWith(fresh);
-            else if (old) old.remove();
-            else if (fresh) document.body.prepend(fresh);
             document.title = title;
             """, arguments: ["header": WebGalleryHTML.header(settings: model.settings), "title": title, "logoChanged": logoChanged],
             in: nil, in: .page, completionHandler: nil)
