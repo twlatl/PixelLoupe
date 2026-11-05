@@ -318,9 +318,15 @@ final class CropPanelViewController: NSViewController {
     }
 
     @objc private func overlayChanged(_ sender: NSPopUpButton) {
-        toolOverlay = ToolOverlay(rawValue: sender.indexOfSelectedItem) ?? .auto
-        Defaults.store.set(toolOverlay.rawValue, forKey: Self.overlayKey)
-        onOverlayChange(toolOverlay)
+        setToolOverlay(ToolOverlay(rawValue: sender.indexOfSelectedItem) ?? .auto)
+    }
+
+    /// Sets when the guide shows, as if chosen from the pop-up (O uses it to turn Never into Always).
+    func setToolOverlay(_ overlay: ToolOverlay) {
+        toolOverlay = overlay
+        overlayPopUp.selectItem(at: overlay.rawValue)
+        Defaults.store.set(overlay.rawValue, forKey: Self.overlayKey)
+        onOverlayChange(overlay)
     }
 
     @objc private func toggleStraighten(_ sender: NSButton) {

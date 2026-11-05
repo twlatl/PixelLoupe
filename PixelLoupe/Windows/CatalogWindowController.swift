@@ -277,9 +277,13 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         let selection = state.selectedPhotoIDs
         let cropping = state.mode == .develop && state.developTool == .crop
         let develop = rootViewController.main.develop
-        // While cropping, Return applies, Esc cancels and X flips the orientation (as in Lightroom).
+        // While cropping, Return applies, Esc cancels, X flips the orientation and O cycles the guide overlay
+        // (as in Lightroom; elsewhere O is Masking's Show Overlay).
         if cropping {
             switch command {
+            case .maskOverlay:
+                develop.cycleCropGuideOverlay()
+                return true
             case .toggleEnlarge:
                 state.developTool = .adjust
                 return true
@@ -591,6 +595,14 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         rootViewController.main.develop.addMask(.background)
     }
     @objc func showMaskOverlay(_ sender: Any?) { _ = perform(.maskOverlay) }
+    @objc func cycleCropGuideOverlay(_ sender: Any?) { _ = perform(.maskOverlay) }
+
+    /// View ▸ Crop Guide Overlay: the item's tag is the guide's index in ``CropGuideOverlay/allCases``.
+    @objc func chooseCropGuideOverlay(_ sender: NSMenuItem) {
+        guard state.mode == .develop, state.developTool == .crop,
+              CropGuideOverlay.allCases.indices.contains(sender.tag) else { return }
+        rootViewController.main.develop.setCropGuideOverlay(CropGuideOverlay.allCases[sender.tag])
+    }
 
     /// View ▸ Before/After: the item's tag is its ``BeforeAfterView``.
     @objc func showBeforeAfter(_ sender: NSMenuItem) {
@@ -1223,6 +1235,15 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
             let typing = (window?.firstResponder as? NSText)?.isEditable ?? false
             (item as? NSMenuItem)?.state = state.mode == .develop && state.developTool == .crop ? .on : .off
             return !typing && (state.mode == .develop || !state.selectedPhotoIDs.isEmpty)
+        case #selector(cycleCropGuideOverlay(_:)):
+            // Shown with O, which is Show Mask Overlay outside the crop tool.
+            let typing = (window?.firstResponder as? NSText)?.isEditable ?? false
+            return !typing && state.mode == .develop && state.developTool == .crop
+        case #selector(chooseCropGuideOverlay(_:)):
+            let cropping = state.mode == .develop && state.developTool == .crop
+            let current = rootViewController.main.develop.cropGuideOverlay
+            (item as? NSMenuItem)?.state = CropGuideOverlay.allCases.firstIndex(of: current) == item.tag ? .on : .off
+            return cropping
         case #selector(showClipping(_:)):
             // Shown with J in the menu; disabled while typing so the key reaches the text field.
             let typing = (window?.firstResponder as? NSText)?.isEditable ?? false
