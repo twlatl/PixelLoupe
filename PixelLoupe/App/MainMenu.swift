@@ -133,6 +133,7 @@ import AppKit
     @objc optional func addBackgroundMask(_ sender: Any?)
     @objc optional func showMaskOverlay(_ sender: Any?)
     @objc optional func cycleCropGuideOverlay(_ sender: Any?)
+    @objc optional func cycleCropGuideOrientation(_ sender: Any?)
     @objc optional func chooseCropGuideOverlay(_ sender: NSMenuItem)
     @objc optional func showBeforeAfter(_ sender: NSMenuItem)
     @objc optional func removePhoto(_ sender: Any?)
@@ -415,7 +416,7 @@ enum MainMenu {
     }
 
     /// Lightroom's Tools ▸ Crop Guide Overlay: the guides (each item's tag is its index in
-    /// ``CropGuideOverlay/allCases``) and O to cycle them, handled as a key by the window like C.
+    /// ``CropGuideOverlay/allCases``) O to cycle them and ⇧O to turn them, handled as a key by the window like C.
     private static func cropGuideOverlayMenu() -> NSMenu {
         let menu = NSMenu(title: "Crop Guide Overlay")
         for (index, overlay) in CropGuideOverlay.allCases.enumerated() {
@@ -423,6 +424,7 @@ enum MainMenu {
         }
         menu.addItem(.separator())
         menu.addItem(item("Cycle Overlay", #selector(PixelLoupeActions.cycleCropGuideOverlay(_:)), "o", modifiers: []))
+        menu.addItem(item("Cycle Orientation", #selector(PixelLoupeActions.cycleCropGuideOrientation(_:)), "o", modifiers: [.shift]))
         return menu
     }
 

@@ -32,7 +32,8 @@ enum KeyCommand: Equatable {
     case radialMask             // ⇧M
     case brushMask              // K
     case brushFeather(Int)      // ⇧[ harder, ⇧] softer (a brush mask in Masking; [ and ] size it)
-    case maskOverlay            // O
+    case maskOverlay            // O (in the crop tool, the next guide overlay)
+    case cropGuideOrientation   // ⇧O (the crop tool's guide overlay)
     case beforeAfter(BeforeAfterView) // Y left/right, ⌥Y top/bottom, \ before only, ⇧Y split (Develop)
     case toggleSidebars         // Tab
     case addToTargetCollection  // B
@@ -44,7 +45,7 @@ enum KeyCommand: Equatable {
             .intersection(.deviceIndependentFlagsMask)
             .subtracting([.numericPad, .function, .capsLock])
         // The few shifted commands: Move to Top of Stack, Lightroom's Masking (⇧W), Radial Gradient (⇧M),
-        // brush feather (⇧[ ⇧]) and Before/After Split Screen (⇧Y), and the secondary window's views (⇧G, ⇧E,
+        // brush feather (⇧[ ⇧]), Before/After Split Screen (⇧Y), the crop guide's orientation (⇧O), and the secondary window's views (⇧G, ⇧E,
         // ⇧C, ⇧N).
         if modifiers == .shift {
             switch event.charactersIgnoringModifiers?.lowercased() {
@@ -58,6 +59,7 @@ enum KeyCommand: Equatable {
             case "c": self = .secondaryView(.compare)
             case "n": self = .secondaryView(.survey)
             case "y": self = .beforeAfter(.split)
+            case "o": self = .cropGuideOrientation
             default: return nil
             }
             return

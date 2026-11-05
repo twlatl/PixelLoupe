@@ -958,6 +958,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         cropOverlay.onChange = { [weak self] crop, _ in self?.cropChanged(crop) }
         cropOverlay.toolOverlay = cropPanel.toolOverlay
         cropOverlay.guideOverlay = .saved
+        cropOverlay.guideOrientation = CropGuideOverlay.saved.savedOrientation
         cropPanel.onOverlayChange = { [weak self] overlay in self?.cropOverlay.toolOverlay = overlay }
         cropPanel.onAspect = { [weak self] aspect in self?.setCropAspect(aspect) }
         cropPanel.onAuto = { [weak self] in self?.autoStraighten() }
@@ -1056,8 +1057,22 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     func setCropGuideOverlay(_ overlay: CropGuideOverlay) {
         CropGuideOverlay.saved = overlay
         cropOverlay.guideOverlay = overlay
+        cropOverlay.guideOrientation = overlay.savedOrientation
         if cropPanel.toolOverlay == .never { cropPanel.setToolOverlay(.always) }
         cropOverlay.flashGuideName()
+    }
+
+    /// ⇧O while cropping: turns Triangle or the Golden Spiral. Returns false for the symmetric guides.
+    @discardableResult
+    func cycleCropGuideOrientation() -> Bool {
+        let overlay = cropOverlay.guideOverlay
+        guard overlay.orientationCount > 1 else { return false }
+        let orientation = (cropOverlay.guideOrientation + 1) % overlay.orientationCount
+        overlay.savedOrientation = orientation
+        cropOverlay.guideOrientation = orientation
+        if cropPanel.toolOverlay == .never { cropPanel.setToolOverlay(.always) }
+        cropOverlay.flashGuideName()
+        return true
     }
 
     func flipCropOrientation() {
