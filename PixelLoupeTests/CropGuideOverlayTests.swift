@@ -233,13 +233,75 @@ struct CropGuideOverlayTests {
         let grid = CropGuideOverlay.grid.segments(in: rect)
         let xs = verticals(grid)
         let ys = horizontals(grid)
-        let spacing = rect.width / CGFloat(CropGuideOverlay.gridCells)
-        #expect(xs.count == CropGuideOverlay.gridCells - 1)
+        let spacing = rect.width / CGFloat(CropGuideOverlay.defaultGridCells)
+        #expect(xs.count == CropGuideOverlay.defaultGridCells - 1)
         #expect(zip(xs, xs.dropFirst()).allSatisfy { abs($1 - $0 - spacing) < 0.001 })
         #expect(zip(ys, ys.dropFirst()).allSatisfy { abs($1 - $0 - spacing) < 0.001 }, "square cells")
         #expect(ys.allSatisfy { $0 > rect.minY && $0 < rect.maxY })
         #expect(abs((ys.first! - rect.minY) - (rect.maxY - ys.last!)) < 0.001, "centred on the short side")
         #expect(CropGuideOverlay.grid.segments(in: .zero).isEmpty)
+    }
+
+    @Test(arguments: [4, 20, 40])
+    func gridDensity(cells: Int) {
+        let grid = CropGuideOverlay.grid.segments(in: rect, gridCells: cells)
+        let xs = verticals(grid)
+        #expect(xs.count == cells - 1, "\(cells) cells across the long side")
+        let spacing = rect.width / CGFloat(cells)
+        #expect(zip(horizontals(grid), horizontals(grid).dropFirst()).allSatisfy { abs($1 - $0 - spacing) < 0.001 }, "still square")
+    }
+
+    @Test func gridDensityIsRememberedWithinRange() {
+        let key = "CropGuideGridCells"
+        let previous = Defaults.store.object(forKey: key)
+        defer { Defaults.store.set(previous, forKey: key) }
+        Defaults.store.removeObject(forKey: key)
+        #expect(CropGuideOverlay.gridCells == 20)
+        CropGuideOverlay.gridCells = 32
+        #expect(CropGuideOverlay.gridCells == 32)
+        CropGuideOverlay.gridCells = 400
+        #expect(CropGuideOverlay.gridCells == 40)
+        CropGuideOverlay.gridCells = 1
+        #expect(CropGuideOverlay.gridCells == 4)
+    }
+
+    private func scroll(_ view: CropOverlayView, lines: Int32, option: Bool = true) throws {
+        let cgEvent = try #require(CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: lines, wheel2: 0, wheel3: 0))
+        cgEvent.flags = option ? .maskAlternate : []
+        view.scrollWheel(with: try #require(NSEvent(cgEvent: cgEvent)))
+    }
+
+    @Test func optionScrollSizesTheGrid() throws {
+        let view = CropOverlayView(frame: CGRect(x: 0, y: 0, width: 300, height: 200))
+        view.frameRect = view.bounds
+        view.toolOverlay = .auto
+        view.guideOverlay = .grid
+        var reported: [Int] = []
+        view.onGridCellsChange = { reported.append($0) }
+
+        try scroll(view, lines: 1)
+        #expect(view.gridCells > 20, "up makes it finer")
+        #expect(reported.last == view.gridCells)
+        #expect(view.showsGuide, "the new size shows, even on Auto")
+        let finer = view.gridCells
+        try scroll(view, lines: -1)
+        try scroll(view, lines: -1)
+        #expect(view.gridCells < finer, "down makes it coarser")
+        for _ in 0..<60 { try scroll(view, lines: 3) }
+        #expect(view.gridCells == 40)
+        for _ in 0..<60 { try scroll(view, lines: -3) }
+        #expect(view.gridCells == 4)
+
+        let count = reported.count
+        try scroll(view, lines: 3, option: false)
+        #expect(view.gridCells == 4 && reported.count == count, "plain scrolling leaves it alone")
+        view.guideOverlay = .thirds
+        try scroll(view, lines: 3)
+        #expect(view.gridCells == 4, "only the Grid guide changes size")
+        view.guideOverlay = .grid
+        view.toolOverlay = .never
+        try scroll(view, lines: 3)
+        #expect(view.gridCells == 4, "not while the guide is hidden")
     }
 
     @Test func choiceIsRemembered() {
