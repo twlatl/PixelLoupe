@@ -6,6 +6,11 @@ import UniformTypeIdentifiers
 /// Reads Lightroom's rendered previews (`<Catalog> Previews.lrdata`), which already have the user's
 /// edits applied, so the import can seed PixelLoupe's thumbnails without opening any original.
 ///
+/// Lightroom keeps them in one of two ways. Lightroom Classic 15 (`previews.db` store version 13)
+/// writes each level of the pyramid as its own JPEG, `<uuid>-<digest>_<long edge>`, listed in the
+/// `Pyramid` and `PyramidLevel` tables (see ``levels(uuid:digest:levels:cropped:in:)``). Earlier
+/// versions write one `.lrprev` file per photo:
+///
 /// An `.lrprev` file is a series of blocks: a 32-byte header (`AgHg`, flags, the data length and the
 /// padding length as big-endian 64-bit numbers, and an 8-byte name), then the data, then padding.
 /// The first block, `header`, holds a Lua table describing the pyramid; each following block
@@ -13,6 +18,8 @@ import UniformTypeIdentifiers
 nonisolated struct LightroomPreviewFile: Sendable, Equatable {
     struct Level: Sendable, Equatable {
         var name: String
+        /// The file holding the level's JPEG: the `.lrprev` file, or the level's own file.
+        var url: URL
         /// Pixel size of the stored JPEG (in the photo's own, unrotated frame).
         var width: Int
         var height: Int
@@ -68,7 +75,7 @@ nonisolated struct LightroomPreviewFile: Sendable, Equatable {
         let levelBlocks = blocks.dropFirst().filter { $0.name.hasPrefix("level_") }
         guard !levelBlocks.isEmpty, sizes.count >= levelBlocks.count else { throw ReadError.notAPreview }
         let levels = zip(levelBlocks, sizes).map { block, size in
-            Level(name: block.name, width: size.0, height: size.1, dataOffset: block.dataOffset, length: block.length)
+            Level(name: block.name, url: url, width: size.0, height: size.1, dataOffset: block.dataOffset, length: block.length)
         }
         return LightroomPreviewFile(
             url: url, levels: levels, croppedWidth: pyramid?["croppedWidth"]?.int, croppedHeight: pyramid?["croppedHeight"]?.int)
@@ -80,9 +87,29 @@ nonisolated struct LightroomPreviewFile: Sendable, Equatable {
         return sorted.first { $0.longEdge >= minimumLongEdge } ?? sorted.last
     }
 
+    /// A Lightroom Classic 15 preview: one JPEG file per level, named by its long edge. `levels` are
+    /// rows of `PyramidLevel` (width, height); `cropped` is the frame from `Pyramid`. The files aren't
+    /// read; nil when there are no levels.
+    static func levels(
+        uuid: String, digest: String, levels: [(width: Int, height: Int)], cropped: (width: Int, height: Int)?, in folder: URL
+    ) -> LightroomPreviewFile? {
+        guard !levels.isEmpty else { return nil }
+        let directory = LightroomPreviews.directory(uuid: uuid, in: folder)
+        let id = uuid.uppercased()
+        let files = levels.map { size in
+            let longEdge = max(size.width, size.height)
+            return Level(
+                name: "\(longEdge)", url: directory.appending(path: "\(id)-\(digest)_\(longEdge)"),
+                width: size.width, height: size.height, dataOffset: 0, length: 0)
+        }
+        return LightroomPreviewFile(url: directory, levels: files, croppedWidth: cropped?.width, croppedHeight: cropped?.height)
+    }
+
     /// The JPEG data of a level.
     func jpegData(for level: Level) throws -> Data {
-        let handle = try FileHandle(forReadingFrom: url)
+        // A level with its own file is the whole file.
+        if level.length == 0 { return try Data(contentsOf: level.url) }
+        let handle = try FileHandle(forReadingFrom: level.url)
         defer { try? handle.close() }
         try handle.seek(toOffset: level.dataOffset)
         guard let data = try handle.read(upToCount: level.length), data.count == level.length else { throw ReadError.truncated }
@@ -98,13 +125,17 @@ nonisolated enum LightroomPreviews {
         return catalog.deletingLastPathComponent().appending(path: "\(name) Previews.lrdata", directoryHint: .isDirectory)
     }
 
-    /// `<hex>/<hex>/<uuid>-<digest>.lrprev`: the first character and the first four of the UUID.
-    static func previewURL(uuid: String, digest: String, in folder: URL) -> URL {
+    /// `<hex>/<hex>/`: the first character and the first four of the UUID.
+    static func directory(uuid: String, in folder: URL) -> URL {
         let id = uuid.uppercased()
         return folder
             .appending(path: String(id.prefix(1)), directoryHint: .isDirectory)
             .appending(path: String(id.prefix(4)), directoryHint: .isDirectory)
-            .appending(path: "\(id)-\(digest).lrprev")
+    }
+
+    /// `<hex>/<hex>/<uuid>-<digest>.lrprev`, where Lightroom before Classic 15 keeps an image's preview.
+    static func previewURL(uuid: String, digest: String, in folder: URL) -> URL {
+        directory(uuid: uuid, in: folder).appending(path: "\(uuid.uppercased())-\(digest).lrprev")
     }
 
     /// One row of the `previews.db` index: the preview file of an image and how it is oriented.
@@ -124,9 +155,12 @@ nonisolated enum LightroomPreviews {
 
     /// Writes the thumbnail for a preview to `destination`: the smallest level that is big enough,
     /// copied byte for byte when it needs no change, otherwise scaled to the thumbnail size and
-    /// turned to Lightroom's orientation, then re-encoded.
-    static func writeThumbnail(from file: LightroomPreviewFile, orientation: String?, to destination: URL) throws {
+    /// turned to Lightroom's orientation, then re-encoded. When no level is big enough the largest is
+    /// used as it is, and the result is false: a stand-in until PixelLoupe draws the thumbnail itself.
+    @discardableResult
+    static func writeThumbnail(from file: LightroomPreviewFile, orientation: String?, to destination: URL) throws -> Bool {
         guard let level = file.bestLevel(minimumLongEdge: thumbnailSize) else { throw LightroomPreviewFile.ReadError.notAPreview }
+        let isFullSize = level.longEdge >= thumbnailSize
         let data = try file.jpegData(for: level)
         var exif = LightroomOrientation.exif(forCode: orientation) ?? 1
         // A few previews were saved already turned: their levels are portrait while the frame they
@@ -137,7 +171,7 @@ nonisolated enum LightroomPreviews {
         }
         if exif == 1, level.longEdge <= copyLimit {
             try data.write(to: destination, options: .atomic)
-            return
+            return isFullSize
         }
 
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { throw LightroomPreviewFile.ReadError.notAPreview }
@@ -159,5 +193,6 @@ nonisolated enum LightroomPreviews {
         }
         CGImageDestinationAddImage(output, image, [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
         guard CGImageDestinationFinalize(output) else { throw CocoaError(.fileWriteUnknown) }
+        return isFullSize
     }
 }
