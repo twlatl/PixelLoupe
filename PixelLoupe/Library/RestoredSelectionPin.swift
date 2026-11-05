@@ -1,7 +1,8 @@
 import AppKit
 import CoreData
 
-/// Keeps the photo a catalog opened with centred in a grid or filmstrip while the window settles (RAW-258).
+/// Keeps the photo a catalog opened with centred in a grid or filmstrip while the window settles (RAW-258), and
+/// centres the one a source comes back with (RAW-259).
 ///
 /// A catalog's window fills the screen and its sidebars take their remembered widths only after the grid and
 /// filmstrip first lay out, and each change reflows them, so a single scroll on appearing is soon out of date.
@@ -19,6 +20,8 @@ final class RestoredSelectionPin: NSObject {
     /// The photo being kept in view, until released.
     private(set) var photoID: NSManagedObjectID?
     private var isCentring = false
+    /// Counts pins, so a release scheduled for an earlier one leaves a later one alone.
+    private var generation = 0
 
     /// `indexPath` finds the photo's item in the collection view, which must be in a scroll view by now.
     init(collectionView: NSCollectionView, axis: Axis, indexPath: @escaping (NSManagedObjectID) -> IndexPath?) {
@@ -33,19 +36,27 @@ final class RestoredSelectionPin: NSObject {
         release()
         guard let photoID, let scrollView = collectionView?.enclosingScrollView else { return }
         self.photoID = photoID
+        generation += 1
         let center = NotificationCenter.default
         scrollView.contentView.postsFrameChangedNotifications = true
         center.addObserver(self, selector: #selector(frameDidChange(_:)), name: NSView.frameDidChangeNotification, object: scrollView.contentView)
         center.addObserver(self, selector: #selector(userDidScroll(_:)), name: NSScrollView.willStartLiveScrollNotification, object: scrollView)
         // In case the window never appears (or ``settle()`` isn't called).
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in self?.release() }
+        releaseLater(after: 10)
         centre()
     }
 
     /// Releases the pin once the window that appeared has had time to settle.
     func settle() {
+        releaseLater(after: Self.settleTime)
+    }
+
+    private func releaseLater(after delay: TimeInterval) {
         guard photoID != nil else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.settleTime) { [weak self] in self?.release() }
+        let generation = generation
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            if self?.generation == generation { self?.release() }
+        }
     }
 
     /// Stops keeping the photo in view; the grid scrolls only as the person or the selection moves it.
