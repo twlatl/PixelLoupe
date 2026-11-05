@@ -3,7 +3,7 @@ import WebKit
 
 /// Serves the web gallery to the window's preview from memory, under `pixelloupe-gallery://gallery/`:
 /// the pages (without the Head and Body text), stylesheet and scripts as ``WebGalleryHTML`` writes
-/// them for the current settings, and
+/// them for the current settings, the chosen logo from ``LogoImages``, and
 /// each photo's cached thumbnail (edits applied) as both its images (so the lightbox shows the
 /// thumbnail). Nothing is written to disk, and a thumbnail is read only when the page shows it (the
 /// images load lazily).
@@ -15,12 +15,15 @@ final class WebGalleryPreviewSource: NSObject, WKURLSchemeHandler {
     let sourceName: String
     var settings: WebGallerySettings
     private let thumbnails: ThumbnailStore
+    private let logos: LogoImages
     /// Requests still wanted: one the web view stops mustn't be answered.
     private var running: Set<ObjectIdentifier> = []
 
-    init(photos: [ContactSheetPhoto], thumbnails: ThumbnailStore, sourceName: String, settings: WebGallerySettings) {
+    init(photos: [ContactSheetPhoto], thumbnails: ThumbnailStore, sourceName: String, settings: WebGallerySettings,
+         logos: LogoImages = .shared) {
         self.photos = photos
         self.thumbnails = thumbnails
+        self.logos = logos
         self.sourceName = sourceName
         self.settings = settings
     }
@@ -41,6 +44,20 @@ final class WebGalleryPreviewSource: NSObject, WKURLSchemeHandler {
             respond(to: task, data: Data(WebGalleryHTML.photosScript(photos: photos, settings: settings).utf8), type: "text/javascript")
         } else if path == "/\(WebGalleryHTML.scriptName)" {
             respond(to: task, data: Data(WebGalleryHTML.script.utf8), type: "text/javascript")
+        } else if let logo = WebGalleryHTML.logoPath(settings: settings), path == "/\(logo)", let logoName = settings.logoName {
+            // Never cached: a newly chosen logo has the same path.
+            let id = ObjectIdentifier(task)
+            running.insert(id)
+            let file = logos.url(named: logoName)
+            Task {
+                let data = await Self.read(file)
+                guard running.remove(id) != nil else { return }
+                if let data {
+                    respond(to: task, data: data, type: logo.hasSuffix(".png") ? "image/png" : "image/jpeg")
+                } else {
+                    task.didFailWithError(URLError(.fileDoesNotExist))
+                }
+            }
         } else if (path as NSString).deletingLastPathComponent == "/", let page = WebGalleryPages.page(named: name), page < pages.count {
             let html = WebGalleryHTML.page(page, photos: photos, settings: settings, sourceName: sourceName, includesCustomCode: false)
             respond(to: task, data: Data(html.utf8), type: "text/html")
@@ -71,7 +88,7 @@ final class WebGalleryPreviewSource: NSObject, WKURLSchemeHandler {
     private func respond(to task: any WKURLSchemeTask, data: Data, type: String, cached: Bool = false) {
         guard let url = task.request.url,
               let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: [
-                  "Content-Type": type == "image/jpeg" ? type : "\(type); charset=utf-8",
+                  "Content-Type": type.hasPrefix("image/") ? type : "\(type); charset=utf-8",
                   "Content-Length": String(data.count),
                   "Cache-Control": cached ? "max-age=3600" : "no-store",
               ])

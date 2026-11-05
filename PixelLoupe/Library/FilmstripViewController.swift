@@ -156,6 +156,7 @@ final class FilmstripViewController: NSViewController, NSCollectionViewDelegate 
             }
             return item
         }
+        restoredSelectionPin.pin(state.selectedPhotoIDs.first)
         applyPhotoOrder()
         updateHoverTracking()
 
@@ -164,8 +165,13 @@ final class FilmstripViewController: NSViewController, NSCollectionViewDelegate 
             switch change {
             case .hoverTracking: updateHoverTracking()
             case .photoOrder: applyPhotoOrder()
-            case .selection: followSelection()
-            case .filter, .photoCount: updateInfo()
+            case .selection:
+                if state.selectedPhotoIDs.first != restoredSelectionPin.photoID { restoredSelectionPin.release() }
+                followSelection()
+            case .filter:
+                restoredSelectionPin.release()
+                updateInfo()
+            case .photoCount: updateInfo()
             default: break
             }
         }
@@ -181,6 +187,21 @@ final class FilmstripViewController: NSViewController, NSCollectionViewDelegate 
             self, selector: #selector(availabilityDidChange(_:)),
             name: FileAvailability.didChangeNotification, object: store.availability
         )
+    }
+
+    private var hasAppeared = false
+    /// Keeps the photo the catalog opened with centred while the window settles (RAW-258).
+    private lazy var restoredSelectionPin = RestoredSelectionPin(collectionView: collectionView, axis: .horizontal) { [weak self] in
+        self?.dataSource.indexPath(for: $0)
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        guard !hasAppeared else { return }
+        hasAppeared = true
+        view.layoutSubtreeIfNeeded()
+        restoredSelectionPin.centre()
+        restoredSelectionPin.settle()
     }
 
     /// Reports the photo under the pointer while ``LibraryState/tracksHover`` is on.
@@ -212,7 +233,9 @@ final class FilmstripViewController: NSViewController, NSCollectionViewDelegate 
             collectionView.selectionIndexPaths = indexPaths
             isApplyingSelection = false
         }
-        if let first = state.selectedPhotoIDs.first, let indexPath = dataSource.indexPath(for: first),
+        if let first = state.selectedPhotoIDs.first, first == restoredSelectionPin.photoID {
+            restoredSelectionPin.centre()
+        } else if let first = state.selectedPhotoIDs.first, let indexPath = dataSource.indexPath(for: first),
            !collectionView.indexPathsForVisibleItems().contains(indexPath) || view.window == nil {
             collectionView.scrollToItems(at: [indexPath], scrollPosition: .centeredHorizontally)
         }

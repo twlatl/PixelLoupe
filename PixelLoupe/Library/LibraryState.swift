@@ -93,9 +93,25 @@ final class LibraryState {
         didSet { if filter != oldValue { notify(.filter) } }
     }
 
-    /// Selected photos in grid order.
+    /// Selected photos in grid order, except that the active photo (the first) stays first when the grid re-fetches.
+    /// Setting it changes what the source remembers (see ``showSelection(_:)``).
     var selectedPhotoIDs: [NSManagedObjectID] = [] {
-        didSet { if selectedPhotoIDs != oldValue { notify(.selection) } }
+        didSet {
+            if !isShowingSelection { selectionMemory?.remember(selectedPhotoIDs, for: filter.scope) }
+            if selectedPhotoIDs != oldValue { notify(.selection) }
+        }
+    }
+
+    /// Remembers each source's selection (RAW-259); nil in windows that don't (a secondary window's grid).
+    var selectionMemory: SelectionMemory?
+    private var isShowingSelection = false
+
+    /// Selects the part of the source's selection the grid can show (a filter or a collapsed stack hides the rest),
+    /// leaving what the source remembers as it was, so the rest comes back when it's shown again.
+    func showSelection(_ ids: [NSManagedObjectID]) {
+        isShowingSelection = true
+        defer { isShowingSelection = false }
+        selectedPhotoIDs = ids
     }
 
     var thumbnailSize: Double {
