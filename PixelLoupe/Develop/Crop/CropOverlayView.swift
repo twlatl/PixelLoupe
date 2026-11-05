@@ -108,9 +108,7 @@ final class CropOverlayView: NSView {
                 guide.move(to: first)
                 for point in curve.dropFirst() { guide.line(to: point) }
             }
-            guide.lineWidth = 0.5
-            NSColor.white.withAlphaComponent(0.6).setStroke()
-            guide.stroke()
+            strokeGuide(guide)
         }
 
         let border = NSBezierPath(rect: rect.insetBy(dx: 0.5, dy: 0.5))
@@ -154,6 +152,19 @@ final class CropOverlayView: NSView {
         }
 
         if let flashedName { drawName(flashedName, in: rect) }
+    }
+
+    /// Strokes guide lines like Lightroom's: 2 pixels of white with 2 pixels of half-black on each side,
+    /// so they stand out on light and dark photos alike.
+    private func strokeGuide(_ path: NSBezierPath) {
+        let pixel = 1 / max(window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1, 1)
+        path.lineJoinStyle = .round
+        path.lineWidth = 6 * pixel
+        NSColor.black.withAlphaComponent(0.5).setStroke()
+        path.stroke()
+        path.lineWidth = 2 * pixel
+        NSColor.white.setStroke()
+        path.stroke()
     }
 
     /// Whether the guide shows: always, never, or (Auto) while dragging and just after O changes it.
