@@ -315,6 +315,9 @@ are fixed when the window opens, and you can open several contact sheets at once
 The middle of the window shows the pages as they'll print, with the photos' Develop edits; the sidebar on the right
 sets them up, and the pages follow as you change it:
 
+- **Logo**: a PNG or JPG image above the headline, at the top-left of every page, up to ¾ inch tall (a wide logo is
+  narrowed to fit between the margins). **Choose…** copies the image into PixelLoupe's Application Support folder, so
+  moving or deleting the original doesn't take it off the sheet; **Remove** takes it off.
 - **Headline** and **Description**, at the top of every page (they start empty for each sheet).
 - **Text Color** and **Background Color**: black on white unless you choose others.
 - **Page Size** (US Letter, A4, Tabloid or A3; Letter or A4 to begin with, by region), **Orientation** and **Page
@@ -338,6 +341,8 @@ window opens, and you can open several galleries at once.
 The middle of the window shows the gallery as a browser shows it, with the photos' Develop edits; its page links work.
 The sidebar on the right sets it up, and the preview follows as you change it, staying on the page you're viewing:
 
+- **Logo**: a PNG or JPG image above the headline on every page, up to 96 pixels tall (narrower on a small screen
+  when it's wide), shared with contact sheets' Choose… and Remove.
 - **Headline** and **Description**, at the top of every page (they start empty for each gallery).
 - **Email**: a link under them that opens the viewer's mail app. Every character of it is written as an HTML character
   reference, so the address isn't in the page as plain text for address harvesters to find.
@@ -363,12 +368,13 @@ or a click beside the photo closes it, on the page of the photo it was showing. 
 
 The choices other than the headline and description are remembered for the next gallery. **Generate…** asks for a
 folder and writes the gallery into it in the background: `index.html` (then `page-2.html`, …), `gallery.css`,
-`gallery.js` (the lightbox, with no libraries, so it works offline and opened from the disk), `photos.js`, and each
+`gallery.js` (the lightbox, with no libraries, so it works offline and opened from the disk), `photos.js`, the logo
+(`images/logo.png` or `images/logo.jpg`, as chosen), and each
 photo twice, numbered in order (`images/thumbs/001.jpg`, about 800 pixels on the long edge, and `images/large/001.jpg`,
 2048), as sRGB JPEGs with their Develop edits, screen sharpening, and only the copyright and creator from their metadata.
 A photo that can't be read uses its thumbnail, or has no image (you're told which). If the folder already has an
 `index.html` you're asked before it's replaced; only the gallery's own files are replaced, and pages and images left
-from a larger gallery are removed. Cancel stops it without changing the folder. The folder is shown in the Finder when
+from a larger gallery (or a logo this one doesn't have) are removed. Cancel stops it without changing the folder. The folder is shown in the Finder when
 it's done.
 
 ## Library views

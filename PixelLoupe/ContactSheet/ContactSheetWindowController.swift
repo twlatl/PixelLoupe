@@ -18,10 +18,11 @@ final class ContactSheetWindowController: NSWindowController, NSWindowDelegate {
     private(set) var generateTask: Task<Void, Never>?
     var onClose: (() -> Void)?
 
-    init(photos: [ContactSheetPhoto], thumbnails: ThumbnailStore, sourceName: String, defaults: UserDefaults = Defaults.store) {
+    init(photos: [ContactSheetPhoto], thumbnails: ThumbnailStore, sourceName: String, defaults: UserDefaults = Defaults.store,
+         logos: LogoImages = .shared) {
         self.photos = photos
         self.sourceName = sourceName
-        model = ContactSheetModel(photoCount: photos.count, defaults: defaults)
+        model = ContactSheetModel(photoCount: photos.count, defaults: defaults, logos: logos)
         preview = ContactSheetPreviewView(photos: photos, thumbnails: thumbnails, settings: model.settings)
 
         let window = NSWindow(
@@ -115,7 +116,7 @@ final class ContactSheetWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func settingsChanged() {
-        preview.update(model.settings)
+        preview.update(model.settings, logo: model.logo)
     }
 
     // MARK: Generate
@@ -144,7 +145,7 @@ final class ContactSheetWindowController: NSWindowController, NSWindowDelegate {
     /// Writes the PDF next to `url` and moves it into place once it's complete, so a cancelled or
     /// failed run leaves nothing behind (and an existing file as it was).
     func write(to url: URL) {
-        let photos = photos, settings = model.settings
+        let photos = photos, settings = model.settings, logo = model.logo
         model.progress = 0
         generateTask = Task { [weak self] in
             let fileManager = FileManager.default
@@ -153,7 +154,7 @@ final class ContactSheetWindowController: NSWindowController, NSWindowDelegate {
                 let folder = try fileManager.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: url, create: true)
                 temporaryFolder = folder
                 let temporary = folder.appending(path: url.lastPathComponent)
-                try await ContactSheetPDF.write(photos, settings: settings, to: temporary) { done in
+                try await ContactSheetPDF.write(photos, settings: settings, logo: logo, to: temporary) { done in
                     self?.model.progress = done
                 }
                 try Task.checkCancellation()

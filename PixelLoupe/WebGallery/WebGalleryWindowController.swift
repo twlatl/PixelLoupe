@@ -18,19 +18,22 @@ final class WebGalleryWindowController: NSWindowController, NSWindowDelegate, WK
     /// What Export needs to render each photo, by the photo's ID (from the catalog when the window opens).
     private let exportItems: [UUID: ExportItem]
     private let thumbnails: ThumbnailStore
+    private let logos: LogoImages
     private(set) var generateTask: Task<Void, Never>?
     /// The settings the preview last showed: Output changes don't reload it.
     private var shownSettings: WebGallerySettings
     var onClose: (() -> Void)?
 
     init(photos: [ContactSheetPhoto], exportItems: [UUID: ExportItem] = [:], thumbnails: ThumbnailStore, sourceName: String,
-         defaults: UserDefaults = Defaults.store) {
+         defaults: UserDefaults = Defaults.store, logos: LogoImages = .shared) {
         self.photos = photos
         self.exportItems = exportItems
         self.thumbnails = thumbnails
         self.sourceName = sourceName
-        model = WebGalleryModel(photoCount: photos.count, defaults: defaults)
-        source = WebGalleryPreviewSource(photos: photos, thumbnails: thumbnails, sourceName: sourceName, settings: model.settings)
+        self.logos = logos
+        model = WebGalleryModel(photoCount: photos.count, defaults: defaults, logos: logos)
+        source = WebGalleryPreviewSource(photos: photos, thumbnails: thumbnails, sourceName: sourceName, settings: model.settings,
+                                         logos: logos)
         shownSettings = Self.previewed(model.settings)
 
         let configuration = WKWebViewConfiguration()
@@ -139,10 +142,11 @@ final class WebGalleryWindowController: NSWindowController, NSWindowDelegate, WK
         }
     }
 
-    /// The settings without the headline, description and email, which change only the pages' header
-    /// and title.
+    /// The settings without the logo, headline, description and email, which change only the pages'
+    /// header and title.
     private static func withoutText(_ settings: WebGallerySettings) -> WebGallerySettings {
         var settings = settings
+        settings.logoName = nil
         settings.headline = ""
         settings.description = ""
         settings.email = ""
@@ -162,6 +166,9 @@ final class WebGalleryWindowController: NSWindowController, NSWindowDelegate, WK
             if (old && fresh) old.replaceWith(fresh);
             else if (old) old.remove();
             else if (fresh) document.body.prepend(fresh);
+            // A newly chosen logo has the same path as the last one: ask for it afresh.
+            const logo = fresh && fresh.querySelector("img.logo");
+            if (logo) logo.src = logo.getAttribute("src") + "?" + Date.now();
             document.title = title;
             """, arguments: ["header": WebGalleryHTML.header(settings: model.settings), "title": title],
             in: nil, in: .page, completionHandler: nil)
@@ -220,6 +227,7 @@ final class WebGalleryWindowController: NSWindowController, NSWindowDelegate, WK
     /// or failed run leaves `folder` as it was. Shows it in the Finder when it's done.
     func write(to folder: URL) {
         let photos = writerPhotos, settings = model.settings, sourceName = sourceName
+        let logo = settings.logoName.map(logos.url(named:))
         let watermark = settings.watermarkName.flatMap { WatermarkPresets.shared.preset(named: $0) }.map {
             PhotoExporter.Watermark(settings: $0.settings, imageURL: $0.settings.imageName.map(WatermarkPresets.shared.imageURL(named:)))
         }
@@ -231,7 +239,7 @@ final class WebGalleryWindowController: NSWindowController, NSWindowDelegate, WK
                 let temporary = try fileManager.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: folder, create: true)
                 temporaryFolder = temporary
                 let result = try await WebGalleryWriter.write(photos, settings: settings, sourceName: sourceName, watermark: watermark,
-                                                              to: temporary) { done in
+                                                              logo: logo, to: temporary) { done in
                     self?.model.progress = done
                 }
                 try Task.checkCancellation()

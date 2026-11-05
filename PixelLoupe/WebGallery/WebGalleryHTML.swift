@@ -9,6 +9,9 @@ nonisolated enum WebGalleryHTML {
     static let stylesheetName = "gallery.css"
     static let thumbnailFolder = "images/thumbs"
     static let largeFolder = "images/large"
+    /// The logo's file in a gallery, by its kind: "images/logo.png" or "images/logo.jpg".
+    static let logoNames = ["logo.png", "logo.jpg"]
+    static let logoFolder = "images"
     /// Every photo's large image and caption, for the lightbox to step through the whole gallery.
     static let photosScriptName = "photos.js"
     /// The lightbox.
@@ -31,6 +34,11 @@ nonisolated enum WebGalleryHTML {
     static func index(ofImageNamed name: String) -> Int? {
         guard name.hasSuffix(".jpg"), let number = Int(name.dropLast(4)), number >= 1 else { return nil }
         return number - 1
+    }
+
+    /// Where the gallery keeps its logo ("images/logo.png"), or nil without one.
+    static func logoPath(settings: WebGallerySettings) -> String? {
+        settings.logoName.map { "\(logoFolder)/logo.\(LogoImages.fileExtension(of: $0))" }
     }
 
     // MARK: Pages
@@ -103,13 +111,18 @@ nonisolated enum WebGalleryHTML {
         return pages.count > 1 ? "\(title) (\(page + 1) of \(pages.count))" : title
     }
 
-    /// The headline, description and email at the top of every page; nothing when they're all empty.
+    /// The logo, headline, description and email at the top of every page; nothing when they're all empty.
     static func header(settings: WebGallerySettings) -> String {
         let headline = settings.headline.trimmingCharacters(in: .whitespacesAndNewlines)
         let description = settings.description.trimmingCharacters(in: .whitespacesAndNewlines)
         let email = settings.email.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !headline.isEmpty || !description.isEmpty || !email.isEmpty else { return "" }
+        let logo = logoPath(settings: settings)
+        guard logo != nil || !headline.isEmpty || !description.isEmpty || !email.isEmpty else { return "" }
         var html = "<header>\n"
+        if let logo {
+            // Beside a headline the logo is decoration; on its own it stands for the gallery's name.
+            html += "<img class=\"logo\" src=\"\(logo)\" alt=\"\(headline.isEmpty ? "Logo" : "")\">\n"
+        }
         if !headline.isEmpty { html += "<h1>\(escape(headline))</h1>\n" }
         if !description.isEmpty { html += "<p class=\"description\">\(escape(description))</p>\n" }
         if !email.isEmpty { html += "<p class=\"email\">\(emailLink(email))</p>\n" }
@@ -240,6 +253,7 @@ nonisolated enum WebGalleryHTML {
         }
         a { color: inherit; }
         header { margin-bottom: 24px; }
+        header .logo { display: block; width: auto; height: auto; max-width: 100%; max-height: 96px; margin-bottom: 12px; }
         h1 { margin: 0 0 4px; font-size: 1.6em; font-weight: 600; }
         .description { margin: 0; white-space: pre-line; }
         .email { margin: 4px 0 0; }

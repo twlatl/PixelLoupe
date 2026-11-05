@@ -23,15 +23,21 @@ final class WebGalleryModel {
     @ObservationIgnored var onCancel: (() -> Void)?
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var watermarkObserver: NSObjectProtocol?
+    /// Where the chosen logo is kept.
+    @ObservationIgnored let logos: LogoImages
 
-    init(photoCount: Int, defaults: UserDefaults = Defaults.store, watermarks: WatermarkPresets = .shared) {
+    init(photoCount: Int, defaults: UserDefaults = Defaults.store, watermarks: WatermarkPresets = .shared,
+         logos: LogoImages = .shared) {
         self.photoCount = photoCount
         self.defaults = defaults
+        self.logos = logos
         let names = watermarks.all.map(\.name)
         watermarkNames = names
         var settings = WebGallerySettings.remembered(in: defaults)
         // A watermark deleted since is no watermark.
         if let name = settings.watermarkName, !names.contains(name) { settings.watermarkName = nil }
+        // So is a logo deleted from the logos folder.
+        if let name = settings.logoName, !logos.exists(named: name) { settings.logoName = nil }
         self.settings = settings
         watermarkObserver = NotificationCenter.default.addObserver(
             forName: WatermarkPresets.didChangeNotification, object: watermarks, queue: .main
@@ -100,6 +106,7 @@ struct WebGalleryPanel: View {
     private var form: some View {
         Form {
             Section("Text") {
+                LogoPicker(name: $model.settings.logoName, identifier: "webGallery", store: model.logos)
                 TextField("Headline", text: $model.settings.headline, prompt: Text("None"))
                     .accessibilityIdentifier("webGalleryHeadline")
                 TextField("Description", text: $model.settings.description, prompt: Text("None"), axis: .vertical)
