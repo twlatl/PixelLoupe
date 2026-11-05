@@ -184,9 +184,15 @@ struct SidebarStateTests {
         for identifier in ["photoGrid", "filmstrip"] {
             let view = try #require(collectionViews.first { $0.accessibilityIdentifier() == identifier })
             let frame = view.frameForItem(at: index)
-            #expect(view.visibleRect.contains(frame), "\(identifier): \(frame) not in \(view.visibleRect)")
+            // In view along the scroll axis. (A filmstrip cell is a point taller than the strip at each edge, so
+            // it never fits the other way.)
+            let visible = view.visibleRect
+            let inView = identifier == "filmstrip"
+                ? frame.minX >= visible.minX && frame.maxX <= visible.maxX
+                : frame.minY >= visible.minY && frame.maxY <= visible.maxY
+            #expect(inView, "\(identifier): \(frame) not in \(visible)")
             // Centred (as far as the ends of the list allow): within a cell of the middle.
-            let middle = identifier == "filmstrip" ? (view.visibleRect.midX, frame.midX, frame.width) : (view.visibleRect.midY, frame.midY, frame.height)
+            let middle = identifier == "filmstrip" ? (visible.midX, frame.midX, frame.width) : (visible.midY, frame.midY, frame.height)
             #expect(abs(middle.0 - middle.1) <= middle.2, "\(identifier) isn't centred")
         }
     }
