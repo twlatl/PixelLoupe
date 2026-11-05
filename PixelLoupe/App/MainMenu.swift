@@ -132,6 +132,8 @@ import AppKit
     @objc optional func addSubjectMask(_ sender: Any?)
     @objc optional func addBackgroundMask(_ sender: Any?)
     @objc optional func showMaskOverlay(_ sender: Any?)
+    @objc optional func cycleCropGuideOverlay(_ sender: Any?)
+    @objc optional func chooseCropGuideOverlay(_ sender: NSMenuItem)
     @objc optional func showBeforeAfter(_ sender: NSMenuItem)
     @objc optional func removePhoto(_ sender: Any?)
     @objc optional func removeSelectedPhotos(_ sender: Any?)
@@ -376,6 +378,7 @@ enum MainMenu {
         // N, as in Lightroom; handled as a key by the window like C.
         menu.addItem(item("Survey", #selector(PixelLoupeActions.survey(_:)), "n", modifiers: []))
         menu.addItem(item("Crop & Straighten", #selector(PixelLoupeActions.cropTool(_:)), "r", modifiers: []))
+        menu.addItem(submenuItem(cropGuideOverlayMenu()))
         menu.addItem(item("Enlarge Photo", #selector(PixelLoupeActions.enlargePhoto(_:))))
         menu.addItem(item("View Photo Full Screen", #selector(PixelLoupeActions.viewPhotoFullScreen(_:))))
         menu.addItem(item("Show Loupe", #selector(PixelLoupeActions.toggleLoupe(_:))))
@@ -408,6 +411,18 @@ enum MainMenu {
                           String(Character(UnicodeScalar(NSF6FunctionKey)!)), modifiers: []))
         // AppKit retitles this Enter/Exit Full Screen and won't add its own duplicate.
         menu.addItem(item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", modifiers: [.command, .control]))
+        return menu
+    }
+
+    /// Lightroom's Tools ▸ Crop Guide Overlay: the guides (each item's tag is its index in
+    /// ``CropGuideOverlay/allCases``) and O to cycle them, handled as a key by the window like C.
+    private static func cropGuideOverlayMenu() -> NSMenu {
+        let menu = NSMenu(title: "Crop Guide Overlay")
+        for (index, overlay) in CropGuideOverlay.allCases.enumerated() {
+            menu.addItem(item(overlay.title, #selector(PixelLoupeActions.chooseCropGuideOverlay(_:)), tag: index))
+        }
+        menu.addItem(.separator())
+        menu.addItem(item("Cycle Overlay", #selector(PixelLoupeActions.cycleCropGuideOverlay(_:)), "o", modifiers: []))
         return menu
     }
 

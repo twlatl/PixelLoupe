@@ -957,6 +957,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         cropPanel.onChange = { [weak self] crop, _ in self?.cropChanged(crop) }
         cropOverlay.onChange = { [weak self] crop, _ in self?.cropChanged(crop) }
         cropOverlay.toolOverlay = cropPanel.toolOverlay
+        cropOverlay.guideOverlay = .saved
         cropPanel.onOverlayChange = { [weak self] overlay in self?.cropOverlay.toolOverlay = overlay }
         cropPanel.onAspect = { [weak self] aspect in self?.setCropAspect(aspect) }
         cropPanel.onAuto = { [weak self] in self?.autoStraighten() }
@@ -1044,6 +1045,21 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     }
 
     /// X: swaps the crop between landscape and portrait, keeping its aspect ratio.
+    /// The crop's composition guide (View ▸ Crop Guide Overlay).
+    var cropGuideOverlay: CropGuideOverlay { cropOverlay.guideOverlay }
+
+    /// O while cropping: the next guide.
+    func cycleCropGuideOverlay() { setCropGuideOverlay(cropOverlay.guideOverlay.next) }
+
+    /// Shows a guide and flashes its name. With Tool Overlay on Never it turns to Always, so the change
+    /// is visible.
+    func setCropGuideOverlay(_ overlay: CropGuideOverlay) {
+        CropGuideOverlay.saved = overlay
+        cropOverlay.guideOverlay = overlay
+        if cropPanel.toolOverlay == .never { cropPanel.setToolOverlay(.always) }
+        cropOverlay.flashGuideName()
+    }
+
     func flipCropOrientation() {
         guard let source else { return }
         var crop = adjustments.crop

@@ -11,6 +11,10 @@ final class CropOverlayView: NSView {
     var imageSize = CGSize(width: 1, height: 1)
     var crop = PhotoAdjustments.Crop() { didSet { needsDisplay = true } }
     var toolOverlay = CropPanelViewController.ToolOverlay.auto { didSet { needsDisplay = true } }
+    var guideOverlay = CropGuideOverlay.default { didSet { needsDisplay = true } }
+    /// The guide's name, shown briefly after O changes it.
+    private(set) var flashedName: String?
+    private var flashGeneration = 0
     var isStraightening = false {
         didSet { window?.invalidateCursorRects(for: self) }
     }
@@ -91,18 +95,15 @@ final class CropOverlayView: NSView {
         NSColor.black.withAlphaComponent(0.55).setFill()
         shade.fill()
 
-        let isDragging = drag != nil
-        if toolOverlay == .always || (toolOverlay == .auto && isDragging) {
-            let grid = NSBezierPath()
-            for fraction in [1.0 / 3, 2.0 / 3] {
-                grid.move(to: CGPoint(x: rect.minX + rect.width * fraction, y: rect.minY))
-                grid.line(to: CGPoint(x: rect.minX + rect.width * fraction, y: rect.maxY))
-                grid.move(to: CGPoint(x: rect.minX, y: rect.minY + rect.height * fraction))
-                grid.line(to: CGPoint(x: rect.maxX, y: rect.minY + rect.height * fraction))
+        if showsGuide {
+            let guide = NSBezierPath()
+            for segment in guideOverlay.segments(in: rect) {
+                guide.move(to: segment.start)
+                guide.line(to: segment.end)
             }
-            grid.lineWidth = 0.5
+            guide.lineWidth = 0.5
             NSColor.white.withAlphaComponent(0.6).setStroke()
-            grid.stroke()
+            guide.stroke()
         }
 
         let border = NSBezierPath(rect: rect.insetBy(dx: 0.5, dy: 0.5))
@@ -144,6 +145,45 @@ final class CropOverlayView: NSView {
                 NSBezierPath(ovalIn: CGRect(x: p.x - 3, y: p.y - 3, width: 6, height: 6)).fill()
             }
         }
+
+        if let flashedName { drawName(flashedName, in: rect) }
+    }
+
+    /// Whether the guide shows: always, never, or (Auto) while dragging and just after O changes it.
+    var showsGuide: Bool {
+        switch toolOverlay {
+        case .always: true
+        case .never: false
+        case .auto: drag != nil || flashedName != nil
+        }
+    }
+
+    /// Shows the guide's name for a second, centred near the top of the crop.
+    func flashGuideName() {
+        flashGeneration += 1
+        let generation = flashGeneration
+        flashedName = guideOverlay.title
+        setAccessibilityValue(guideOverlay.title)
+        needsDisplay = true
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard let self, flashGeneration == generation else { return }
+            flashedName = nil
+            needsDisplay = true
+        }
+    }
+
+    private func drawName(_ name: String, in rect: CGRect) {
+        let text = NSAttributedString(string: name, attributes: [
+            .font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .medium),
+            .foregroundColor: NSColor.white,
+        ])
+        let size = text.size()
+        let badge = CGRect(x: rect.midX - size.width / 2 - 10, y: rect.maxY - size.height - 20,
+                           width: size.width + 20, height: size.height + 8)
+        NSColor.black.withAlphaComponent(0.6).setFill()
+        NSBezierPath(roundedRect: badge, xRadius: badge.height / 2, yRadius: badge.height / 2).fill()
+        text.draw(at: CGPoint(x: badge.minX + 10, y: badge.minY + 4))
     }
 
     // MARK: - Cursors
