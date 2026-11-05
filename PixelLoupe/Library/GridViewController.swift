@@ -75,15 +75,20 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
         view = matte
     }
 
-    private var hasScrolledToRestoredSelection = false
+    private var hasAppeared = false
+    /// Keeps the photo the catalog opened with centred while the window settles (RAW-258).
+    private lazy var restoredSelectionPin = RestoredSelectionPin(collectionView: collectionView, axis: .vertical) { [weak self] in
+        self?.dataSource.indexPath(for: $0)
+    }
 
-    /// Brings a selection restored from the last session into view.
+    /// Centres the photo the catalog opened with; it stays pinned while the window settles.
     override func viewDidAppear() {
         super.viewDidAppear()
-        guard !hasScrolledToRestoredSelection else { return }
-        hasScrolledToRestoredSelection = true
+        guard !hasAppeared else { return }
+        hasAppeared = true
         view.layoutSubtreeIfNeeded()
-        scrollToSelection()
+        restoredSelectionPin.centre()
+        restoredSelectionPin.settle()
     }
 
     override func viewDidLoad() {
@@ -119,12 +124,17 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
         )
         fetchedResultsController.delegate = self
         refetch()
+        restoredSelectionPin.pin(state.selectedPhotoIDs.first)
 
         state.addObserver(self) { [weak self] change in
             switch change {
-            case .filter: self?.refetch()
+            case .filter:
+                self?.restoredSelectionPin.release()
+                self?.refetch()
             case .thumbnailSize: self?.updateItemSize()
-            case .selection: self?.followSelection()
+            case .selection:
+                if self?.state.selectedPhotoIDs.first != self?.restoredSelectionPin.photoID { self?.restoredSelectionPin.release() }
+                self?.followSelection()
             case .presentation: if self?.state.presentation == .grid { self?.scrollToSelection() }
             case .hoverTracking: self?.updateHoverTracking()
             default: break
@@ -348,6 +358,7 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
 
     private func apply(_ snapshot: NSDiffableDataSourceSnapshot<String, NSManagedObjectID>, animated: Bool) {
         let selected = Set(state.selectedPhotoIDs)
+        let active = state.selectedPhotoIDs.first
         dataSource.apply(snapshot, animatingDifferences: animated && view.window != nil)
         refreshPublishDecorations()
         updateScopePhotoCount(shown: snapshot.numberOfItems)
@@ -356,7 +367,7 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
         // Preserve selection across re-sorts and filter changes where those photos remain visible.
         let indexPaths = Set(selected.compactMap { dataSource.indexPath(for: $0) })
         collectionView.selectionIndexPaths = indexPaths
-        syncSelection()
+        syncSelection(keepingActive: active)
     }
 
     /// Refreshes visible cells for photos whose rating, flag or tags changed (including via undo
@@ -431,10 +442,15 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
         syncSelection()
     }
 
-    private func syncSelection() {
-        state.selectedPhotoIDs = collectionView.selectionIndexPaths.sorted().compactMap {
-            dataSource.itemIdentifier(for: $0)
+    /// Records the grid's selection in grid order, except that `active`, if still selected, stays first (so the
+    /// active photo survives a re-fetch, such as the one restoring a catalog's selection).
+    private func syncSelection(keepingActive active: NSManagedObjectID? = nil) {
+        var ids = collectionView.selectionIndexPaths.sorted().compactMap { dataSource.itemIdentifier(for: $0) }
+        if let active, let index = ids.firstIndex(of: active), index > 0 {
+            ids.remove(at: index)
+            ids.insert(active, at: 0)
         }
+        state.selectedPhotoIDs = ids
     }
 
     /// Mirrors selection changes made elsewhere, such as stepping through photos while enlarged.
