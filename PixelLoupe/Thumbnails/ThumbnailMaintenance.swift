@@ -23,6 +23,16 @@ final class ThumbnailMaintenance {
     private var availabilityObserver: NSObjectProtocol?
     private static let logger = Logger(subsystem: "net.pixegen.PixelLoupe", category: "Thumbnails")
 
+    /// Passes shorter than this (a few redraws after edits, an original coming back) don't show progress.
+    var progressThreshold = 50
+
+    /// The thumbnails drawn and to draw in this pass, for the progress shown under the grid; nil while idle and
+    /// for small passes.
+    private(set) var progress: LibraryState.ImportStatus? {
+        didSet { if progress != oldValue { onProgress(progress) } }
+    }
+    var onProgress: (LibraryState.ImportStatus?) -> Void = { _ in }
+
     init(store: CatalogStore) {
         self.store = store
     }
@@ -44,6 +54,7 @@ final class ThumbnailMaintenance {
         generation += 1
         task?.cancel()
         task = nil
+        progress = nil
     }
 
     private func schedule(after delay: Duration) {
@@ -80,15 +91,20 @@ final class ThumbnailMaintenance {
     private func run() async {
         let directory = store.thumbnails.directory
         let context = store.newBackgroundContext()
+        let generation = generation
         let work = await Self.plan(context: context, directory: directory, fromSmartPreviews: store.thumbnails.drawnFromSmartPreviews)
-        guard !work.isEmpty else { return }
+        guard !work.isEmpty, generation == self.generation else { return }
         Self.logger.info("Drawing \(work.count) thumbnails in the background")
+        let showsProgress = work.count >= progressThreshold
+        if showsProgress { progress = LibraryState.ImportStatus(completed: 0, total: work.count) }
+        defer { if generation == self.generation { progress = nil } }
 
         var seeded = SeededThumbnails.load(from: directory)
         var lowResolution = SeededThumbnails.load(from: directory, origin: .lowResolution)
         var sinceSave = 0
-        for item in work {
+        for (index, item) in work.enumerated() {
             if Task.isCancelled { break }
+            if showsProgress { progress?.completed = index }
             // Use the photo's current edits: they may have changed since the plan was made.
             let request = Photo.fetchRequest()
             request.predicate = NSPredicate(format: "id == %@", item.id as CVarArg)

@@ -79,6 +79,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
 
         modeSelection.onSelect = { [weak self] mode in self?.switchTo(mode) }
         store.availability.start()
+        store.thumbnailMaintenance.onProgress = { [weak self] progress in self?.state.thumbnailStatus = progress }
         store.thumbnailMaintenance.start()
         store.locationBackfill.start()
         store.smartPreviewBuilder.onProgress = { [weak self] progress in self?.state.smartPreviewStatus = progress }

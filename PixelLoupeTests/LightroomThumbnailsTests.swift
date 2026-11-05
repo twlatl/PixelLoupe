@@ -405,6 +405,59 @@ struct ThumbnailMaintenanceTests {
     }
 }
 
+@Suite("Thumbnail maintenance progress")
+@MainActor
+struct ThumbnailMaintenanceProgressTests {
+    private func store(drawing count: Int) throws -> (CatalogStore, TemporaryDirectory) {
+        let directory = try TemporaryDirectory()
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "C.pixelloupe"))
+        for n in 0..<count {
+            let url = directory.url.appending(path: "\(n).jpg")
+            try Fixtures.writeJPEG(to: url, width: 300, height: 200)
+            let photo = Photo(context: store.viewContext)
+            photo.id = UUID()
+            photo.fileName = url.lastPathComponent
+            photo.filePath = url.path(percentEncoded: false)
+            photo.captureDate = Date()
+            photo.importDate = Date()
+            photo.editDate = Date()
+        }
+        try store.viewContext.save()
+        return (store, directory)
+    }
+
+    @Test("A big pass reports its progress under the grid, then clears it")
+    func reports() async throws {
+        let (store, directory) = try store(drawing: 3)
+        defer { withExtendedLifetime(directory) {} }
+        let maintenance = store.thumbnailMaintenance
+        maintenance.progressThreshold = 3
+        var seen: [LibraryState.ImportStatus?] = []
+        maintenance.onProgress = { seen.append($0) }
+        maintenance.start(after: .zero)
+        await maintenance.waitUntilIdle()
+        #expect(seen.first == LibraryState.ImportStatus(completed: 0, total: 3))
+        #expect(seen.compactMap { $0?.completed } == [0, 1, 2])
+        #expect(seen.last == .some(nil))
+        #expect(maintenance.progress == nil)
+        maintenance.stop()
+    }
+
+    @Test("A small pass shows no progress")
+    func quietWhenSmall() async throws {
+        let (store, directory) = try store(drawing: 2)
+        defer { withExtendedLifetime(directory) {} }
+        let maintenance = store.thumbnailMaintenance
+        maintenance.progressThreshold = 3
+        var seen: [LibraryState.ImportStatus?] = []
+        maintenance.onProgress = { seen.append($0) }
+        maintenance.start(after: .zero)
+        await maintenance.waitUntilIdle()
+        #expect(seen.isEmpty)
+        maintenance.stop()
+    }
+}
+
 @Suite("Lightroom import: Build Previews")
 @MainActor
 struct LightroomImportPreviewOptionsTests {
