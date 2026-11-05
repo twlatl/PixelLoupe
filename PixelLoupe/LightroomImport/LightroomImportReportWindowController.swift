@@ -35,6 +35,9 @@ final class LightroomImportReportWindowController: NSWindowController {
         document.spacing = 6
         document.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         document.translatesAutoresizingMaskIntoConstraints = false
+        // Rows and wrapping text that span the report: given its width (inside the insets), so group titles truncate
+        // before their Show Photos button reaches the edge and labels wrap at the width their height is measured for.
+        var fullWidth: [NSView] = []
 
         let heading = NSTextField(labelWithString: "Imported “\(report.sourceName)”")
         heading.font = .systemFont(ofSize: 17, weight: .semibold)
@@ -65,9 +68,12 @@ final class LightroomImportReportWindowController: NSWindowController {
             let none = NSTextField(wrappingLabelWithString: "Every Lightroom setting was carried over.")
             none.textColor = .secondaryLabelColor
             document.addArrangedSubview(none)
+            fullWidth.append(none)
         } else {
             for group in report.groups {
-                document.addArrangedSubview(groupRow(group))
+                let row = groupRow(group)
+                document.addArrangedSubview(row)
+                fullWidth.append(row)
             }
             let all = NSButton(title: "Show All Photos with Differences", target: self, action: #selector(showAll(_:)))
             all.setAccessibilityIdentifier("lightroomReportShowAll")
@@ -81,6 +87,7 @@ final class LightroomImportReportWindowController: NSWindowController {
                 let label = NSTextField(wrappingLabelWithString: "• " + warning)
                 label.textColor = .secondaryLabelColor
                 document.addArrangedSubview(label)
+                fullWidth.append(label)
             }
             if report.warnings.count > 50 {
                 document.addArrangedSubview(NSTextField(labelWithString: "…and \(report.warnings.count - 50) more"))
@@ -101,6 +108,8 @@ final class LightroomImportReportWindowController: NSWindowController {
             document.trailingAnchor.constraint(equalTo: clip.trailingAnchor),
             document.bottomAnchor.constraint(equalTo: clip.bottomAnchor),
         ])
+        let insets = document.edgeInsets.left + document.edgeInsets.right
+        NSLayoutConstraint.activate(fullWidth.map { $0.widthAnchor.constraint(equalTo: document.widthAnchor, constant: -insets) })
 
         let close = NSButton(title: "Done", target: self, action: #selector(done(_:)))
         close.keyEquivalent = "\r"
@@ -131,6 +140,8 @@ final class LightroomImportReportWindowController: NSWindowController {
         let title = NSTextField(labelWithString: "\(group.title) (\(group.photoCount.formatted()) \(group.photoCount == 1 ? "photo" : "photos"))")
         title.lineBreakMode = .byTruncatingTail
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // The title takes the row's spare width, so the buttons line up at the trailing edge.
+        title.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
         let button = NSButton(title: "Show Photos", target: self, action: #selector(showPhotos(_:)))
         button.identifier = NSUserInterfaceItemIdentifier(group.key)
         button.controlSize = .small
