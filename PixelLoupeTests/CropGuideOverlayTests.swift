@@ -265,6 +265,26 @@ struct CropGuideOverlayTests {
             .max() ?? 0
     }
 
+    @Test func guideLinesAreWhiteWithADarkBorder() throws {
+        let view = CropOverlayView(frame: CGRect(x: 0, y: 0, width: 300, height: 200))
+        view.frameRect = view.bounds
+        view.toolOverlay = .always
+        let rep = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: rep)
+        let scale = rep.pixelsWide / 300
+        // The thirds line at x = 100 points: 2 white pixels, then 2 half-black pixels on each side.
+        let row = 50 * scale, line = 100 * scale
+        for x in [line - 1, line] {
+            let color = try #require(rep.colorAt(x: x, y: row)?.usingColorSpace(.deviceRGB))
+            #expect(color.alphaComponent > 0.99 && color.brightnessComponent > 0.99, "white at \(x)")
+        }
+        for x in [line - 3, line - 2, line + 1, line + 2] {
+            let color = try #require(rep.colorAt(x: x, y: row)?.usingColorSpace(.deviceRGB))
+            #expect(abs(color.alphaComponent - 0.5) < 0.05 && color.brightnessComponent < 0.01, "half black at \(x)")
+        }
+        #expect(try #require(rep.colorAt(x: line - 5, y: row)).alphaComponent == 0)
+    }
+
     @Test func theDrawnGuideFollowsTheChoice() throws {
         let view = CropOverlayView(frame: CGRect(x: 0, y: 0, width: 300, height: 200))
         view.frameRect = view.bounds
