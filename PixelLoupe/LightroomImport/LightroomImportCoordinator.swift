@@ -202,6 +202,7 @@ final class LightroomImportCoordinator {
                 // Lightroom's own smart collections (Five Stars, Past Month…) came across, so PixelLoupe's
                 // starter set would only duplicate them.
                 store.viewState.createdDefaultCollections = true
+                Self.queuePreviews(request, in: store)
                 completion(store, result)
             } catch {
                 progress.dismiss()
@@ -216,6 +217,17 @@ final class LightroomImportCoordinator {
                 completion(nil, nil)
             }
         }
+    }
+
+    /// Build Previews and Build Smart Previews from the sheet: every imported photo is queued, and the builders
+    /// start once the catalog window opens, with progress under the grid.
+    static func queuePreviews(_ request: LightroomImportRequest, in store: CatalogStore) {
+        guard request.previews == .standard || request.buildsSmartPreviews else { return }
+        let fetch = Photo.fetchRequest()
+        fetch.fetchBatchSize = 500
+        guard let photos = try? store.viewContext.fetch(fetch), !photos.isEmpty else { return }
+        if request.buildsSmartPreviews { store.smartPreviewBuilder.build(photos) }
+        if request.previews == .standard { store.standardPreviewBuilder.build(photos) }
     }
 
     private func report(_ error: Error) {

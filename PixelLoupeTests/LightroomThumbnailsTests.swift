@@ -404,3 +404,44 @@ struct ThumbnailMaintenanceTests {
         #expect(SeededThumbnails.load(from: thumbnails, origin: .lowResolution) == [offlineSmall.id])
     }
 }
+
+@Suite("Lightroom import: Build Previews")
+@MainActor
+struct LightroomImportPreviewOptionsTests {
+    private func store(with names: [String]) throws -> (CatalogStore, TemporaryDirectory) {
+        let directory = try TemporaryDirectory()
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "C.pixelloupe"))
+        for name in names {
+            let photo = Photo(context: store.viewContext)
+            photo.id = UUID()
+            photo.fileName = name
+            photo.filePath = directory.url.appending(path: name).path(percentEncoded: false)
+            photo.captureDate = Date()
+            photo.importDate = Date()
+            photo.editDate = Date()
+        }
+        try store.viewContext.save()
+        return (store, directory)
+    }
+
+    private func request(previews: ImportPreviewLevel, smart: Bool, in directory: TemporaryDirectory) -> LightroomImportRequest {
+        LightroomImportRequest(
+            packageURL: directory.url.appending(path: "C.pixelloupe"), info: Fixtures.referencedInfo,
+            previews: previews, buildsSmartPreviews: smart)
+    }
+
+    @Test("Standard and Smart Previews queue the imported photos; Minimal queues nothing")
+    func queues() throws {
+        let (store, directory) = try store(with: ["a.cr2", "b.nef", "c.jpg"])
+        LightroomImportCoordinator.queuePreviews(request(previews: .minimal, smart: false, in: directory), in: store)
+        #expect(store.standardPreviewBuilder.progress == nil)
+        #expect(store.smartPreviewBuilder.progress == nil)
+
+        LightroomImportCoordinator.queuePreviews(request(previews: .standard, smart: true, in: directory), in: store)
+        // Standard previews are for RAW files only; Smart Previews for every still.
+        #expect(store.standardPreviewBuilder.progress?.total == 2)
+        #expect(store.smartPreviewBuilder.progress?.total == 3)
+        store.standardPreviewBuilder.stop()
+        store.smartPreviewBuilder.stop()
+    }
+}
