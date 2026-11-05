@@ -39,6 +39,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
     init(store: CatalogStore) {
         self.store = store
         CollectionEditing(store: store).createDefaultSmartCollections()
+        state.selectionMemory = SelectionMemory(saved: store.viewState.sourceSelections, context: store.viewContext)
         Self.restoreSelection(store.viewState, into: state, context: store.viewContext)
         store.pruneOrphanedPreviews()
         rootViewController = RootViewController(store: store, state: state)
@@ -222,9 +223,12 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         viewState.filterCriteria = state.filter.criteria
         viewState.isFilterBarVisible = state.isFilterBarVisible
         viewState.metadataBrowserHeight = state.metadataBrowserHeight
-        viewState.selectedPhotos = state.selectedPhotoIDs.prefix(CatalogViewState.maximumSavedSelection).compactMap {
-            (try? store.viewContext.existingObject(with: $0) as? Photo)?.id
-        }
+        // All of the source's selection, including photos the filter bar hides.
+        viewState.selectedPhotos = state.selectionMemory?.photos(for: state.filter.scope)
+            ?? state.selectedPhotoIDs.prefix(CatalogViewState.maximumSavedSelection).compactMap {
+                (try? store.viewContext.existingObject(with: $0) as? Photo)?.id
+            }
+        viewState.sourceSelections = state.selectionMemory?.saved ?? []
         store.viewState = viewState
     }
 
@@ -938,14 +942,16 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         editing.photos(state.selectedPhotoIDs).contains { $0.stack != nil }
     }
 
-    /// Photos hidden by a collapsed stack can't stay selected: the stack's top photo is selected instead.
+    /// Photos hidden by a collapsed stack can't stay selected: the stack's top photo is selected instead (see
+    /// `GridViewController.shown(_:)`, which does the same for a source's remembered selection).
     func selectTopsOfCollapsedStacks(for photos: [Photo]? = nil) {
         var result: [NSManagedObjectID] = []
         for photo in photos ?? editing.photos(state.selectedPhotoIDs) {
             let shown = photo.isHiddenInStack ? (photo.stack?.topPhoto ?? photo) : photo
             if !result.contains(shown.objectID) { result.append(shown.objectID) }
         }
-        if result != state.selectedPhotoIDs { state.selectedPhotoIDs = result }
+        // The source still remembers the hidden photos, for when the stack is expanded.
+        if result != state.selectedPhotoIDs { state.showSelection(result) }
     }
 
     /// ⌘G: the selected photos (in grid order) become a stack, collapsed under the first.

@@ -37,10 +37,12 @@ nonisolated enum WebGalleryWriter {
 
     private static let context = CIContext(options: [.cacheIntermediates: false])
 
-    /// The files a gallery of `count` photos in `pages` pages writes, relative to its folder.
-    static func files(count: Int, pages: Int) -> [String] {
+    /// The files a gallery of `count` photos in `pages` pages writes, relative to its folder (with
+    /// `logo`, its logo's path).
+    static func files(count: Int, pages: Int, logo: String? = nil) -> [String] {
         (0..<pages).map(WebGalleryPages.fileName(ofPage:))
             + [WebGalleryHTML.stylesheetName, WebGalleryHTML.photosScriptName, WebGalleryHTML.scriptName]
+            + (logo.map { [$0] } ?? [])
             + (0..<count).flatMap { index in
                 let name = WebGalleryHTML.imageName(index: index, count: count)
                 return ["\(WebGalleryHTML.thumbnailFolder)/\(name)", "\(largeFolder)/\(name)"]
@@ -48,15 +50,24 @@ nonisolated enum WebGalleryWriter {
     }
 
     /// Writes the gallery into `folder` (which should be empty), reporting the fraction done on the
-    /// main actor. Throws `CancellationError` when cancelled.
+    /// main actor. `logo` is the chosen logo's file, copied in when the settings have one. Throws
+    /// `CancellationError` when cancelled.
     @concurrent
-    static func write(_ photos: [Photo], settings: WebGallerySettings, sourceName: String,
-                      watermark: PhotoExporter.Watermark?, to folder: URL,
+    static func write(_ photos: [Photo], settings chosen: WebGallerySettings, sourceName: String,
+                      watermark: PhotoExporter.Watermark?, logo: URL? = nil, to folder: URL,
                       progress: @escaping @MainActor @Sendable (Double) -> Void) async throws -> Result {
         let fileManager = FileManager.default
         for path in [WebGalleryHTML.thumbnailFolder, largeFolder] {
             try fileManager.createDirectory(at: folder.appending(path: path), withIntermediateDirectories: true)
         }
+        var withLogo = chosen
+        if let logo, let path = WebGalleryHTML.logoPath(settings: chosen) {
+            try fileManager.copyItem(at: logo, to: folder.appending(path: path))
+        } else {
+            // No file, no logo on the pages (rather than a broken image).
+            withLogo.logoName = nil
+        }
+        let settings = withLogo
         let snapshots = photos.map(\.photo)
         let pages = WebGalleryPages(photoCount: photos.count, photosPerPage: settings.photosPerPage)
         try Data(WebGalleryHTML.stylesheet(settings: settings).utf8).write(to: folder.appending(path: WebGalleryHTML.stylesheetName))
@@ -101,14 +112,15 @@ nonisolated enum WebGalleryWriter {
 
     /// Moves the gallery written in `temporary` into `folder`, replacing the files a gallery writes
     /// and leaving everything else in it alone. Pages and images an earlier, larger gallery left
-    /// there (`page-9.html`, `images/large/120.jpg`) are removed, so they don't outlive it.
+    /// there (`page-9.html`, `images/large/120.jpg`), and a logo this one doesn't have, are removed,
+    /// so they don't outlive it.
     @concurrent
     static func install(from temporary: URL, into folder: URL) async throws {
         let fileManager = FileManager.default
         func contents(_ path: String, in base: URL) -> [String] {
             (try? fileManager.contentsOfDirectory(atPath: base.appending(path: path).path(percentEncoded: false))) ?? []
         }
-        for directory in ["", WebGalleryHTML.thumbnailFolder, largeFolder] {
+        for directory in ["", WebGalleryHTML.logoFolder, WebGalleryHTML.thumbnailFolder, largeFolder] {
             let written = Set(contents(directory, in: temporary))
             let destination = directory.isEmpty ? folder : folder.appending(path: directory)
             try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
@@ -120,9 +132,11 @@ nonisolated enum WebGalleryWriter {
                 _ = try fileManager.replaceItemAt(destination.appending(path: name), withItemAt: source)
             }
             for name in contents(directory, in: folder) where !written.contains(name) {
-                let isOurs = directory.isEmpty
-                    ? WebGalleryPages.page(named: name).map { $0 > 0 } ?? false
-                    : WebGalleryHTML.index(ofImageNamed: name) != nil
+                let isOurs = switch directory {
+                case "": WebGalleryPages.page(named: name).map { $0 > 0 } ?? false
+                case WebGalleryHTML.logoFolder: WebGalleryHTML.logoNames.contains(name)
+                default: WebGalleryHTML.index(ofImageNamed: name) != nil
+                }
                 if isOurs { try? fileManager.removeItem(at: destination.appending(path: name)) }
             }
         }

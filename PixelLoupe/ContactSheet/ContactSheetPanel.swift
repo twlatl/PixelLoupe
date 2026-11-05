@@ -8,12 +8,15 @@ final class ContactSheetModel {
     var settings: ContactSheetSettings {
         didSet {
             guard settings != oldValue else { return }
-            layout = ContactSheetLayout(settings: settings, photoCount: photoCount)
+            if settings.logoName != oldValue.logoName { loadLogo() }
+            layout = makeLayout()
             settings.remember(in: defaults)
             onChange?()
         }
     }
     private(set) var layout: ContactSheetLayout
+    /// The chosen logo once it has been read (nil while it loads, and without one).
+    private(set) var logo: CGImage?
     let photoCount: Int
     /// While the PDF is written: how much is done (0…1).
     var progress: Double?
@@ -22,13 +25,39 @@ final class ContactSheetModel {
     @ObservationIgnored var onGenerate: (() -> Void)?
     @ObservationIgnored var onCancel: (() -> Void)?
     @ObservationIgnored private let defaults: UserDefaults
+    /// Where the chosen logo is kept.
+    @ObservationIgnored let logos: LogoImages
+    @ObservationIgnored private var logoTask: Task<Void, Never>?
 
-    init(photoCount: Int, defaults: UserDefaults = Defaults.store) {
+    init(photoCount: Int, defaults: UserDefaults = Defaults.store, logos: LogoImages = .shared) {
         self.photoCount = photoCount
         self.defaults = defaults
-        let settings = ContactSheetSettings.remembered(in: defaults)
+        self.logos = logos
+        var settings = ContactSheetSettings.remembered(in: defaults)
+        // A logo deleted from the logos folder since is no logo.
+        if let name = settings.logoName, !logos.exists(named: name) { settings.logoName = nil }
         self.settings = settings
         layout = ContactSheetLayout(settings: settings, photoCount: photoCount)
+        loadLogo()
+    }
+
+    private func makeLayout() -> ContactSheetLayout {
+        ContactSheetLayout(settings: settings, photoCount: photoCount, logoAspect: logo.map(ContactSheetLayout.aspect(of:)))
+    }
+
+    /// Reads the chosen logo off the main thread, then lays the sheet out again around it.
+    private func loadLogo() {
+        logoTask?.cancel()
+        logo = nil
+        guard let name = settings.logoName else { return }
+        let url = logos.url(named: name)
+        logoTask = Task { [weak self] in
+            let image = await LogoImages.load(url)
+            guard let self, !Task.isCancelled, settings.logoName == name else { return }
+            logo = image
+            layout = makeLayout()
+            onChange?()
+        }
     }
 
     /// The image size slider: right is larger photos, so fewer columns.
@@ -62,6 +91,7 @@ struct ContactSheetPanel: View {
         VStack(spacing: 0) {
             Form {
                 Section("Text") {
+                    LogoPicker(name: $model.settings.logoName, identifier: "contactSheet", store: model.logos)
                     TextField("Headline", text: $model.settings.headline, prompt: Text("None"))
                         .accessibilityIdentifier("contactSheetHeadline")
                     TextField("Description", text: $model.settings.description, prompt: Text("None"), axis: .vertical)

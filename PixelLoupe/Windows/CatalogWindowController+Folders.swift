@@ -93,6 +93,7 @@ extension CatalogWindowController {
     /// Keeps the renamed folder (or one inside it) on screen and expanded as it was.
     func followFolder(from oldPath: String, to newPath: String) {
         rootViewController.main.sidebar.renameExpandedFolders(from: oldPath, to: newPath)
+        state.selectionMemory?.renameFolder(from: oldPath, to: newPath)
         if case .folder(let shown) = state.filter.scope, shown == oldPath || shown.hasPrefix(oldPath + "/") {
             state.filter.scope = .folder(path: newPath + String(shown.dropFirst(oldPath.count)))
         }
