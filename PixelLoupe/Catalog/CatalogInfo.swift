@@ -124,6 +124,7 @@ nonisolated enum CatalogPackage {
     static let databaseFileName = "Catalog.sqlite"
     static let thumbnailsDirectoryName = "Thumbnails"
     static let smartPreviewsDirectoryName = "Smart Previews"
+    static let standardPreviewsDirectoryName = "Previews"
     static let viewStateFileName = "ViewState.plist"
     static let lightroomImportReportFileName = "LightroomImport.json"
 
@@ -137,5 +138,9 @@ nonisolated enum CatalogPackage {
     /// Made when the first Smart Preview is written.
     static func smartPreviewsURL(in package: URL) -> URL {
         package.appending(path: smartPreviewsDirectoryName, directoryHint: .isDirectory)
+    }
+    /// Made when the first Standard preview is written.
+    static func standardPreviewsURL(in package: URL) -> URL {
+        package.appending(path: standardPreviewsDirectoryName, directoryHint: .isDirectory)
     }
 }

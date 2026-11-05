@@ -236,14 +236,23 @@ final class SurveyPhotoView: NSView {
         imageLayer.contents = nil
         refreshCaption()
         guard let photo else { return }
-        if let cached = store.thumbnails.cachedImage(for: photo.id) { setImage(cached) }
+        if let cached = store.standardPreviews.cachedImage(for: photo.id) ?? store.thumbnails.cachedImage(for: photo.id) {
+            setImage(cached)
+        }
         let uuid = photo.id
         let thumbnails = store.thumbnails
+        let previews = store.standardPreviews
+        let showsPreview = previews.isCurrent(uuid) && previews.cachedImage(for: uuid) == nil
         loadTask?.cancel()
         loadTask = Task { [weak self] in
             if self?.imageLayer.contents == nil, let thumbnail = await thumbnails.image(for: uuid) {
                 guard let self, !Task.isCancelled, photoID == id else { return }
                 setImage(thumbnail)
+            }
+            // The Standard preview, a larger rendering, until the full render arrives (RAW-84).
+            if showsPreview, let preview = await previews.image(for: uuid) {
+                guard let self, !Task.isCancelled, photoID == id, shownPixels < CGFloat(max(preview.width, preview.height)) else { return }
+                setImage(preview)
             }
             self?.scheduleRender(delay: 0)
         }

@@ -199,7 +199,7 @@ final class PhotoViewer: NSView {
             return
         }
         setAccessibilityLabel(photo.fileName)
-        imageLayer.contents = store.thumbnails.cachedImage(for: photo.id)
+        imageLayer.contents = store.standardPreviews.cachedImage(for: photo.id) ?? store.thumbnails.cachedImage(for: photo.id)
         updateMissingBanner()
         loadFullSize()
         layoutImage()
@@ -219,6 +219,8 @@ final class PhotoViewer: NSView {
         let adjustments = photo.adjustments
         let pixels = max(targetPixels, 512)
         let thumbnails = store.thumbnails
+        let previews = store.standardPreviews
+        let showsPreview = renderedSize == 0 && previews.isCurrent(uuid) && previews.cachedImage(for: uuid) == nil
         let queue = renderQueue
         // Cancelling the previous render drops it from the queue if it hasn't started, so moving quickly
         // through photos leaves at most the one rendering and the latest waiting (RAW-256).
@@ -228,6 +230,11 @@ final class PhotoViewer: NSView {
             if self?.imageLayer.contents == nil, let thumbnail = await thumbnails.image(for: uuid) {
                 guard let self, !Task.isCancelled, photoID == id else { return }
                 imageLayer.contents = thumbnail
+            }
+            // The Standard preview, a larger rendering, until the full render arrives (RAW-84).
+            if showsPreview, let preview = await previews.image(for: uuid) {
+                guard let self, !Task.isCancelled, photoID == id, renderedSize == 0 else { return }
+                imageLayer.contents = preview
             }
             let rendered = await PhotoRenderer.render(location, adjustments: adjustments, maxPixels: pixels, queue: queue)
             guard let self, !Task.isCancelled, photoID == id else { return }

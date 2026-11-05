@@ -55,6 +55,8 @@ import AppKit
     @objc optional func showLightroomImportReport(_ sender: Any?)
     @objc optional func buildSmartPreviews(_ sender: Any?)
     @objc optional func discardSmartPreviews(_ sender: Any?)
+    @objc optional func buildStandardPreviews(_ sender: Any?)
+    @objc optional func discardStandardPreviews(_ sender: Any?)
     @objc optional func showLibrary(_ sender: Any?)
     @objc optional func showDevelop(_ sender: Any?)
     @objc optional func showMap(_ sender: Any?)
@@ -292,6 +294,9 @@ enum MainMenu {
         menu.addItem(.separator())
         // Lightroom's Library ▸ Previews, without shortcuts.
         let previews = NSMenu(title: "Previews")
+        previews.addItem(item("Build Standard Previews", #selector(PixelLoupeActions.buildStandardPreviews(_:))))
+        previews.addItem(item("Discard Standard Previews…", #selector(PixelLoupeActions.discardStandardPreviews(_:))))
+        previews.addItem(.separator())
         previews.addItem(item("Build Smart Previews", #selector(PixelLoupeActions.buildSmartPreviews(_:))))
         previews.addItem(item("Discard Smart Previews…", #selector(PixelLoupeActions.discardSmartPreviews(_:))))
         menu.addItem(submenuItem(previews))

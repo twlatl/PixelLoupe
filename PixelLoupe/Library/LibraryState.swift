@@ -296,6 +296,11 @@ final class LibraryState {
         didSet { if smartPreviewStatus != oldValue { notify(.importStatus) } }
     }
 
+    /// Progress of building Standard previews (RAW-84), shown under the grid.
+    var standardPreviewStatus: ImportStatus? {
+        didSet { if standardPreviewStatus != oldValue { notify(.importStatus) } }
+    }
+
     /// The editor Edit In is preparing photos for, for the progress label.
     var editInApplicationName = ""
 
