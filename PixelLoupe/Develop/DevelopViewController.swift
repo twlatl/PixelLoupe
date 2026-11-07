@@ -1031,6 +1031,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
 
     /// Saves the crop as one undoable edit.
     func commitCrop() {
+        refreshPanelCrop()
         guard let photo = displayedPhoto, photo.adjustments.crop != adjustments.crop else { return }
         var saved = photo.adjustments
         saved.crop = adjustments.crop
@@ -1046,6 +1047,16 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         if let cropSessionStart { adjustments.crop = cropSessionStart }
         showCrop(adjustments.crop)
         state.developTool = .adjust
+        refreshPanelCrop()
+    }
+
+    /// Crop edits don't go through the Adjust panel, so bring its copy of the settings up to date when a
+    /// crop session ends; otherwise its previews (Profile, White Balance) would show the old crop.
+    private func refreshPanelCrop() {
+        guard let source, panel.adjustments.crop != adjustments.crop else { return }
+        var refreshed = panel.adjustments
+        refreshed.crop = adjustments.crop
+        panel.display(refreshed, asShotWhiteBalance: source.asShotWhiteBalance, isRaw: source.isRaw)
     }
 
     /// X: swaps the crop between landscape and portrait, keeping its aspect ratio.
@@ -1517,10 +1528,13 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     /// Shows `previewed` in place of the photo's settings, here and in the Navigator, without saving
     /// anything (a preset under the pointer, a profile highlighted in the Profile menu); `nil` ends it.
     func previewSettings(_ previewed: PhotoAdjustments?) {
-        guard let previewed, displayedPhoto != nil, let source else {
+        guard var previewed, displayedPhoto != nil, let source else {
             endPresetPreview()
             return
         }
+        // The Adjust panel's copy of the crop may be stale (as in `adjustmentsChanged`); a preview only
+        // swaps the looks, so it always shows the photo's current crop.
+        previewed.crop = adjustments.crop
         presetPreview = previewed
         metalView.needsDisplay = true
         // The Navigator's copy, small and off the main thread.
@@ -1557,6 +1571,10 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
 
     /// The Presets panel (for tests).
     var presetsPanelForTesting: PresetsPanelViewController { presetsPanel }
+    /// The Adjust and Crop panels, and the settings a hover preview is showing (for tests).
+    var adjustmentsPanelForTesting: AdjustmentsPanelViewController { panel }
+    var cropPanelForTesting: CropPanelViewController { cropPanel }
+    var previewedAdjustmentsForTesting: PhotoAdjustments? { presetPreview }
 
     /// The preset last applied, for its Amount slider: the settings before it and with it at 100%.
     private var presetAmount: (photo: NSManagedObjectID, preset: DevelopPreset, before: PhotoAdjustments, full: PhotoAdjustments)?
