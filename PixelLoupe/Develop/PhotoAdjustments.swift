@@ -626,8 +626,8 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
 
     struct Vignette: Codable, Equatable, Sendable {
         var isEnabled = true
-        /// Darkens (positive) or lightens (negative) the edges, -1…1.
-        var strength = 0.0
+        /// Darkens (positive) or lightens (negative) the edges, -1…1. Back at 0 it takes the current process.
+        var strength = 0.0 { didSet { if strength == 0 { process = .current } } }
         /// Midpoint: how far from the center the effect begins, 0…1.
         var radius = 0.5
         /// Feather: how gradually it builds, 0…1.
@@ -637,6 +637,18 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
         var style = Style.highlightPriority
         /// With highlight priority, how much bright areas keep their brightness, 0…1.
         var highlightContrast = 0.0
+        /// How the vignette renders. Vignettes made before RAW-275 keep the original process, so their look
+        /// doesn't change.
+        var process = Process.current
+
+        enum Process: Int, Codable, Sendable {
+            /// Black or white laid over the photo in the working space, with a radial-gradient mask.
+            case linearOverlay = 1
+            /// Fitted to Lightroom Classic's post-crop vignette (RAW-275).
+            case fitted = 2
+
+            static let current = fitted
+        }
 
         enum Style: String, Codable, CaseIterable, Sendable {
             /// Darkens or lightens while protecting highlights.
@@ -891,7 +903,7 @@ nonisolated extension PhotoAdjustments.NoiseReduction {
 }
 
 nonisolated extension PhotoAdjustments.Vignette {
-    private enum CodingKeys: String, CodingKey { case isEnabled, strength, radius, softness, roundness, style, highlightContrast }
+    private enum CodingKeys: String, CodingKey { case isEnabled, strength, radius, softness, roundness, style, highlightContrast, process }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -903,6 +915,12 @@ nonisolated extension PhotoAdjustments.Vignette {
         roundness = try container.decodeIfPresent(Double.self, forKey: .roundness) ?? roundness
         style = try container.decodeIfPresent(Style.self, forKey: .style) ?? style
         highlightContrast = try container.decodeIfPresent(Double.self, forKey: .highlightContrast) ?? highlightContrast
+        if strength != 0 {
+            // Vignettes saved without a process predate RAW-275; a process this version doesn't know renders with
+            // the current one.
+            let stored = (try? container.decodeIfPresent(Int.self, forKey: .process)) ?? Process.linearOverlay.rawValue
+            process = Process(rawValue: stored) ?? .current
+        }
     }
 }
 

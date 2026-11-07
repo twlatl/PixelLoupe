@@ -3,8 +3,8 @@
 -- For each <fixtures>/<family>/<case>/ folder with a settings.xmp, imports the case's source.* (a new catalog photo,
 -- never one of yours), applies the XMP's develop settings and exports reference.tif beside it: 16-bit TIFF, Display P3,
 -- 2048 px on the long edge, as Scripts/fidelity.sh expects. A case with raw.<ext> and no source yet gets its source
--- first: the raw exported the same way with Color Grading off, so only Color Grading differs between source and
--- reference. Imported photos go in a "PixelLoupe Fidelity" collection, to remove from the catalog when done.
+-- first: the raw exported the same way with Color Grading and the post-crop vignette off, so only the effect under
+-- test differs between source and reference. Imported photos go in a "PixelLoupe Fidelity" collection, to remove from the catalog when done.
 
 local LrApplication = import "LrApplication"
 local LrDialogs = import "LrDialogs"
@@ -37,13 +37,13 @@ local function developSettings(xmp)
 	return settings
 end
 
--- The same settings with every Color Grading wheel at zero.
-local function withoutColorGrading(settings)
+-- The same settings with every Color Grading wheel and the post-crop vignette at zero.
+local function withoutEffects(settings)
 	local copy = {}
 	for key, value in pairs(settings) do
-		local grading = key:match("^ColorGrade%a+Sat$") or key:match("^ColorGrade%a+Lum$")
-			or key:match("^SplitToning%a+Saturation$")
-		copy[key] = grading and 0 or value
+		local effect = key:match("^ColorGrade%a+Sat$") or key:match("^ColorGrade%a+Lum$")
+			or key:match("^SplitToning%a+Saturation$") or key == "PostCropVignetteAmount"
+		copy[key] = effect and 0 or value
 	end
 	return copy
 end
@@ -159,7 +159,7 @@ LrTasks.startAsyncTask(function()
 				if not source then
 					local raw = firstFile(folder, "raw")
 					if not raw then error("no source.* or raw.*") end
-					render(catalog, collection, raw, withoutColorGrading(settings), folder, "source")
+					render(catalog, collection, raw, withoutEffects(settings), folder, "source")
 					source = LrPathUtils.child(folder, "source.tif")
 				end
 				render(catalog, collection, source, settings, folder, "reference")
