@@ -158,6 +158,64 @@ struct DetailEffectsTests {
         #expect(value(circle, 100, 95) < value(ellipse, 100, 95), "a circle reaches the short edge later")
     }
 
+    @Test("Vignettes saved before RAW-275 keep the original process; new ones and Amount back at 0 take the fitted one")
+    func vignetteProcess() throws {
+        func decode(_ json: String) throws -> PhotoAdjustments.Vignette {
+            try JSONDecoder().decode(PhotoAdjustments.self, from: Data(#"{"vignette":\#(json)}"#.utf8)).vignette
+        }
+        #expect(try decode(#"{"strength":0.5}"#).process == .linearOverlay)
+        #expect(try decode(#"{"strength":0.5,"process":2}"#).process == .fitted)
+        #expect(try decode(#"{"strength":0.5,"process":9}"#).process == .current, "an unknown process renders as current")
+        #expect(try decode(#"{"strength":0}"#).process == .current, "no vignette to keep the look of")
+        var older = try decode(#"{"strength":0.5}"#)
+        older.strength = 0
+        #expect(older.process == .current)
+        #expect(PhotoAdjustments.Vignette().process == .fitted)
+        // Round trip keeps it.
+        var adjustments = PhotoAdjustments()
+        adjustments.vignette = try decode(#"{"strength":0.5}"#)
+        #expect(PhotoAdjustments(data: adjustments.encoded).vignette.process == .linearOverlay)
+    }
+
+    @Test("Lightroom imports get the fitted vignette")
+    func vignetteImportProcess() throws {
+        var adjustments = PhotoAdjustments()
+        let settings = try #require(try LuaTableParser.parse("{ PostCropVignetteAmount = -60 }").table)
+        _ = LightroomDevelopMapper.apply(.init(settings: settings, processVersion: "11.0", whiteBalance: nil, isRaw: false), to: &adjustments)
+        #expect(adjustments.vignette.strength == 0.6 && adjustments.vignette.process == .fitted)
+    }
+
+    @Test("Fitted Paint Overlay darkens the corners to (1 − amount)^2.2 of their linear light, as Lightroom does")
+    func fittedPaintOverlay() {
+        var vignette = PhotoAdjustments.Vignette()
+        vignette.strength = 0.6
+        vignette.style = .paintOverlay
+        let base = CIImage(color: CIColor(red: 0.5, green: 0.5, blue: 0.5)).cropped(to: CGRect(x: 0, y: 0, width: 300, height: 200))
+        let result = VignetteRenderer.apply(vignette, to: base)
+        #expect(abs(value(result, 150, 100) - 0.5) < 0.001, "center")
+        #expect(abs(value(result, 0, 0) - 0.5 * pow(0.4, 2.2)) < 0.005, "corner: \(value(result, 0, 0))")
+        // Lightening: toward white by (amount · falloff)^2.2.
+        vignette.strength = -0.6
+        let lighter = VignetteRenderer.apply(vignette, to: base)
+        #expect(abs(value(lighter, 0, 0) - (0.5 + pow(0.6, 2.2) * 0.5)) < 0.01, "corner: \(value(lighter, 0, 0))")
+    }
+
+    @Test("The fitted falloff is halfway at the edge's midpoint at Midpoint 50, and Feather widens it around there")
+    func fittedFalloff() {
+        let half = FittedVignetteRenderer.levels.firstIndex(of: 0.5)!
+        for feather in [0.0, 0.5, 1.0] {
+            #expect(abs(FittedVignetteRenderer.falloffRadii(midpoint: 0.5, feather: feather)[half] - 1) < 0.01)
+        }
+        let narrow = FittedVignetteRenderer.falloffRadii(midpoint: 0.5, feather: 0.25)
+        let wide = FittedVignetteRenderer.falloffRadii(midpoint: 0.5, feather: 0.75)
+        #expect(wide.first! < narrow.first! && wide.last! > narrow.last!)
+        // Midpoint moves it out; in between grid points it interpolates.
+        let radii = (0...4).map { FittedVignetteRenderer.falloffRadii(midpoint: Double($0) / 4, feather: 0.5)[half] }
+        #expect(zip(radii, radii.dropFirst()).allSatisfy { $0 < $1 })
+        let between = FittedVignetteRenderer.falloffRadii(midpoint: 0.375, feather: 0.5)[half]
+        #expect(between > radii[1] && between < radii[2])
+    }
+
     @Test("The vignette follows the cropped frame")
     func vignetteInPipeline() throws {
         let directory = try TemporaryDirectory()
