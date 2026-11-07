@@ -26,6 +26,10 @@ struct FidelityTests {
         print("Fidelity report: \(reportURL.path)")
         for result in results {
             let m = result.metrics
+            if let grain = result.grain {
+                #expect(result.passes, "\(result.testCase.family)/\(result.testCase.name): grain band ×\(grain.worstBandRatio), mean \(grain.worstMeanShift), color \(grain.worstChroma), \(m.sizeDifference) px off")
+                continue
+            }
             #expect(result.passes, "\(result.testCase.family)/\(result.testCase.name): mean ΔE \(m.meanDeltaE), p95 \(m.p95DeltaE), \(m.sizeDifference) px off; target \(result.target)")
         }
     }
@@ -72,6 +76,63 @@ struct FidelityTests {
         #expect(noisyScore < 0.95 && noisyScore > 0)
         let shifted = (0..<(size * size)).map { image[($0 + 5) % image.count] }
         #expect(ColorDifference.ssim(image, shifted, width: size, height: size) < 0.9)
+    }
+
+    // MARK: Grain statistics
+
+    /// Gray `base` plus monochrome noise of `strength` levels, made `cell` pixels across by a box blur.
+    static func grainImage(width: Int, height: Int, base: (Int, Int) -> Double, strength: Double, cell: Int, seed: UInt64, color: Double = 0) -> CGImage {
+        var state = seed
+        func random() -> Double {
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return Double(state >> 11) / Double(1 << 53) - 0.5
+        }
+        let cellsX = width / cell + 1
+        let noise = (0..<(cellsX * (height / cell + 1))).map { _ in random() * 3.46 }  // unit std
+        let tint = (0..<noise.count).map { _ in random() * 3.46 }
+        var data = [UInt8](repeating: 255, count: width * height * 4)
+        for y in 0..<height {
+            for x in 0..<width {
+                let n = noise[(y / cell) * cellsX + x / cell] * strength, t = tint[(y / cell) * cellsX + x / cell] * color
+                let v = base(x, y), i = (y * width + x) * 4
+                data[i] = UInt8(max(0, min(255, (v + n + t).rounded())))
+                data[i + 1] = UInt8(max(0, min(255, (v + n).rounded())))
+                data[i + 2] = UInt8(max(0, min(255, (v + n - t).rounded())))
+            }
+        }
+        return data.withUnsafeMutableBytes { buffer in
+            CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                      space: FidelityHarness.displayP3, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!.makeImage()!
+        }
+    }
+
+    @Test("Grain statistics see strength, size, mean shift and color, per tone")
+    func grainStatistics() {
+        let width = 768, height = 512
+        // Left half dark, right half light.
+        let tone: (Int, Int) -> Double = { x, _ in x < width / 2 ? 60 : 190 }
+        let base = Self.grainImage(width: width, height: height, base: tone, strength: 0, cell: 1, seed: 1)
+        let fine = GrainStatistics.measure(image: Self.grainImage(width: width, height: height, base: tone, strength: 4, cell: 1, seed: 2), base: base)
+        #expect(fine.bins.count == 2)
+        for bin in fine.bins {
+            // White noise of std 4 lands mostly in the finest band, and its mean and color are ~0.
+            #expect(bin.bands[0] > 2.5 && bin.bands[0] > 2 * bin.bands[2], "\(bin)")
+            #expect(abs(bin.mean) < 0.1 && bin.chroma < 0.5, "\(bin)")
+        }
+        // Coarser grain moves energy into the wider bands.
+        let coarse = GrainStatistics.measure(image: Self.grainImage(width: width, height: height, base: tone, strength: 4, cell: 4, seed: 3), base: base)
+        #expect(coarse.bins[0].bands[2] > 2 * fine.bins[0].bands[2] && coarse.bins[0].bands[0] < fine.bins[0].bands[0])
+
+        // Another seed of the same grain passes; twice as strong, shifted or colored grain doesn't.
+        let again = GrainStatistics.measure(image: Self.grainImage(width: width, height: height, base: tone, strength: 4, cell: 1, seed: 4), base: base)
+        let same = GrainStatistics.compare(render: again, reference: fine)
+        #expect(same.passes, "\(same.bins.map(\.bandRatios))")
+        let strong = GrainStatistics.compare(render: GrainStatistics.measure(image: Self.grainImage(width: width, height: height, base: tone, strength: 8, cell: 1, seed: 5), base: base), reference: fine)
+        #expect(!strong.passes && abs(strong.worstBandRatio - 2) < 0.2)
+        let shifted = GrainStatistics.compare(render: GrainStatistics.measure(image: Self.grainImage(width: width, height: height, base: { tone($0, $1) - 1 }, strength: 4, cell: 1, seed: 6), base: base), reference: fine)
+        #expect(!shifted.passes && abs(shifted.worstMeanShift + 1) < 0.2)
+        let colored = GrainStatistics.compare(render: GrainStatistics.measure(image: Self.grainImage(width: width, height: height, base: tone, strength: 4, cell: 1, seed: 7, color: 2), base: base), reference: fine)
+        #expect(!colored.passes && colored.worstChroma > 1)
     }
 
     // MARK: Sweep fitting

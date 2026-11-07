@@ -2,9 +2,11 @@
 --
 -- For each <fixtures>/<family>/<case>/ folder with a settings.xmp, imports the case's source.* (a new catalog photo,
 -- never one of yours), applies the XMP's develop settings and exports reference.tif beside it: 16-bit TIFF, Display P3,
--- 2048 px on the long edge, as Scripts/fidelity.sh expects. A case with raw.<ext> and no source yet gets its source
--- first: the raw exported the same way with Color Grading and the post-crop vignette off, so only the effect under
--- test differs between source and reference. Imported photos go in a "PixelLoupe Fidelity" collection, to remove from the catalog when done.
+-- 2048 px on the long edge, as Scripts/fidelity.sh expects. A case with export-size.txt is exported at the size it
+-- names instead: "full" (no resizing) or a long edge in pixels. A case with raw.<ext> and no source yet gets its
+-- source first: the raw exported the same way with Color Grading, the post-crop vignette and grain off, so only the
+-- effect under test differs between source and reference. Imported photos go in a "PixelLoupe Fidelity" collection,
+-- to remove from the catalog when done.
 
 local LrApplication = import "LrApplication"
 local LrDialogs = import "LrDialogs"
@@ -37,15 +39,23 @@ local function developSettings(xmp)
 	return settings
 end
 
--- The same settings with every Color Grading wheel and the post-crop vignette at zero.
+-- The same settings with every Color Grading wheel, the post-crop vignette and the grain at zero: a raw case's source.
 local function withoutEffects(settings)
 	local copy = {}
 	for key, value in pairs(settings) do
 		local effect = key:match("^ColorGrade%a+Sat$") or key:match("^ColorGrade%a+Lum$")
-			or key:match("^SplitToning%a+Saturation$") or key == "PostCropVignetteAmount"
+			or key:match("^SplitToning%a+Saturation$") or key == "PostCropVignetteAmount" or key == "GrainAmount"
 		copy[key] = effect and 0 or value
 	end
 	return copy
+end
+
+-- The case's export size from export-size.txt: "full", or a long edge in pixels (2048 when there's no file).
+local function exportSize(folder)
+	local text = readFile(LrPathUtils.child(folder, "export-size.txt"))
+	local size = text and text:match("^%s*(%w+)")
+	if size == "full" then return nil end
+	return tonumber(size) or 2048
 end
 
 local function firstFile(folder, base)
@@ -56,7 +66,7 @@ local function firstFile(folder, base)
 	return nil
 end
 
-local function exportSettings(folder, name)
+local function exportSettings(folder, name, size)
 	return {
 		LR_export_destinationType = "specificFolder",
 		LR_export_destinationPathPrefix = folder,
@@ -70,11 +80,11 @@ local function exportSettings(folder, name)
 		LR_export_bitDepth = 16,
 		LR_tiff_compressionMethod = "compressionMethod_None",
 		LR_export_colorSpace = "DisplayP3",
-		LR_size_doConstrain = true,
+		LR_size_doConstrain = size ~= nil,
 		LR_size_doNotEnlarge = false,
 		LR_size_resizeType = "longEdge",
-		LR_size_maxWidth = 2048,
-		LR_size_maxHeight = 2048,
+		LR_size_maxWidth = size or 2048,
+		LR_size_maxHeight = size or 2048,
 		LR_size_units = "pixels",
 		LR_size_resolution = 240,
 		LR_outputSharpeningOn = false,
@@ -85,15 +95,16 @@ local function exportSettings(folder, name)
 	}
 end
 
--- Imports `path` (or finds it from an earlier run), applies `settings` and exports `name`.tif into `folder`.
-local function render(catalog, collection, path, settings, folder, name)
+-- Imports `path` (or finds it from an earlier run), applies `settings` and exports `name`.tif into `folder` at
+-- `size` (a long edge in pixels, or nil for full size).
+local function render(catalog, collection, path, settings, folder, name, size)
 	local photo = catalog:findPhotoByPath(path)
 	catalog:withWriteAccessDo("PixelLoupe Fidelity", function()
 		photo = photo or catalog:addPhoto(path)
 		collection:addPhotos({ photo })
 		photo:applyDevelopSettings(settings, "PixelLoupe Fidelity")
 	end, { timeout = 60 })
-	local session = LrExportSession { photosToExport = { photo }, exportSettings = exportSettings(folder, name) }
+	local session = LrExportSession { photosToExport = { photo }, exportSettings = exportSettings(folder, name, size) }
 	for _, rendition in session:renditions() do
 		local ok, message = rendition:waitForRender()
 		if not ok then error(message or "export failed") end
@@ -155,14 +166,15 @@ LrTasks.startAsyncTask(function()
 			progress:setCaption(LrPathUtils.leafName(LrPathUtils.parent(folder)) .. "/" .. LrPathUtils.leafName(folder))
 			local ok, message = LrTasks.pcall(function()
 				local settings = developSettings(readFile(LrPathUtils.child(folder, "settings.xmp")) or "")
+				local size = exportSize(folder)
 				local source = firstFile(folder, "source")
 				if not source then
 					local raw = firstFile(folder, "raw")
 					if not raw then error("no source.* or raw.*") end
-					render(catalog, collection, raw, withoutEffects(settings), folder, "source")
+					render(catalog, collection, raw, withoutEffects(settings), folder, "source", size)
 					source = LrPathUtils.child(folder, "source.tif")
 				end
-				render(catalog, collection, source, settings, folder, "reference")
+				render(catalog, collection, source, settings, folder, "reference", size)
 			end)
 			if not ok then table.insert(failures, LrPathUtils.leafName(folder) .. ": " .. tostring(message)) end
 			progress:setPortionComplete(index, #cases)
