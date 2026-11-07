@@ -1496,6 +1496,12 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         Self.muting(adjustments, wheels: mutedWheels, maskWheels: mutedMaskWheels)
     }
 
+    /// What the canvas shows: a hover preview in place of the photo's settings, with the same wheels hidden
+    /// (RAW-282), since a preview is the committed render with only the hovered setting swapped.
+    private var shownAdjustments: PhotoAdjustments {
+        presetPreview.map { Self.muting($0, wheels: mutedWheels, maskWheels: mutedMaskWheels) } ?? drawnAdjustments
+    }
+
     static func muting(
         _ adjustments: PhotoAdjustments, wheels: Set<ColorGradingTab>, maskWheels: (mask: UUID, wheels: Set<ColorGradingTab>)?
     ) -> PhotoAdjustments {
@@ -1538,7 +1544,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         presetPreview = previewed
         metalView.needsDisplay = true
         // The Navigator's copy, small and off the main thread.
-        let image = source.image(with: previewed, scale: source.scale(toFit: 480, adjustments: previewed))
+        let drawn = Self.muting(previewed, wheels: mutedWheels, maskWheels: mutedMaskWheels)
+        let image = source.image(with: drawn, scale: source.scale(toFit: 480, adjustments: drawn))
         navigatorPreviewTask?.cancel()
         navigatorPreviewTask = Task { [weak self] in
             let rendered = await Self.renderNavigatorPreview(.init(image: image))
@@ -1575,6 +1582,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     var adjustmentsPanelForTesting: AdjustmentsPanelViewController { panel }
     var cropPanelForTesting: CropPanelViewController { cropPanel }
     var previewedAdjustmentsForTesting: PhotoAdjustments? { presetPreview }
+    var shownAdjustmentsForTesting: PhotoAdjustments { shownAdjustments }
 
     /// The preset last applied, for its Amount slider: the settings before it and with it at 100%.
     private var presetAmount: (photo: NSManagedObjectID, preset: DevelopPreset, before: PhotoAdjustments, full: PhotoAdjustments)?
@@ -2002,7 +2010,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         var newArrangement: BeforeAfterOverlayView.Arrangement?
         var previewImage: (image: CIImage, scale: CGFloat)?
         /// The settings the loupe magnifies: the before's in Before Only.
-        var loupeAdjustments = presetPreview ?? drawnAdjustments
+        var loupeAdjustments = shownAdjustments
         if source == nil, let placeholder, !placeholder.extent.isEmpty {
             // Fill the same rect the decoded photo will, so the swap is seamless.
             let extent = placeholder.extent
@@ -2022,7 +2030,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             // overlays map through the crop and its straightening.
             let masking = state.developTool == .mask || state.developTool == .retouch
             // A preset under the pointer in the Presets panel is previewed.
-            let shownAdjustments = presetPreview ?? drawnAdjustments
+            let shownAdjustments = self.shownAdjustments
             // A cropped photo renders at the size it's shown; the crop tool shows the whole frame.
             let wantedScale = cropping
                 ? source.scale(toFit: max(bounds.width, bounds.height))
