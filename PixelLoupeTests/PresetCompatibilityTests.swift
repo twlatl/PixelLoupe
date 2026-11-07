@@ -264,3 +264,50 @@ struct ProfileHoverTests {
         panel.previewProfile(nil)
     }
 }
+
+@Suite("Hover preview: muted Color Grading wheels")
+@MainActor
+struct HoverPreviewMutedWheelTests {
+    /// RAW-282: a hover preview showed Color Grading wheels the user had hidden with their eye buttons.
+    @Test func aPreviewKeepsMutedWheelsHidden() async throws {
+        let directory = try TemporaryDirectory()
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "C.pixelloupe"))
+        let photo = Photo(context: store.viewContext)
+        photo.id = UUID()
+        photo.fileName = "IMG.jpg"
+        let url = directory.url.appending(path: photo.fileName)
+        try Fixtures.writeJPEG(to: url, width: 400, height: 300)
+        photo.filePath = url.path(percentEncoded: false)
+        photo.fileType = "JPG"
+        photo.pixelWidth = 400
+        photo.pixelHeight = 300
+        photo.captureDate = Date()
+        photo.importDate = Date()
+        photo.editDate = Date()
+        try store.viewContext.save()
+        let controller = CatalogWindowController(store: store)
+        defer { controller.close() }
+        controller.showWindow(nil)
+        controller.state.selectedPhotoIDs = [photo.objectID]
+        controller.state.mode = .develop
+        let develop = controller.rootViewController.main.develop
+        let start = Date()
+        while !develop.canAutoLight, Date().timeIntervalSince(start) < 60 { try? await Task.sleep(for: .seconds(0.1)) }
+        try #require(develop.canAutoLight)
+
+        let graded = PhotoAdjustments.ColorWheel(hue: 0.6, amount: 0.5, luminance: 0)
+        var previewed = try #require(develop.currentAdjustments)
+        previewed.color.shadows = graded
+        previewed.color.highlights = graded
+        develop.adjustmentsPanelForTesting.onMuteWheels?([.shadows])
+
+        develop.previewSettings(previewed)
+        let shown = develop.shownAdjustmentsForTesting
+        #expect(shown.color.shadows == PhotoAdjustments.ColorWheel(), "the muted wheel stays hidden")
+        #expect(shown.color.highlights == graded, "other wheels are previewed")
+        #expect(develop.previewedAdjustmentsForTesting?.color.shadows == graded, "muting only changes what's drawn")
+
+        develop.previewSettings(nil)
+        develop.adjustmentsPanelForTesting.onMuteWheels?([])
+    }
+}
