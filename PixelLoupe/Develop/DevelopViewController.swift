@@ -1413,11 +1413,23 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
               !((view.window?.firstResponder as? NSText)?.isEditable ?? false)
         else { return false }
         if event.type == .keyUp {
+            if removeOverlay.isHandHeld {
+                // A tap without a drag still toggles the zoom.
+                removeOverlay.isHandHeld = false
+                if !removeOverlay.didPanWithHand { state.zoom.toggle() }
+                return true
+            }
             guard maskOverlay.isHandHeld else { return false }
             maskOverlay.isHandHeld = false
             return true
         }
-        guard isBrushing, event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.capsLock).isEmpty else { return false }
+        guard event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.capsLock).isEmpty else { return false }
+        // In Remove, zoomed: the brush's hand. (At fit, Space toggles the zoom as everywhere.)
+        if state.developTool == .remove, state.zoom.isZoomed, source != nil {
+            if !event.isARepeat, !removeOverlay.isHandHeld { removeOverlay.beginHand() }
+            return true
+        }
+        guard isBrushing else { return false }
         maskOverlay.isHandHeld = true
         return true
     }
@@ -1891,8 +1903,10 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         // Spot Removal takes clicks on the photo itself, but a zoomed photo still pans.
         retouchOverlay.isZoomed = { [weak self] in self?.state.zoom.isZoomed ?? false }
         retouchOverlay.onPan = { [weak self] delta in self?.pan(by: delta) }
-        // So does the brush, with Space held.
+        // So does the brush, with Space held, and Remove's.
         maskOverlay.onPan = { [weak self] delta in self?.pan(by: delta) }
+        maskOverlay.isZoomed = { [weak self] in self?.state.zoom.isZoomed ?? false }
+        removeOverlay.onPan = { [weak self] delta in self?.pan(by: delta) }
     }
 
     /// Pans the zoomed photo by a drag of this many points.

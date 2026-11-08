@@ -159,4 +159,50 @@ struct RemoveToolTests {
         #expect(controller.perform(.spotRemovalTool))
         #expect(controller.state.developTool == .retouch)
     }
+
+    @Test("Zoomed in Remove, Space held is a hand that moves the photo; a tap still toggles the zoom")
+    func spaceIsTheHandWhenZoomed() async throws {
+        let directory = try TemporaryDirectory()
+        let (controller, develop, photo) = try await openRemove(directory)
+        defer { controller.close() }
+        let window = try #require(controller.window)
+        let overlay = develop.removeOverlayForTesting
+        func space(_ type: NSEvent.EventType, repeating: Bool = false) -> NSEvent {
+            NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                             characters: " ", charactersIgnoringModifiers: " ", isARepeat: repeating, keyCode: 49)!
+        }
+        func mouse(_ type: NSEvent.EventType, _ point: CGPoint) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: overlay.convert(point, to: nil), modifierFlags: [], timestamp: 0,
+                               windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+        }
+
+        // At fit, Space is Toggle Zoom as everywhere.
+        controller.state.zoom.isZoomed = false
+        #expect(!develop.handleHandKey(space(.keyDown)))
+        #expect(!overlay.isHandHeld)
+
+        // Zoomed: the hand, and a drag moves the photo rather than painting.
+        controller.state.zoom.isZoomed = true
+        #expect(controller.handleKeyDown(space(.keyDown)) && overlay.isHandHeld)
+        #expect(overlay.cursor(at: CGPoint(x: overlay.bounds.midX, y: overlay.bounds.midY)) == .openHand)
+        #expect(controller.state.zoom.isZoomed, "not Toggle Zoom")
+        var panned = CGVector.zero
+        let pan = overlay.onPan
+        overlay.onPan = { delta in panned.dx += delta.dx; panned.dy += delta.dy; pan?(delta) }
+        overlay.isSpaceDown = { true }
+        let middle = CGPoint(x: overlay.bounds.midX, y: overlay.bounds.midY)
+        overlay.mouseDown(with: mouse(.leftMouseDown, middle))
+        overlay.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: middle.x + 30, y: middle.y + 10)))
+        overlay.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: middle.x + 30, y: middle.y + 10)))
+        #expect(abs(panned.dx - 30) < 0.5 && abs(panned.dy - 10) < 0.5)
+        #expect(photo.adjustments.spots.isEmpty, "nothing painted")
+        #expect(controller.handleKeyDown(space(.keyDown, repeating: true)) && overlay.isHandHeld, "held, it stays")
+        #expect(develop.handleHandKey(space(.keyUp)))
+        #expect(!overlay.isHandHeld && controller.state.zoom.isZoomed, "after moving the photo, letting go keeps the zoom")
+
+        // A tap without a drag zooms out.
+        #expect(controller.handleKeyDown(space(.keyDown)))
+        #expect(develop.handleHandKey(space(.keyUp)))
+        #expect(!controller.state.zoom.isZoomed)
+    }
 }

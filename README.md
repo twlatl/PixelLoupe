@@ -124,7 +124,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `[` / `]` | Decrease / increase rating (each photo one star down or up); with a brush mask selected in Masking, a smaller / larger brush |
 | `⇧[` / `⇧]` | With a brush mask selected in Masking: a harder / softer brush (Feather) |
 | Two-finger swipe up / down (or scroll wheel) | While the brush is active in Masking (a brush, Subject or Background mask): a larger / smaller brush; with `⇧` held, softer / harder |
-| `Space` (held) | While the brush is active in Masking: the pointer becomes a hand, and dragging moves the zoomed photo around (instead of Toggle Zoom) |
+| `Space` (held) | While the brush is active in Masking, or in Remove with the photo zoomed: the pointer becomes a hand, and dragging moves the zoomed photo around (instead of Toggle Zoom; in Remove a tap still toggles it). Zoomed in Masking without a brush, dragging off the gradients' handles moves the photo too |
 | `M` / `⇧M` / `K` | Develop Masking: add a linear gradient / radial gradient / brush mask (`O` shows the selected mask in red) |
 | `Q` | Develop Remove: paint to remove, heal or clone (with Detect Objects, Return removes the area found and Esc cancels; Delete removes the selected spot) |
 | `⇧Q` | Develop Spot Removal: click heal and clone spots, and red eyes |
@@ -704,7 +704,7 @@ the photo is reported.
 
 ## Presets (Develop)
 
-The Presets section (the first section of Develop's Adjust panel) lists Lightroom presets by group, searchable by name.
+The Presets section (in Develop's Adjust panel, below Profile) lists Lightroom presets by group, searchable by name.
 Double-click a preset (or select it and click **Apply**) to apply it to the photo: only the settings the preset holds
 change, as in Lightroom, and it's one undoable step in the photo's History, named after the preset. **Copy** puts the
 preset on the settings clipboard; **Photo ▸ Paste Settings** (`⇧⌘V`) then applies it to every selected photo, in

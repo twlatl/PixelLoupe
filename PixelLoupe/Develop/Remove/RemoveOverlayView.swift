@@ -30,6 +30,22 @@ final class RemoveOverlayView: NSView {
     var onSelect: ((UUID?) -> Void)?
     var onChange: ((_ spot: PhotoAdjustments.Spot, _ isFinal: Bool, _ actionName: String) -> Void)?
     var onBrushResize: ((Double) -> Void)?
+    /// A drag with Space held, in points, to move the zoomed photo.
+    var onPan: ((CGVector) -> Void)?
+    /// Space is held while the photo is zoomed: the pointer is a hand, and dragging moves the photo instead of
+    /// painting (as in Lightroom).
+    var isHandHeld = false {
+        didSet {
+            guard isHandHeld != oldValue else { return }
+            if let window { pointer = convert(window.mouseLocationOutsideOfEventStream, from: nil) }
+            if let pointer, bounds.contains(pointer), !isHidden { cursor(at: pointer).set() }
+            needsDisplay = true
+        }
+    }
+    /// Whether the hand moved the photo since Space went down (a tap with no drag toggles the zoom instead).
+    private(set) var didPanWithHand = false
+    /// Whether Space is still down (it can be let go in another window, out of sight of the key handler).
+    var isSpaceDown: () -> Bool = { CGEventSource.keyState(.combinedSessionState, key: 49) }
 
     private enum Drag {
         case paint([PhotoAdjustments.UnitPoint])
@@ -37,6 +53,8 @@ final class RemoveOverlayView: NSView {
         case source(UUID, start: CGPoint, original: PhotoAdjustments.Spot)
         /// ⌘-drag: the selected Remove spot's own source follows the pointer.
         case customSource(UUID, original: PhotoAdjustments.Spot)
+        /// Space held: the photo follows the pointer.
+        case hand(last: CGPoint)
     }
     private var drag: Drag?
     private var moved = false
@@ -193,7 +211,7 @@ final class RemoveOverlayView: NSView {
         }
         NSGraphicsContext.restoreGraphicsState()
         // The brush, where the pointer is over the photo and not on a pin.
-        if let pointer, drag == nil || { if case .paint = drag { true } else { false } }(), target(at: pointer) == nil,
+        if let pointer, !isHandHeld, drag == nil || { if case .paint = drag { true } else { false } }(), target(at: pointer) == nil,
            previewFrame.visible.contains(pointer) {
             let radius = max(brushSize * longEdge, 2)
             let path = NSBezierPath(ovalIn: circle(pointer, radius))
@@ -240,9 +258,10 @@ final class RemoveOverlayView: NSView {
     // MARK: Pointer
 
     func cursor(at point: CGPoint) -> NSCursor {
+        if isHandHeld { return .openHand }
         switch target(at: point) {
-        case .pin?, .source?: .openHand
-        case nil: .crosshair
+        case .pin?, .source?: return .openHand
+        case nil: return .crosshair
         }
     }
 
@@ -266,6 +285,12 @@ final class RemoveOverlayView: NSView {
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         moved = false
+        if isHandHeld, !isSpaceDown() { isHandHeld = false }
+        if isHandHeld {
+            drag = .hand(last: point)
+            NSCursor.closedHand.set()
+            return
+        }
         // ⌘-drag: the selected Remove spot copies from where the pointer goes.
         if event.modifierFlags.contains(.command), let spot = spots.first(where: { $0.id == selectedID }), spot.kind == .remove, pendingArea == nil {
             drag = .customSource(spot.id, original: spot)
@@ -302,6 +327,10 @@ final class RemoveOverlayView: NSView {
             needsDisplay = true
         case .spot, .source, .customSource:
             update(to: point, isFinal: false)
+        case .hand(let last):
+            onPan?(CGVector(dx: point.x - last.x, dy: point.y - last.y))
+            didPanWithHand = true
+            self.drag = .hand(last: point)
         }
     }
 
@@ -324,7 +353,15 @@ final class RemoveOverlayView: NSView {
             }
         case .spot, .source, .customSource:
             if moved { update(to: point, isFinal: true) }
+        case .hand:
+            cursor(at: point).set()
         }
+    }
+
+    /// Space went down: the hand hasn't moved the photo yet.
+    func beginHand() {
+        didPanWithHand = false
+        isHandHeld = true
     }
 
     private func update(to point: CGPoint, isFinal: Bool) {
@@ -349,7 +386,7 @@ final class RemoveOverlayView: NSView {
             spot.source = unit(point)
             spot.hasCustomSource = true
             onChange?(spot, isFinal, "Spot Source")
-        case .paint:
+        case .paint, .hand:
             break
         }
     }

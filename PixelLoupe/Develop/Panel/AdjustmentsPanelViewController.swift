@@ -182,13 +182,19 @@ final class AdjustmentsPanelViewController: NSViewController {
 
     // MARK: - Building
 
-    /// Adds a section holding another panel's view: Presets at the top, Lens Corrections at the bottom (RAW-260).
+    /// Adds a section holding another panel's view: Presets near the top (below Profile), Lens Corrections at the
+    /// bottom (RAW-260).
     @discardableResult
     func addEmbeddedSection(_ title: String, symbol: String, content: NSView, atTop: Bool) -> AdjustmentSectionView {
         loadViewIfNeeded()
         let section = AdjustmentSectionView(title: title, symbolName: symbol, hasToggle: false, scope: scopeName)
-        // Below the header (title and Revert to Original), or after the last section.
-        if atTop { stack.insertArrangedSubview(section, at: scope == .mask ? 0 : 1) } else { stack.addArrangedSubview(section) }
+        if atTop {
+            // Below the header (title and Revert to Original) and the Profile section, the panel's first.
+            let profile = stack.arrangedSubviews.firstIndex { ($0 as? AdjustmentSectionView)?.title == "Profile" }
+            stack.insertArrangedSubview(section, at: profile.map { $0 + 1 } ?? (scope == .mask ? 0 : 1))
+        } else {
+            stack.addArrangedSubview(section)
+        }
         section.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -(stack.edgeInsets.left + stack.edgeInsets.right)).isActive = true
         section.addControl(content)
         embeddedContent.append(content)

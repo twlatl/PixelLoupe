@@ -73,7 +73,8 @@ struct DevelopSidebarTests {
         #expect(abs(histogram.frame.height - (HistogramView.plotHeight + 6 + 16 + 16)) < 0.5)
     }
 
-    /// RAW-260: Presets is the Adjust panel's first section and Lens Corrections its last, each a whole panel.
+    /// RAW-260: Profile is the Adjust panel's first section, Presets its second and Lens Corrections its last, the
+    /// last two each a whole panel.
     @Test func presetsAndLensCorrectionsAreSectionsOfAdjust() throws {
         let directory = try TemporaryDirectory()
         let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url)
@@ -86,13 +87,15 @@ struct DevelopSidebarTests {
         // In the order the panel's stack shows them.
         let stack = try #require(adjustPanel.descendants.first { $0 is AdjustmentSectionView }?.superview as? NSStackView)
         let sections = stack.arrangedSubviews.compactMap { $0 as? AdjustmentSectionView }
-        #expect(sections.first?.title == "Presets")
+        try #require(sections.count > 2)
+        #expect(sections[0].title == "Profile")
+        #expect(sections[1].title == "Presets")
         #expect(sections.last?.title == "Lens Corrections")
         let presets = try #require(window.contentView!.descendants.first { $0.accessibilityIdentifier() == "presetsPanel" })
         let lens = try #require(window.contentView!.descendants.first { $0.accessibilityIdentifier() == "lensPanel" })
-        #expect(presets.isDescendant(of: sections.first!) && lens.isDescendant(of: sections.last!))
+        #expect(presets.isDescendant(of: sections[1]) && lens.isDescendant(of: sections.last!))
         // Neither has an on/off circle of its own.
-        for section in [sections.first!, sections.last!] {
+        for section in [sections[1], sections.last!] {
             let toggle = section.descendants.first { $0.accessibilityIdentifier() == "toggle.\(section.title)" }
             #expect(toggle?.isHidden == true)
         }

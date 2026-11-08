@@ -22,8 +22,10 @@ final class MaskOverlayView: NSView {
     var brush = MaskGeometry.BrushSettings() { didSet { needsDisplay = true } }
     /// The brush was sized or softened with a swipe.
     var onBrushChange: ((MaskGeometry.BrushSettings) -> Void)?
-    /// A drag with Space held, in points, to move the zoomed photo.
+    /// A drag with Space held (or, zoomed, off the gradients' handles), in points, to move the zoomed photo.
     var onPan: ((CGVector) -> Void)?
+    /// Whether the photo is zoomed: a drag off the handles moves it, and the pointer there is a hand.
+    var isZoomed: () -> Bool = { false }
     /// Space is held while the brush is active: the pointer is a hand, and dragging pans instead of painting.
     var isHandHeld = false {
         didSet {
@@ -192,12 +194,40 @@ final class MaskOverlayView: NSView {
     }
 
     override func cursorUpdate(with event: NSEvent) {
-        if paints { (isHandHeld ? NSCursor.openHand : NSCursor.crosshair).set() } else { super.cursorUpdate(with: event) }
+        if paints {
+            (isHandHeld ? NSCursor.openHand : NSCursor.crosshair).set()
+        } else if pansZoomed(at: convert(event.locationInWindow, from: nil)) {
+            NSCursor.openHand.set()
+        } else {
+            super.cursorUpdate(with: event)
+        }
     }
 
     override func mouseMoved(with event: NSEvent) {
         pointer = convert(event.locationInWindow, from: nil)
-        if paints { needsDisplay = true }
+        if paints {
+            needsDisplay = true
+        } else if let pointer {
+            (pansZoomed(at: pointer) ? NSCursor.openHand : NSCursor.arrow).set()
+        }
+    }
+
+    /// Whether a drag at `viewPoint` would move the zoomed photo: zoomed, not painting, and off the gradients' handles.
+    private func pansZoomed(at viewPoint: CGPoint) -> Bool {
+        guard !paints, isZoomed() else { return false }
+        guard let adjustment else { return true }
+        let point = framePoint(viewPoint)
+        for component in adjustment.components {
+            switch component.shape {
+            case .linear(let gradient):
+                if MaskGeometry.linearHandle(at: point, gradient: gradient, frame: frameRect.size, tolerance: Self.hitTolerance) != nil { return false }
+            case .radial(let ellipse):
+                if MaskGeometry.radialHandle(at: point, ellipse: ellipse, frame: frameRect.size, tolerance: Self.hitTolerance) != nil { return false }
+            case .brush, .subject, .background:
+                break
+            }
+        }
+        return true
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -232,6 +262,12 @@ final class MaskOverlayView: NSView {
         }
         let viewPoint = convert(event.locationInWindow, from: nil)
         let point = framePoint(viewPoint)
+        // Zoomed, a drag off the handles moves the photo.
+        if pansZoomed(at: viewPoint) {
+            drag = .hand(last: viewPoint)
+            NSCursor.closedHand.set()
+            return
+        }
         guard var adjustment else { onClickEmpty?(); return }
         // Strokes start on the photo as shown, not in the matte around a crop.
         if paints, !previewFrame.visible.contains(viewPoint) { onClickEmpty?(); return }
@@ -280,7 +316,7 @@ final class MaskOverlayView: NSView {
         if case .hand = drag {
             update(with: event, isFinal: true)
             drag = nil
-            (isHandHeld ? NSCursor.openHand : NSCursor.crosshair).set()
+            if paints { (isHandHeld ? NSCursor.openHand : NSCursor.crosshair).set() } else { NSCursor.openHand.set() }
             return
         }
         update(with: event, isFinal: true)
