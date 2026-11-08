@@ -154,7 +154,7 @@ enum PublishRun {
                 failures.append("\(photo.fileName): \(entry.lastError!)")
                 continue
             }
-            let item = ExportItem(photo, smartPreview: store.smartPreviews.file(for: photo))
+            let item = ExportItem(photo, smartPreview: store.smartPreviews.file(for: photo), includesDevelopSettings: store.settings.includesDevelopSettingsInExports)
             let publish = PublishItem(export: item, title: settings.title(for: item), remote: entry.remote,
                                       hasEdits: entry.publishedDate == nil || entry.hasEditsSincePublished,
                                       index: index, total: toPublish.count)

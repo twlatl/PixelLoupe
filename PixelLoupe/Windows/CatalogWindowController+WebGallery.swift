@@ -12,7 +12,7 @@ extension CatalogWindowController {
         var exportItems: [UUID: ExportItem] = [:]
         for id in ids {
             guard let photo = try? store.viewContext.existingObject(with: id) as? Photo, !photo.isVideo else { continue }
-            exportItems[photo.id] = ExportItem(photo, smartPreview: store.smartPreviews.file(for: photo))
+            exportItems[photo.id] = ExportItem(photo, smartPreview: store.smartPreviews.file(for: photo), includesDevelopSettings: store.settings.includesDevelopSettingsInExports)
         }
         let controller = WebGalleryWindowController(photos: photos, exportItems: exportItems, thumbnails: store.thumbnails,
                                                     sourceName: contactSheetSourceName)

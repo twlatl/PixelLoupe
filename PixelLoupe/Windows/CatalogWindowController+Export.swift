@@ -7,7 +7,7 @@ extension CatalogWindowController {
         // Videos aren't exported (there is nothing to render).
         state.selectedPhotoIDs.compactMap { id in
             (try? store.viewContext.existingObject(with: id) as? Photo).flatMap { photo in
-                photo.isVideo ? nil : ExportItem(photo, smartPreview: store.smartPreviews.file(for: photo))
+                photo.isVideo ? nil : ExportItem(photo, smartPreview: store.smartPreviews.file(for: photo), includesDevelopSettings: store.settings.includesDevelopSettingsInExports)
             }
         }
     }

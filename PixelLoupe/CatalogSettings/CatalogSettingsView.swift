@@ -7,7 +7,8 @@ struct CatalogSettingsView: View {
     enum Pane: String, CaseIterable, Identifiable {
         case general = "General"
         case previews = "Previews"
-        // Metadata (RAW-268) and Backups (RAW-269) join as they're built.
+        case metadata = "Metadata"
+        // Backups (RAW-269) joins when it's built.
 
         var id: Self { self }
     }
@@ -31,6 +32,7 @@ struct CatalogSettingsView: View {
                 switch pane {
                 case .general: CatalogGeneralSettingsView(packageURL: store.packageURL, info: store.info)
                 case .previews: CatalogPreviewSettingsView(store: store)
+                case .metadata: CatalogMetadataSettingsView(store: store)
                 }
             }
             .padding(20)

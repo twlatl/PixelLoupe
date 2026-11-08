@@ -19,17 +19,22 @@ nonisolated struct ExportItem: Sendable {
     var smartPreview: URL? = nil
     /// The location set in the catalog, which replaces the original's in the exported file.
     var gps: ExportGPS = .file
+    /// Whether the exported file carries the photo's develop settings as `crs:` XMP (Catalog Settings ▸ Metadata,
+    /// RAW-268). When false it has none, not even the original's.
+    var includesDevelopSettings = false
 
     var fileName: String { source.lastPathComponent }
     var location: PhotoSourceLocation { PhotoSourceLocation(original: source, smartPreview: smartPreview) }
 }
 
 extension ExportItem {
-    init(_ photo: Photo, smartPreview: URL? = nil) {
+    /// `includesDevelopSettings` comes from the catalog's settings (``CatalogSettings/includesDevelopSettingsInExports``).
+    init(_ photo: Photo, smartPreview: URL? = nil, includesDevelopSettings: Bool = false) {
         self.init(
             source: photo.fileURL, adjustments: photo.adjustments, metadata: photo.metadata,
             keywords: Tag.exportNames(for: photo.tags), keywordPaths: Tag.exportPaths(for: photo.tags),
-            rating: Int(photo.rating), captureDate: photo.captureDate, smartPreview: smartPreview, gps: ExportGPS(photo)
+            rating: Int(photo.rating), captureDate: photo.captureDate, smartPreview: smartPreview, gps: ExportGPS(photo),
+            includesDevelopSettings: includesDevelopSettings
         )
     }
 }
@@ -340,7 +345,12 @@ nonisolated enum PhotoExporter {
                 options[kCGImagePropertyTIFFDictionary] = [kCGImagePropertyTIFFCompression: settings.tiffCompression.tagValue]
             }
             CGImageDestinationAddImageAndMetadata(destination, image, metadata, options as CFDictionary)
-            return CGImageDestinationFinalize(destination) ? data as Data : nil
+            guard CGImageDestinationFinalize(destination) else { return nil }
+            // ImageIO leaves the metadata out of Photoshop files; it's added as Photoshop does.
+            if settings.format == .psd, let xmp = CGImageMetadataCreateXMPData(metadata, nil) as Data? {
+                return PSDMetadata.inserting(xmp: xmp, into: data as Data) ?? data as Data
+            }
+            return data as Data
         }
 
         let quality = settings.quality.clamped(to: 0...100)
@@ -471,6 +481,13 @@ nonisolated enum PhotoExporter {
             }
         }
 
+        // Develop settings: the photo's own when the catalog includes them, never the original's (a DNG's from
+        // Camera Raw describes edits these pixels don't have).
+        for path in topLevelPaths(result) where path.hasPrefix("crs:") {
+            CGImageMetadataRemoveTagWithPath(result, nil, path as CFString)
+        }
+        if item.includesDevelopSettings { addDevelopSettings(of: item.adjustments, to: result) }
+
         // Metadata typed into PixelLoupe overrides the file's (an empty value removes it).
         for field in fields {
             guard let value = item.metadata[field], let path = FileMetadata.xmpPaths[field]?.first else { continue }
@@ -490,6 +507,19 @@ nonisolated enum PhotoExporter {
         }
         return result
     }
+
+    /// Copies the photo's develop settings, as Camera Raw writes them, into `metadata`.
+    static func addDevelopSettings(of adjustments: PhotoAdjustments, to metadata: CGMutableImageMetadata) {
+        guard let settings = CGImageMetadataCreateFromXMPData(PresetWriter.developSettingsXMP(for: adjustments) as CFData)
+        else { return }
+        CGImageMetadataRegisterNamespaceForPrefix(metadata, crsNamespace as CFString, "crs" as CFString, nil)
+        CGImageMetadataEnumerateTagsUsingBlock(settings, nil, nil) { path, tag in
+            CGImageMetadataSetTagWithPath(metadata, nil, path, tag)
+            return true
+        }
+    }
+
+    static let crsNamespace = "http://ns.adobe.com/camera-raw-settings/1.0/"
 
     /// XMP's form of a GPS coordinate, degrees and decimal minutes with the direction: `37,46.4957N`.
     static func xmpCoordinate(_ value: Double, positive: String, negative: String) -> String {

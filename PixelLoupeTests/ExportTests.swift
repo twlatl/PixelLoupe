@@ -482,3 +482,158 @@ struct ExportDialogTests {
         try rep.representation(using: .png, properties: [:])?.write(to: URL(filePath: path))
     }
 }
+
+/// Catalog Settings ▸ Metadata ▸ Include Develop Settings (RAW-268).
+@Suite("Develop settings in exports")
+struct DevelopSettingsExportTests {
+    private func export(_ item: ExportItem, format: ExportSettings.Format = .jpeg, metadata: ExportSettings.MetadataInclusion = .all,
+                        in directory: TemporaryDirectory) async throws -> URL {
+        var settings = ExportSettings()
+        settings.format = format
+        settings.metadata = metadata
+        let url = directory.url.appending(path: "Out/\(UUID().uuidString).\(format.fileExtension ?? "jpg")")
+        try await PhotoExporter.export(item, to: url, settings: settings, watermark: nil)
+        return url
+    }
+
+    private func edited(_ item: ExportItem, includes: Bool) -> ExportItem {
+        var adjustments = PhotoAdjustments()
+        adjustments.light.exposure = 2
+        return ExportItem(source: item.source, adjustments: adjustments, metadata: item.metadata, keywords: item.keywords,
+                          rating: item.rating, captureDate: item.captureDate, includesDevelopSettings: includes)
+    }
+
+    private func crsPaths(_ url: URL) -> [String] {
+        guard let metadata = CGImageSourceCreateWithURL(url as CFURL, nil).flatMap({ CGImageSourceCopyMetadataAtIndex($0, 0, nil) })
+        else { return [] }
+        var paths: [String] = []
+        CGImageMetadataEnumerateTagsUsingBlock(metadata, nil, nil) { path, _ in
+            if (path as String).hasPrefix("crs:") { paths.append(path as String) }
+            return true
+        }
+        return paths
+    }
+
+    @Test func offByDefault() {
+        #expect(!CatalogSettings().includesDevelopSettingsInExports)
+        let directory = URL(filePath: "/tmp")
+        #expect(!ExportItem(source: directory, adjustments: PhotoAdjustments(), metadata: PhotoMetadata(), keywords: [], rating: 0,
+                            captureDate: Date()).includesDevelopSettings)
+    }
+
+    @Test func settingRoundTrips() throws {
+        let directory = try TemporaryDirectory()
+        var settings = CatalogSettings()
+        settings.includesDevelopSettingsInExports = true
+        try settings.save(to: directory.url)
+        #expect(CatalogSettings.load(from: directory.url).includesDevelopSettingsInExports)
+    }
+
+    @Test(arguments: [ExportSettings.Format.jpeg, .tiff, .png, .psd])
+    func exportsCarryThePhotosDevelopSettings(format: ExportSettings.Format) async throws {
+        let directory = try TemporaryDirectory()
+        let item = edited(try makeItem(in: directory), includes: true)
+        let url = try await export(item, format: format, in: directory)
+        #expect(xmp(url, "crs:Exposure2012") == "+2")
+        #expect(xmp(url, "crs:HasSettings") == "True")
+        #expect(xmp(url, "crs:ProcessVersion") == "11.0")
+        #expect(xmp(url, "crs:PresetType") == nil, "a photo's settings, not a preset")
+        #expect(crsPaths(url).count > 50, "every section, so Lightroom applies all of them")
+    }
+
+    @Test func withoutTheSettingThereAreNone() async throws {
+        let directory = try TemporaryDirectory()
+        let url = try await export(edited(try makeItem(in: directory), includes: false), in: directory)
+        #expect(crsPaths(url).isEmpty)
+        #expect((try properties(url)[kCGImagePropertyTIFFDictionary] as? [CFString: Any])?[kCGImagePropertyTIFFModel] as? String == "EOS R5",
+                "other metadata is kept")
+    }
+
+    /// An original's own Camera Raw settings (a DNG edited in Camera Raw) describe edits these pixels don't have.
+    @Test func theOriginalsDevelopSettingsAreNeverCopied() async throws {
+        let directory = try TemporaryDirectory()
+        let plain = try makeItem(in: directory)
+        // The original carries crs:Exposure2012 -1 and crs:Clarity2012 +50.
+        let original = try #require(CGImageSourceCreateWithURL(plain.source as CFURL, nil))
+        let originalMetadata = try #require(CGImageSourceCopyMetadataAtIndex(original, 0, nil))
+        let metadata = try #require(CGImageMetadataCreateMutableCopy(originalMetadata))
+        CGImageMetadataRegisterNamespaceForPrefix(metadata, PhotoExporter.crsNamespace as CFString, "crs" as CFString, nil)
+        CGImageMetadataSetValueWithPath(metadata, nil, "crs:Exposure2012" as CFString, "-1" as CFString)
+        CGImageMetadataSetValueWithPath(metadata, nil, "crs:Clarity2012" as CFString, "+50" as CFString)
+        let image = try #require(CGImageSourceCreateImageAtIndex(original, 0, nil))
+        let rewritten = try #require(CGImageDestinationCreateWithURL(plain.source as CFURL, UTType.jpeg.identifier as CFString, 1, nil))
+        CGImageDestinationAddImageAndMetadata(rewritten, image, metadata, nil)
+        #expect(CGImageDestinationFinalize(rewritten))
+        #expect(xmp(plain.source, "crs:Clarity2012") == "+50")
+
+        let without = try await export(edited(plain, includes: false), in: directory)
+        #expect(crsPaths(without).isEmpty, "not even with Include: All Metadata")
+
+        let with = try await export(edited(plain, includes: true), in: directory)
+        #expect(xmp(with, "crs:Exposure2012") == "+2", "the photo's own settings replace the original's")
+        #expect(xmp(with, "crs:Clarity2012") == "0")
+    }
+
+    @Test func copyrightOnlyStillCarriesThemWhenTheCatalogSaysSo() async throws {
+        let directory = try TemporaryDirectory()
+        let url = try await export(edited(try makeItem(in: directory), includes: true), metadata: .copyrightOnly, in: directory)
+        #expect(xmp(url, "crs:Exposure2012") == "+2")
+        #expect(xmp(url, "dc:rights") == "© Example Studio")
+    }
+
+    @Test func developSettingsXMPIsAPhotosSettingsNotAPreset() throws {
+        var adjustments = PhotoAdjustments()
+        adjustments.light.exposure = 1.5
+        let data = PresetWriter.developSettingsXMP(for: adjustments)
+        let metadata = try #require(CGImageMetadataCreateFromXMPData(data as CFData))
+        #expect(FileMetadata.xmpString(metadata, "crs:Exposure2012") == "+1.5")
+        for presetOnly in ["crs:PresetType", "crs:UUID", "crs:SupportsAmount", "crs:Name", "crs:Group"] {
+            #expect(CGImageMetadataCopyTagWithPath(metadata, nil, presetOnly as CFString) == nil, "\(presetOnly)")
+        }
+        // Presets are unchanged.
+        let preset = String(decoding: PresetWriter.xmp(name: "P", group: "G", settings: ["Exposure2012": .number(1)]), as: UTF8.self)
+        #expect(preset.contains("crs:PresetType=\"Normal\"") && preset.contains("<crs:Name>"))
+    }
+}
+
+/// ImageIO writes PSD files without metadata; exports add it as an XMP resource (RAW-268).
+@Suite("PSD metadata")
+struct PSDMetadataTests {
+    @Test func psdExportsCarryTheirMetadata() async throws {
+        let directory = try TemporaryDirectory()
+        var metadata = PhotoMetadata()
+        metadata[.title] = "Morning Light"
+        let item = try makeItem(in: directory, metadata: metadata, keywords: ["Beach"], rating: 3)
+        var settings = ExportSettings()
+        settings.format = .psd
+        let url = directory.url.appending(path: "Out/a.psd")
+        try await PhotoExporter.export(item, to: url, settings: settings, watermark: nil)
+        let source = try #require(CGImageSourceCreateWithURL(url as CFURL, nil))
+        #expect(CGImageSourceGetType(source) as String? == "com.adobe.photoshop-image")
+        #expect(xmp(url, "dc:title") == "Morning Light")
+        #expect(xmp(url, "xmp:Rating") == "3")
+        #expect(xmp(url, "dc:rights") == "© Example Studio", "the original's metadata too")
+        let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        #expect(image.width == 64 && image.height == 48, "the pixels are untouched")
+    }
+
+    @Test func insertingReplacesAnOldXMPBlockAndKeepsOtherResources() throws {
+        // A minimal PSD: header, no color mode data, two resources (1005 and an XMP block), then image data.
+        func block(_ id: UInt16, _ payload: [UInt8]) -> [UInt8] {
+            Array("8BIM".utf8) + [UInt8(id >> 8), UInt8(id & 0xFF), 0, 0]
+                + [0, 0, 0, UInt8(payload.count)] + payload + (payload.count % 2 == 1 ? [0] : [])
+        }
+        let header: [UInt8] = Array("8BPS".utf8) + [0, 1] + [0, 0, 0, 0, 0, 0] + [0, 3] + [0, 0, 0, 1] + [0, 0, 0, 1] + [0, 8] + [0, 3]
+        let resources = block(1005, [1, 2, 3]) + block(0x0424, Array("old".utf8))
+        let imageData: [UInt8] = [9, 9, 9, 9]
+        let psd = Data(header + [0, 0, 0, 0] + [0, 0, 0, UInt8(resources.count)] + resources + imageData)
+
+        let result = try #require(PSDMetadata.inserting(xmp: Data("new!".utf8), into: psd))
+        let bytes = [UInt8](result)
+        let expected = block(1005, [1, 2, 3]) + block(0x0424, Array("new!".utf8))
+        #expect(Array(bytes[26..<34]) == [0, 0, 0, 0, 0, 0, 0, UInt8(expected.count)], "the section's length is updated")
+        #expect(Array(bytes[34..<34 + expected.count]) == expected)
+        #expect(Array(bytes.suffix(4)) == imageData, "what follows is untouched")
+        #expect(PSDMetadata.inserting(xmp: Data(), into: Data("not a psd at all, sorry".utf8)) == nil)
+    }
+}
