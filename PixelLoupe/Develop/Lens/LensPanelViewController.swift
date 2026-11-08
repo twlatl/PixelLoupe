@@ -56,6 +56,17 @@ final class LensPanelViewController: NSViewController {
         didSet { update() }
     }
 
+    /// Shown in a section of the Adjust panel (RAW-260): no title, insets or scrolling of its own.
+    let isEmbedded: Bool
+
+    init(embedded: Bool = false) {
+        isEmbedded = embedded
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
     private static let tabKey = "LensCorrectionsTab"
     private let tabs = NSSegmentedControl(labels: ["Profile", "Manual"], trackingMode: .selectOne, target: nil, action: nil)
     private let profileView = NSStackView()
@@ -100,14 +111,23 @@ final class LensPanelViewController: NSViewController {
         buildProfileView()
         buildManualView()
 
-        let stack = NSStackView(views: [title, tabs, profileView, manualView])
+        // Embedded, the section's title names the panel.
+        let stack = NSStackView(views: isEmbedded ? [tabs, profileView, manualView] : [title, tabs, profileView, manualView])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
-        stack.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 20, right: 14)
-        stack.setCustomSpacing(8, after: title)
+        stack.edgeInsets = isEmbedded ? NSEdgeInsets() : NSEdgeInsets(top: 12, left: 14, bottom: 20, right: 14)
+        if !isEmbedded { stack.setCustomSpacing(8, after: title) }
+        let inset = stack.edgeInsets.left + stack.edgeInsets.right
         for view in [tabs, profileView, manualView] {
-            view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -28).isActive = true
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -inset).isActive = true
+        }
+        if isEmbedded {
+            stack.setAccessibilityIdentifier("lensPanel")
+            view = stack
+            showTab()
+            update()
+            return
         }
 
         let document = FlippedView()

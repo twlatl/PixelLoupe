@@ -30,7 +30,8 @@ final class AdjustmentSectionView: NSView {
         }
     }
 
-    init(title: String, symbolName: String, hasAuto: Bool = false, expandedByDefault: Bool = false, scope: String = "") {
+    /// `hasToggle`: whether it has an on/off circle (a section holding another panel, such as Presets, doesn't).
+    init(title: String, symbolName: String, hasAuto: Bool = false, hasToggle: Bool = true, expandedByDefault: Bool = false, scope: String = "") {
         self.title = title
         self.scope = scope
         super.init(frame: .zero)
@@ -77,6 +78,7 @@ final class AdjustmentSectionView: NSView {
         toggleButton.target = self
         toggleButton.action = #selector(toggle(_:))
         toggleButton.setAccessibilityIdentifier("toggle.\(title)")
+        toggleButton.isHidden = !hasToggle
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)

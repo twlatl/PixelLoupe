@@ -201,8 +201,8 @@ In the enlarged Library view and in Develop, a click on the photo switches betwe
 centered where you clicked. The pointer is a magnifying glass while the photo fits and a hand while it's zoomed; drag
 to move around. Zooming in and out animates, in the view and in the Navigator. Click or drag in the Navigator's
 preview to jump there. `Z` or `Space` does the same as a click. The zoom carries
-over from photo to photo and between Library and Develop. In Develop, click-to-zoom works with the Adjust, Lens
-Corrections and History tools (Crop, Masking and Spot Removal use clicks themselves; the Navigator still zooms there,
+over from photo to photo and between Library and Develop. In Develop, click-to-zoom works with the Adjust, Rim
+Light and History tools (Crop, Masking and Spot Removal use clicks themselves; the Navigator still zooms there,
 except Crop, which always shows the whole photo). Zoomed in with Spot Removal, the pointer is a hand too: drag off the spots
 to move around, and click to place one. Zoomed views render only the part on screen, at full resolution.
 
@@ -681,7 +681,7 @@ the photo is reported.
 
 ## Presets (Develop)
 
-The Presets tool (second icon in Develop's right panel) lists Lightroom presets by group, searchable by name.
+The Presets section (the first section of Develop's Adjust panel) lists Lightroom presets by group, searchable by name.
 Double-click a preset (or select it and click **Apply**) to apply it to the photo: only the settings the preset holds
 change, as in Lightroom, and it's one undoable step in the photo's History, named after the preset. **Copy** puts the
 preset on the settings clipboard; **Photo ▸ Paste Settings** (`⇧⌘V`) then applies it to every selected photo, in
@@ -767,7 +767,7 @@ overlap), with the ISO, focal length, aperture and shutter speed underneath.
 
 ## Lens Corrections (Develop)
 
-The camera icon at the top of Develop's right sidebar shows Lens Corrections, with Lightroom's two tabs.
+Lens Corrections is the last section of Develop's Adjust panel, with Lightroom's two tabs.
 
 - **Profile:**
   - **Remove Chromatic Aberration** uses the lens profile's data, or measures the photo's lateral color fringing.

@@ -14,8 +14,8 @@ struct DevelopSidebarTests {
         controller.showWindow(nil)
         controller.state.mode = .develop
         let sidebar = try #require(controller.rootViewController.main.develop.sidebarView)
-        // Histogram, tool icons and their line, plus the eight tools' panels stacked in one place.
-        #expect(sidebar.subviews.count == 11)
+        // Histogram, tool icons and their line, plus the six tools' panels stacked in one place.
+        #expect(sidebar.subviews.count == 9)
         #expect(sidebar.subviews.filter { !$0.isHidden }.count == 4, "the histogram, icons, line and the Adjust panel")
     }
 
@@ -32,7 +32,7 @@ struct DevelopSidebarTests {
 
         let icons = window.contentView!.descendants.compactMap { $0 as? NSButton }
             .filter { $0.accessibilityIdentifier().hasPrefix("developTool.") }
-        #expect(icons.map { $0.accessibilityIdentifier() } == ["developTool.adjust", "developTool.rimLight", "developTool.presets", "developTool.crop", "developTool.lens", "developTool.mask", "developTool.retouch", "developTool.history"])
+        #expect(icons.map { $0.accessibilityIdentifier() } == ["developTool.adjust", "developTool.rimLight", "developTool.crop", "developTool.mask", "developTool.retouch", "developTool.history"])
         let header = try #require(icons.first?.superview)
         let line = try #require(header.superview?.subviews.compactMap { $0 as? NSBox }.first)
         // Measured from the icons' alignment rects (their frames add padding around the symbols)
@@ -49,26 +49,52 @@ struct DevelopSidebarTests {
         let histogram = try #require(window.contentView!.descendants.first { $0.accessibilityIdentifier() == "histogram" })
         #expect(histogram.convert(histogram.bounds, to: nil).minY > icons[0].convert(icons[0].bounds, to: nil).maxY)
 
-        // The camera shows Lens Corrections in place of the Adjust panel.
+        // The history icon shows History in place of the Adjust panel.
         func isShown(_ identifier: String) -> Bool {
             window.contentView!.descendants.first { $0.accessibilityIdentifier() == identifier }.map { !$0.isHiddenOrHasHiddenAncestor } ?? false
         }
-        #expect(isShown("adjustPanel") && !isShown("lensPanel"))
-        let lensIcon = try #require(icons.first { $0.accessibilityIdentifier() == "developTool.lens" })
-        lensIcon.performClick(nil)
-        #expect(controller.state.developTool == .lens)
-        #expect(isShown("lensPanel") && !isShown("adjustPanel"))
-        #expect(lensIcon.accessibilityValue() as? String == "active")
+        #expect(isShown("adjustPanel"))
+        let historyIcon = try #require(icons.first { $0.accessibilityIdentifier() == "developTool.history" })
+        historyIcon.performClick(nil)
+        #expect(controller.state.developTool == .history)
+        #expect(!isShown("adjustPanel"))
+        #expect(historyIcon.accessibilityValue() as? String == "active")
+        controller.state.developTool = .adjust
         window.layoutIfNeeded()
-        let lensPanel = try #require(window.contentView!.descendants.first { $0.accessibilityIdentifier() == "lensPanel" })
+        let adjustPanel = try #require(window.contentView!.descendants.first { $0.accessibilityIdentifier() == "adjustPanel" })
         // The panel fills the sidebar below the tool icons' line, whatever the window's height (CI screens are small).
-        let panelFrame = lensPanel.convert(lensPanel.bounds, to: nil)
+        let panelFrame = adjustPanel.convert(adjustPanel.bounds, to: nil)
         let sidebarFrame = sidebar.convert(sidebar.bounds, to: nil)
         #expect(abs(panelFrame.minY - sidebarFrame.minY) <= 1, "reaches the bottom of the sidebar: \(panelFrame) in \(sidebarFrame)")
         #expect(panelFrame.maxY <= lineTop + 1 && lineTop - panelFrame.maxY < 20, "starts just below the line: \(panelFrame.maxY) vs \(lineTop)")
         #expect(panelFrame.height > 100)
-        #expect(!lensPanel.hasAmbiguousLayout && !histogram.hasAmbiguousLayout)
+        #expect(!adjustPanel.hasAmbiguousLayout && !histogram.hasAmbiguousLayout)
         // The plot, the shooting settings and what the photo is drawn from.
         #expect(abs(histogram.frame.height - (HistogramView.plotHeight + 6 + 16 + 16)) < 0.5)
+    }
+
+    /// RAW-260: Presets is the Adjust panel's first section and Lens Corrections its last, each a whole panel.
+    @Test func presetsAndLensCorrectionsAreSectionsOfAdjust() throws {
+        let directory = try TemporaryDirectory()
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url)
+        let controller = CatalogWindowController(store: store)
+        defer { controller.close() }
+        controller.showWindow(nil)
+        controller.state.mode = .develop
+        let window = try #require(controller.window)
+        let adjustPanel = try #require(window.contentView!.descendants.first { $0.accessibilityIdentifier() == "adjustPanel" })
+        // In the order the panel's stack shows them.
+        let stack = try #require(adjustPanel.descendants.first { $0 is AdjustmentSectionView }?.superview as? NSStackView)
+        let sections = stack.arrangedSubviews.compactMap { $0 as? AdjustmentSectionView }
+        #expect(sections.first?.title == "Presets")
+        #expect(sections.last?.title == "Lens Corrections")
+        let presets = try #require(window.contentView!.descendants.first { $0.accessibilityIdentifier() == "presetsPanel" })
+        let lens = try #require(window.contentView!.descendants.first { $0.accessibilityIdentifier() == "lensPanel" })
+        #expect(presets.isDescendant(of: sections.first!) && lens.isDescendant(of: sections.last!))
+        // Neither has an on/off circle of its own.
+        for section in [sections.first!, sections.last!] {
+            let toggle = section.descendants.first { $0.accessibilityIdentifier() == "toggle.\(section.title)" }
+            #expect(toggle?.isHidden == true)
+        }
     }
 }
