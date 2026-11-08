@@ -76,10 +76,23 @@ final class CatalogStore: NSObject {
         }
     }
 
+    /// The catalog's settings (Catalog Settings…), saved in the package.
+    var settings: CatalogSettings {
+        didSet {
+            guard settings != oldValue else { return }
+            do {
+                try settings.save(to: packageURL)
+            } catch {
+                Self.logger.error("Failed to save catalog settings: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
     private init(packageURL: URL, info: CatalogInfo, inMemory: Bool) throws {
         self.packageURL = packageURL
         self.info = info
         self.viewState = CatalogViewState.load(from: packageURL)
+        self.settings = CatalogSettings.load(from: packageURL)
         self.thumbnails = ThumbnailStore(directory: CatalogPackage.thumbnailsURL(in: packageURL))
         self.smartPreviews = SmartPreviewStore(directory: CatalogPackage.smartPreviewsURL(in: packageURL))
         self.standardPreviews = StandardPreviewStore(directory: CatalogPackage.standardPreviewsURL(in: packageURL))

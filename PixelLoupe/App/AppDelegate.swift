@@ -136,6 +136,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindowController?.showWindow(nil)
     }
 
+    /// PixelLoupe ▸ Catalog Settings… (⌥⌘,): the open catalog's settings. Unavailable with no catalog open.
+    @objc func showCatalogSettings(_ sender: Any?) {
+        catalogWindowController?.showCatalogSettings()
+    }
+
     /// PixelLoupe ▸ Edit Watermarks…: previews the selected photos of the open catalog.
     @objc func showWatermarkEditor(_ sender: Any?) {
         if let watermarkEditor, watermarkEditor.window?.isVisible == true {
@@ -266,9 +271,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 extension AppDelegate: NSMenuItemValidation {
-    /// Check for Updates… is unavailable while a check is under way, and in builds that don't update.
+    /// Check for Updates… is unavailable while a check is under way, and in builds that don't update;
+    /// Catalog Settings… while no catalog is open.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(checkForUpdates(_:)) { return Updates.shared.canCheckForUpdates }
+        if menuItem.action == #selector(showCatalogSettings(_:)) { return catalogWindowController != nil }
         return true
     }
 }

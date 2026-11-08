@@ -126,11 +126,14 @@ nonisolated enum CatalogPackage {
     static let smartPreviewsDirectoryName = "Smart Previews"
     static let standardPreviewsDirectoryName = "Previews"
     static let viewStateFileName = "ViewState.plist"
+    static let settingsFileName = "Settings.plist"
     static let lightroomImportReportFileName = "LightroomImport.json"
 
     static func infoURL(in package: URL) -> URL { package.appending(path: infoFileName) }
     static func databaseURL(in package: URL) -> URL { package.appending(path: databaseFileName) }
     static func viewStateURL(in package: URL) -> URL { package.appending(path: viewStateFileName) }
+    /// Made when a Catalog Settings value is first changed.
+    static func settingsURL(in package: URL) -> URL { package.appending(path: settingsFileName) }
     static func lightroomImportReportURL(in package: URL) -> URL { package.appending(path: lightroomImportReportFileName) }
     static func thumbnailsURL(in package: URL) -> URL {
         package.appending(path: thumbnailsDirectoryName, directoryHint: .isDirectory)

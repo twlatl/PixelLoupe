@@ -89,7 +89,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
   3D color lookup table, which also carries Whites, Vibrance and Saturation. Texture, Clarity and Dehaze (the
   Adjust panel's Presence section) are Core Image filters on the GPU. The preview renders at display resolution on an `MTKView`.
 - **Catalogs:** each catalog is a `.pixelloupe` package containing its own Core Data (SQLite) store,
-  `Catalog.plist` settings and a `Thumbnails` cache. Catalogs either copy imported photos into a storage
+  `Catalog.plist` settings, a `Settings.plist` of Catalog Settings (`⌥⌘,`) and a `Thumbnails` cache. Catalogs either copy imported photos into a storage
   folder organized as `YYYY/MM-DD`, or reference photos where they already are. Catalogs made before the app
   was renamed (`.lightloupe` from LightLoupe, `.rawloupe` from RawLoupe) still open; they aren't renamed.
 - **Earlier names:** PixelLoupe was LightLoupe, and RawLoupe before that. On first launch it copies the old
@@ -150,6 +150,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `⌘F` | Show the Library Filter bar's Text mode (alongside any other active modes) and put the cursor in its search field |
 | `` ` `` | Show or hide the Develop loupe (hold and click to place it) |
 | `⌘,` | Settings (General: confirm when quitting; Appearance: appearance, matte color and Monochrome Mode; Import: JPEG sidecars and opening the import window when a card is inserted; Displays: the secondary window's display; External Editing) |
+| `⌥⌘,` | Catalog Settings (the open catalog's own settings, in a sheet on its window; General: where the catalog is, its file name, when it was made and the size of its database) |
 | `⌘Q` | Quit, after asking "Are you sure you want to quit?" (Return quits; turn the question off in Settings ▸ General or with its Don't ask again box) |
 | `⌃⌘F` | Enter or exit full screen for the app window |
 | `F6` | Show or hide the filmstrip |
