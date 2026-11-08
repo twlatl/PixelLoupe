@@ -150,7 +150,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `⌘F` | Show the Library Filter bar's Text mode (alongside any other active modes) and put the cursor in its search field |
 | `` ` `` | Show or hide the Develop loupe (hold and click to place it) |
 | `⌘,` | Settings (General: confirm when quitting; Appearance: appearance, matte color and Monochrome Mode; Import: JPEG sidecars and opening the import window when a card is inserted; Displays: the secondary window's display; External Editing) |
-| `⌥⌘,` | Catalog Settings (the open catalog's own settings, in a sheet on its window; General: where the catalog is, its file name, when it was made and the size of its database; Previews: Standard preview size and quality, a limit on the preview cache, and how much space previews take; Metadata: whether exported, published and Edit In files carry the photo's develop settings, and Duplicate Detection) |
+| `⌥⌘,` | Catalog Settings (the open catalog's own settings, in a sheet on its window; General: where the catalog is, its file name, when it was made and the size of its database; Previews: Standard preview size and quality, a limit on the preview cache, and how much space previews take; Metadata: whether exported, published and Edit In files carry the photo's develop settings, and Duplicate Detection; Backups: where and how often the catalog is backed up, how many backups are kept, and the backups made) |
 | `⌘Q` | Quit, after asking "Are you sure you want to quit?" (Return quits; turn the question off in Settings ▸ General or with its Don't ask again box) |
 | `⌃⌘F` | Enter or exit full screen for the app window |
 | `F6` | Show or hide the filmstrip |
@@ -513,6 +513,18 @@ The Catalog section of the left sidebar (below the Navigator) has, as in Lightro
   catalog opens. Virtual copies and a RAW file's JPEG never count, and nothing is removed.
 
 The grid's source (a Catalog item, folder or collection) is restored when the catalog is opened again.
+
+## Catalog backups
+
+Catalog Settings ▸ Backups chooses when PixelLoupe offers to back the catalog up as it quits: never, once a month, once
+a week (the default), once a day, every time, or only the next time (then the earlier choice comes back). When one is
+due, a sheet asks to **Back Up** or **Skip This Time** (asked again at the next quit), with **Test integrity before
+backing up** (SQLite's `integrity_check` on the copy; a copy that fails is reported and not kept). A backup is the
+catalog database (copied with `VACUUM INTO`, so it's consistent and compacted) and its settings files, zipped as
+`<backup folder>/YYYY-MM-DD HHMM/<catalog>.zip`; unzipped, it opens with File ▸ Open Catalog. Previews, thumbnails and
+Smart Previews aren't included. The backup folder is a Backups folder next to the catalog unless another is chosen;
+only the newest backups are kept (10 unless changed). The pane lists the backups found in the folder, with Show in
+Finder and Delete.
 
 ## Folders
 
