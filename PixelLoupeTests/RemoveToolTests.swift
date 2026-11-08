@@ -205,4 +205,30 @@ struct RemoveToolTests {
         #expect(develop.handleHandKey(space(.keyUp)))
         #expect(!controller.state.zoom.isZoomed)
     }
+
+    @Test("A selected spot's area is outlined, not covered, so the removal shows through")
+    func selectedAreaIsOutlined() throws {
+        let overlay = RemoveOverlayView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        overlay.previewFrame = PreviewFrame(rect: CGRect(x: 0, y: 0, width: 400, height: 300))
+        var spot = PhotoAdjustments.Spot()
+        spot.kind = .remove
+        spot.area = PhotoAdjustments.RemoveArea(brush: PhotoAdjustments.BrushMask(strokes: [stroke([(0.5, 0.5)], size: 0.15)]))
+        spot.fitCircleToArea(aspect: 400.0 / 300)
+        overlay.spots = [spot]
+        overlay.selectedID = spot.id
+        overlay.toolOverlay = .never
+        let rep = try #require(overlay.bitmapImageRepForCachingDisplay(in: overlay.bounds))
+        overlay.cacheDisplay(in: overlay.bounds, to: rep)
+        if let out = ProcessInfo.processInfo.environment["PL_SNAPSHOT_DIRECTORY"] {
+            try rep.representation(using: .png, properties: [:])?.write(to: URL(filePath: out).appending(path: "outline.png"))
+        }
+        func alpha(_ x: CGFloat, _ y: CGFloat) -> CGFloat {
+            // The rep's points from the top.
+            rep.colorAt(x: Int(x * CGFloat(rep.pixelsWide) / 400), y: Int((300 - y) * CGFloat(rep.pixelsHigh) / 300))?.alphaComponent ?? 0
+        }
+        // The brush reaches 0.15 × 400 = 60 points from the middle.
+        #expect(alpha(200 + 30, 150) < 0.05, "the middle is clear")
+        let ring = stride(from: 54.0, through: 62.0, by: 1).map { alpha(200 + $0, 150) }.max() ?? 0
+        #expect(ring > 0.5, "the edge is outlined: \(ring)")
+    }
 }

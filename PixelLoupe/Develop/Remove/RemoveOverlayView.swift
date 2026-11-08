@@ -121,36 +121,70 @@ final class RemoveOverlayView: NSView {
 
     // MARK: Drawing
 
+    /// How an area is drawn: filled, or as its outline (a thin line, and a wider one under it to set it off).
+    enum AreaStyle { case fill, outline, outlineShadow }
+
+    private struct AreaMasks {
+        var frame: CGRect
+        var box: CGRect
+        var fill: CGImage
+        var outline: CGImage
+        var outlineShadow: CGImage
+    }
+
     /// Areas drawn at the view's size, kept until the area or the frame changes.
-    private var areaImages: [PhotoAdjustments.RemoveArea: (frame: CGRect, image: CGImage, box: CGRect)] = [:]
+    private var areaImages: [PhotoAdjustments.RemoveArea: AreaMasks] = [:]
 
     private func invalidateAreas() { areaImages.removeAll() }
 
-    /// The area as a tinted image over its box (view points of the unrotated frame).
-    private func image(for area: PhotoAdjustments.RemoveArea) -> (image: CGImage, box: CGRect)? {
-        if let cached = areaImages[area], cached.frame == frameRect { return (cached.image, cached.box) }
+    /// The area as a mask over its box (view points of the unrotated frame), filled or outlined.
+    private func image(for area: PhotoAdjustments.RemoveArea, style: AreaStyle = .fill) -> (image: CGImage, box: CGRect)? {
+        guard let masks = masks(for: area) else { return nil }
+        switch style {
+        case .fill: return (masks.fill, masks.box)
+        case .outline: return (masks.outline, masks.box)
+        case .outlineShadow: return (masks.outlineShadow, masks.box)
+        }
+    }
+
+    private func masks(for area: PhotoAdjustments.RemoveArea) -> AreaMasks? {
+        if let cached = areaImages[area], cached.frame == frameRect { return cached }
         guard let painted = area.bounds(aspect: aspect), frameRect.width > 0 else { return nil }
         let box = painted.intersection(CGRect(x: -0.5, y: -0.5, width: 2, height: 2))
         let viewBox = CGRect(x: box.minX * frameRect.width, y: box.minY * frameRect.height, width: box.width * frameRect.width, height: box.height * frameRect.height)
         let shrink = min(1, 512 / max(viewBox.width, viewBox.height, 1))
         let width = max(1, Int(viewBox.width * shrink)), height = max(1, Int(viewBox.height * shrink))
         let coverage = RemoveAreaRaster.coverage(of: area, box: box, frameSize: frameRect.size, width: width, height: height)
-        // Rows from the bottom into a bitmap whose rows are from the top.
-        var bytes = [UInt8](repeating: 0, count: width * height)
-        for row in 0..<height {
-            for column in 0..<width { bytes[(height - 1 - row) * width + column] = UInt8(min(255, max(0, coverage[row * width + column] * 255))) }
+        // The outline: inside pixels next to outside ones, about 1 point wide (and 3 for the shadow under it).
+        let inside = coverage.map { $0 > 0.5 }
+        let pixelsPerPoint = Double(width) / max(Double(viewBox.width), 1)
+        func edge(points: Double) -> [Float] {
+            let reach = max(1, Int((points * pixelsPerPoint).rounded()))
+            let outside = RemoveFillStore.dilate(inside.map { !$0 }, width: width, height: height, by: reach)
+            let grown = RemoveFillStore.dilate(inside, width: width, height: height, by: max(0, reach - 1))
+            return inside.indices.map { grown[$0] && outside[$0] ? 1 : 0 }
         }
-        guard let provider = CGDataProvider(data: Data(bytes) as CFData),
-              let mask = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 8, bytesPerRow: width,
-                                 space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),
-                                 provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent) else { return nil }
-        areaImages[area] = (frameRect, mask, viewBox)
-        return (mask, viewBox)
+        // Rows from the bottom into a bitmap whose rows are from the top.
+        func mask(_ values: [Float]) -> CGImage? {
+            var bytes = [UInt8](repeating: 0, count: width * height)
+            for row in 0..<height {
+                for column in 0..<width { bytes[(height - 1 - row) * width + column] = UInt8(min(255, max(0, values[row * width + column] * 255))) }
+            }
+            guard let provider = CGDataProvider(data: Data(bytes) as CFData) else { return nil }
+            return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 8, bytesPerRow: width,
+                           space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),
+                           provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
+        }
+        guard let fill = mask(coverage), let outline = mask(edge(points: 1)), let shadow = mask(edge(points: 2.5)) else { return nil }
+        let masks = AreaMasks(frame: frameRect, box: viewBox, fill: fill, outline: outline, outlineShadow: shadow)
+        areaImages[area] = masks
+        return masks
     }
 
-    /// Fills the area with `color` (offset by `shift` view points), in the frame's (possibly straightened) place.
-    private func drawArea(_ area: PhotoAdjustments.RemoveArea, color: NSColor, shift: CGVector = .zero) {
-        guard let (mask, box) = image(for: area), let context = NSGraphicsContext.current?.cgContext else { return }
+    /// Fills the area (or its outline) with `color` (offset by `shift` view points), in the frame's (possibly
+    /// straightened) place.
+    private func drawArea(_ area: PhotoAdjustments.RemoveArea, color: NSColor, style: AreaStyle = .fill, shift: CGVector = .zero) {
+        guard let (mask, box) = image(for: area, style: style), let context = NSGraphicsContext.current?.cgContext else { return }
         context.saveGState()
         // Into the frame's coordinates (rotated when straightened), where the box is.
         context.concatenate(previewFrame.rotation)
@@ -170,10 +204,14 @@ final class RemoveOverlayView: NSView {
         if let spot = spots.first(where: { $0.id == selectedID }), pendingArea == nil {
             let center = viewPoint(spot.center), source = viewPoint(spot.source)
             if let area = spot.area {
-                drawArea(area, color: NSColor.white.withAlphaComponent(0.28))
+                // Its outline, so the result shows through; filled lightly only while the pointer is on its pin.
+                if hoveredID == spot.id { drawArea(area, color: NSColor.white.withAlphaComponent(0.28)) }
+                drawArea(area, color: NSColor.black.withAlphaComponent(0.45), style: .outlineShadow)
+                drawArea(area, color: .white, style: .outline)
                 if !spot.isFilled {
                     let shift = previewFrame.frameVector(CGVector(dx: source.x - center.x, dy: source.y - center.y))
-                    drawArea(area, color: Accent.color.withAlphaComponent(0.25), shift: shift)
+                    drawArea(area, color: NSColor.black.withAlphaComponent(0.45), style: .outlineShadow, shift: shift)
+                    drawArea(area, color: Accent.color, style: .outline, shift: shift)
                 }
             } else {
                 let radius = max(spot.radius * longEdge, 4)
@@ -269,14 +307,19 @@ final class RemoveOverlayView: NSView {
         cursor(at: convert(event.locationInWindow, from: nil)).set()
     }
 
+    /// The spot whose pin the pointer is on: its area is shown filled.
+    private(set) var hoveredID: UUID? { didSet { if hoveredID != oldValue { needsDisplay = true } } }
+
     override func mouseMoved(with event: NSEvent) {
         pointer = convert(event.locationInWindow, from: nil)
+        if case .pin(let spot)? = target(at: pointer!) { hoveredID = spot.id } else { hoveredID = nil }
         cursor(at: pointer!).set()
         needsDisplay = true
     }
 
     override func mouseExited(with event: NSEvent) {
         pointer = nil
+        hoveredID = nil
         needsDisplay = true
     }
 
