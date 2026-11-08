@@ -105,6 +105,12 @@ final class StandardPreviewBuilder {
         }
     }
 
+    /// The photo's Standard preview was found to be outdated when viewed (see ``StandardPreviewStore``): it's drawn
+    /// again at the current size and quality.
+    func redraw(_ id: UUID) {
+        enqueue([id], thumbnail: false, counted: false)
+    }
+
     private func enqueue(_ ids: [UUID], thumbnail: Bool, counted: Bool) {
         var added = 0
         for id in ids {
@@ -143,6 +149,7 @@ final class StandardPreviewBuilder {
         guard generation == self.generation else { return }
         task = nil
         progress = nil
+        store.trimStandardPreviews()
     }
 
     private func draw(_ id: UUID, thumbnail: Bool) async {
@@ -151,11 +158,11 @@ final class StandardPreviewBuilder {
         request.fetchLimit = 1
         guard let photo = try? store.viewContext.fetch(request).first, Self.isEligible(photo) else { return }
         let previews = store.standardPreviews
-        // A preview that's current and not wanted for a thumbnail has nothing to do.
-        if previews.isCurrent(id), !thumbnail { return }
+        // A preview that's current, at the current size and quality, and not wanted for a thumbnail has nothing to do.
+        if !previews.needsDrawing(id), !thumbnail { return }
         let adjustmentsData = photo.adjustmentsData
         let drawn = await StandardPreviewStore.draw(
-            store.sourceLocation(of: photo), adjustments: photo.adjustments,
+            store.sourceLocation(of: photo), adjustments: photo.adjustments, format: previews.format,
             to: previews.url(for: id), thumbnail: thumbnail ? store.thumbnails.url(for: id) : nil
         )
         guard let drawn else {

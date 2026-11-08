@@ -42,6 +42,8 @@ struct StandardPreviewTests {
         try Fixtures.writeJPEG(to: jpegURL, width: 320, height: 240)
         let raw = makePhoto(in: store, url: rawURL), jpeg = makePhoto(in: store, url: jpegURL)
         try store.viewContext.save()
+        // Not Auto, which would follow the test machine's displays.
+        store.settings.standardPreviewSize = .pixels2560
         return Setup(directory: directory, store: store, raw: raw, jpeg: jpeg)
     }
 
@@ -84,7 +86,7 @@ struct StandardPreviewTests {
         #expect(!exists(previews.url(for: setup.jpeg.id)))
 
         let preview = try image(at: previews.url(for: setup.raw.id))
-        #expect(max(preview.width, preview.height) == StandardPreviewStore.maxPixelSize)
+        #expect(max(preview.width, preview.height) == StandardPreviewFormat.original.pixelSize)
         #expect(preview.colorSpace?.name == CGColorSpace.displayP3, "matches the loupe's render")
 
         let thumbnail = try image(at: store.thumbnails.url(for: setup.raw.id))
@@ -96,6 +98,66 @@ struct StandardPreviewTests {
         let decoded = await previews.image(for: setup.raw.id)
         #expect(decoded?.width == preview.width)
         #expect(previews.cachedImage(for: setup.raw.id) != nil)
+    }
+
+    /// Catalog Settings ▸ Previews (RAW-267): a preview drawn at another size or quality is still shown, and drawn
+    /// again when it's next viewed.
+    @Test func changingSizeOrQualityRedrawsPreviewsWhenViewed() async throws {
+        let setup = try makeSetup()
+        let store = setup.store
+        let builder = store.standardPreviewBuilder
+        builder.start(after: .zero)
+        defer { builder.stop() }
+        builder.build([setup.raw])
+        await builder.waitUntilIdle()
+        let previews = store.standardPreviews
+        let id = setup.raw.id
+        #expect(Self.recordedFormat(at: previews.url(for: id)) == StandardPreviewFormat(pixelSize: 2560, quality: 0.8))
+
+        store.settings.standardPreviewSize = .pixels1024
+        store.settings.previewQuality = .high
+        #expect(previews.format == StandardPreviewFormat(pixelSize: 1024, quality: 0.9))
+        #expect(previews.isCurrent(id), "the old preview still counts")
+        #expect(try image(at: previews.url(for: id)).width == 2560, "changing the setting leaves the files alone")
+
+        let shown = await previews.image(for: id)
+        #expect(shown?.width == 2560, "the outdated preview is shown")
+        #expect(previews.outdated.contains(id))
+        await builder.waitUntilIdle()
+
+        #expect(!previews.outdated.contains(id))
+        let redrawn = try image(at: previews.url(for: id))
+        #expect(max(redrawn.width, redrawn.height) == 1024, "drawn again at the new size")
+        #expect(Self.recordedFormat(at: previews.url(for: id)) == StandardPreviewFormat(pixelSize: 1024, quality: 0.9))
+        #expect(await previews.image(for: id)?.width == 1024)
+        #expect(!previews.outdated.contains(id), "current once drawn again")
+    }
+
+    /// Previews drawn before RAW-267 have no recorded format and count as 2560 px at Medium.
+    @Test func previewsWithoutARecordedFormatCountAsTheOriginal() async throws {
+        let setup = try makeSetup()
+        let previews = setup.store.standardPreviews
+        let id = setup.raw.id
+        try FileManager.default.createDirectory(at: previews.directory, withIntermediateDirectories: true)
+        try Fixtures.writeJPEG(to: previews.url(for: id), width: 2560, height: 1440)
+        await previews.load()
+        var redrawn: [UUID] = []
+        previews.onOutdated = { redrawn.append($0) }
+
+        #expect(await previews.image(for: id) != nil)
+        #expect(redrawn.isEmpty, "at 2560 and Medium it's current")
+
+        setup.store.settings.previewQuality = .low
+        previews.onOutdated = { redrawn.append($0) }
+        #expect(await previews.image(for: id) != nil)
+        #expect(redrawn == [id])
+    }
+
+    private static func recordedFormat(at url: URL) -> StandardPreviewFormat? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any] else { return nil }
+        return StandardPreviewFormat(tag: exif[kCGImagePropertyExifUserComment] as? String)
     }
 
     @Test func anEditMakesThePreviewStaleUntilItIsDrawnAgain() async throws {
