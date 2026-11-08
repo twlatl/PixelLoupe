@@ -4,7 +4,7 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-/// A catalog's Standard previews (RAW-84): a 2560 px rendering of a camera RAW photo with its Develop settings, in
+/// A catalog's Standard previews (RAW-84): a rendering, 2560 px unless Catalog Settings ▸ Previews says otherwise, of a camera RAW photo with its Develop settings, in
 /// Display P3, so the loupe, Develop, Compare and Survey have a large, accurate picture to show while the full render
 /// runs. They're built when an import asks for Standard previews or with Library ▸ Previews ▸ Build Standard Previews.
 ///
@@ -12,10 +12,13 @@ import UniformTypeIdentifiers
 /// photos have one. Editing a photo makes its preview stale: the file is renamed to `<id>.stale` (never shown) until
 /// ``StandardPreviewBuilder`` draws it again, so a photo keeps its Standard preview through edits and app restarts.
 /// Virtual copies have their own settings, so each has its own.
+///
+/// Changing the size or quality in Catalog Settings (RAW-267) leaves the files alone: each preview records the
+/// ``StandardPreviewFormat`` it was drawn at, and one drawn at another is *outdated*. It's still shown, and it's
+/// drawn again when it's next viewed (or by Build Standard Previews). Viewing a preview also dates its file, so
+/// Limit Preview Cache Size can remove the least recently viewed first.
 @MainActor
 final class StandardPreviewStore {
-    /// Long-edge size of Standard previews, matching Smart Previews.
-    nonisolated static let maxPixelSize = 2560
     nonisolated static let currentExtension = "jpg"
     nonisolated static let staleExtension = "stale"
 
@@ -28,14 +31,29 @@ final class StandardPreviewStore {
     private(set) var ids = Set<UUID>()
     /// Photos whose Standard preview is waiting to be drawn again after an edit.
     private(set) var stale = Set<UUID>()
+    /// Photos whose Standard preview was found, when viewed, to be drawn at a format other than ``format``.
+    private(set) var outdated = Set<UUID>()
+    /// The size and quality Standard previews are drawn at now, from Catalog Settings.
+    var format = StandardPreviewFormat.original {
+        didSet {
+            guard format != oldValue else { return }
+            // Shown previews are checked against the new format as they're decoded again.
+            cache.removeAllObjects()
+            outdated = []
+        }
+    }
+    /// Called when a preview shown is found to be outdated, to have it drawn again.
+    var onOutdated: (UUID) -> Void = { _ in }
     private var loading: Task<Void, Never>?
     private let cache = NSCache<NSUUID, CGImage>()
     private var inFlight: [UUID: Task<CGImage?, Never>] = [:]
 
     init(directory: URL) {
         self.directory = directory
-        // Each is about 26 MB decoded; the viewers only need the photos around the current one.
+        // The viewers only need the photos around the current one: six 2560 px previews (about 26 MB each
+        // decoded), fewer when they're larger.
         cache.countLimit = 6
+        cache.totalCostLimit = 160_000_000
     }
 
     nonisolated static func url(for id: UUID, in directory: URL) -> URL {
@@ -71,6 +89,9 @@ final class StandardPreviewStore {
     /// Whether the photo has a Standard preview that can be shown now.
     func isCurrent(_ id: UUID) -> Bool { ids.contains(id) && !stale.contains(id) }
 
+    /// Whether the photo's Standard preview needs drawing: it has none, it's stale, or it's outdated.
+    func needsDrawing(_ id: UUID) -> Bool { !isCurrent(id) || outdated.contains(id) }
+
     func cachedImage(for id: UUID) -> CGImage? {
         isCurrent(id) ? cache.object(forKey: id as NSUUID) : nil
     }
@@ -81,19 +102,24 @@ final class StandardPreviewStore {
         if let cached = cache.object(forKey: id as NSUUID) { return cached }
         if let task = inFlight[id] { return await task.value }
         let url = url(for: id)
-        let task = Task<CGImage?, Never> { await Self.decode(url) }
+        let task = Task<CGImage?, Never> { [weak self] in
+            guard let (image, drawnAt) = await Self.decode(url) else { return nil }
+            if let self, drawnAt != format, isCurrent(id), outdated.insert(id).inserted { onOutdated(id) }
+            return image
+        }
         inFlight[id] = task
         let image = await task.value
         inFlight[id] = nil
         // It may have gone stale while decoding.
         guard let image, isCurrent(id) else { return nil }
-        cache.setObject(image, forKey: id as NSUUID)
+        cache.setObject(image, forKey: id as NSUUID, cost: image.bytesPerRow * image.height)
         return image
     }
 
     /// Records a Standard preview just written for `id`.
     func didWrite(_ id: UUID) {
         ids.insert(id)
+        outdated.remove(id)
         if stale.remove(id) != nil { try? FileManager.default.removeItem(at: Self.staleURL(for: id, in: directory)) }
         cache.removeObject(forKey: id as NSUUID)
         post([id])
@@ -122,6 +148,7 @@ final class StandardPreviewStore {
             try? FileManager.default.removeItem(at: Self.staleURL(for: id, in: directory))
             ids.remove(id)
             stale.remove(id)
+            outdated.remove(id)
             cache.removeObject(forKey: id as NSUUID)
             changed.insert(id)
         }
@@ -163,11 +190,44 @@ final class StandardPreviewStore {
         return (current, stale.subtracting(current))
     }
 
+    /// The preview at `url` and the format it was drawn at. Dates the file as viewed now, for
+    /// ``leastRecentlyViewed(in:over:)``.
     @concurrent
-    nonisolated private static func decode(_ url: URL) async -> CGImage? {
+    nonisolated private static func decode(_ url: URL) async -> (CGImage, StandardPreviewFormat)? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
         let options = [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
-        return CGImageSourceCreateImageAtIndex(source, 0, options)
+        guard let image = CGImageSourceCreateImageAtIndex(source, 0, options) else { return nil }
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        let exif = properties?[kCGImagePropertyExifDictionary] as? [CFString: Any]
+        let format = StandardPreviewFormat(tag: exif?[kCGImagePropertyExifUserComment] as? String) ?? .original
+        var viewed = url
+        var values = URLResourceValues()
+        values.contentModificationDate = Date()
+        try? viewed.setResourceValues(values)
+        return (image, format)
+    }
+
+    // MARK: - Cache size
+
+    /// The Standard previews in `directory` to remove, least recently viewed first, to bring the folder to
+    /// `limit` bytes or under. Stale previews count too; files being written don't.
+    @concurrent
+    nonisolated static func leastRecentlyViewed(in directory: URL, over limit: Int64) async -> [UUID] {
+        let keys: Set<URLResourceKey> = [.fileSizeKey, .contentModificationDateKey]
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: Array(keys))) ?? []
+        var previews: [(id: UUID, size: Int64, viewed: Date)] = []
+        for file in files where !file.lastPathComponent.hasPrefix(".") {
+            guard let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent),
+                  let values = try? file.resourceValues(forKeys: keys) else { continue }
+            previews.append((id, Int64(values.fileSize ?? 0), values.contentModificationDate ?? .distantPast))
+        }
+        var total = previews.reduce(0) { $0 + $1.size }
+        var removed: [UUID] = []
+        for preview in previews.sorted(by: { $0.viewed < $1.viewed }) where total > limit {
+            removed.append(preview.id)
+            total -= preview.size
+        }
+        return removed
     }
 
     // MARK: - Drawing
@@ -187,31 +247,33 @@ final class StandardPreviewStore {
     /// Runs on ``RenderQueue/thumbnails`` so it never competes with the photo on screen. Nil when the photo can't be
     /// read or the calling task is cancelled before its turn.
     nonisolated static func draw(
-        _ location: PhotoSourceLocation, adjustments: PhotoAdjustments, to destination: URL, thumbnail: URL?
+        _ location: PhotoSourceLocation, adjustments: PhotoAdjustments, format: StandardPreviewFormat = .original,
+        to destination: URL, thumbnail: URL?
     ) async -> Drawn? {
         (try? await RenderQueue.thumbnails.run {
-            drawNow(location, adjustments: adjustments, to: destination, thumbnail: thumbnail)
+            drawNow(location, adjustments: adjustments, format: format, to: destination, thumbnail: thumbnail)
         }) ?? nil
     }
 
     nonisolated private static func drawNow(
-        _ location: PhotoSourceLocation, adjustments: PhotoAdjustments, to destination: URL, thumbnail: URL?
+        _ location: PhotoSourceLocation, adjustments: PhotoAdjustments, format: StandardPreviewFormat,
+        to destination: URL, thumbnail: URL?
     ) -> Drawn? {
         guard let source = DevelopSource.open(location) else { return nil }
-        let image = source.image(with: adjustments, scale: source.scale(toFit: CGFloat(maxPixelSize), adjustments: adjustments))
+        let image = source.image(with: adjustments, scale: source.scale(toFit: CGFloat(format.pixelSize), adjustments: adjustments))
         guard !image.extent.isEmpty, !image.extent.isInfinite,
               let p3 = CGColorSpace(name: CGColorSpace.displayP3),
               let preview = renderContext.createCGImage(image, from: image.extent, format: .RGBA8, colorSpace: p3)
         else { return nil }
         do {
             try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try writeJPEG(preview, replacing: destination)
+            try writeJPEG(preview, quality: format.quality, comment: format.tag, replacing: destination)
         } catch {
             return nil
         }
         var drawn = Drawn(fromSmartPreview: source.isSmartPreview, wroteThumbnail: false)
         if let thumbnail, let small = downscaled(preview, toFit: ThumbnailStore.maxPixelSize) {
-            drawn.wroteThumbnail = (try? writeJPEG(small, replacing: thumbnail)) != nil
+            drawn.wroteThumbnail = (try? writeJPEG(small, quality: 0.8, replacing: thumbnail)) != nil
         }
         return drawn
     }
@@ -230,13 +292,17 @@ final class StandardPreviewStore {
         return renderContext.createCGImage(output, from: extent, format: .RGBA8, colorSpace: srgb)
     }
 
-    /// Writes `image` as a JPEG to a temporary file beside `destination`, then swaps it in.
-    nonisolated private static func writeJPEG(_ image: CGImage, replacing destination: URL) throws {
+    /// Writes `image` as a JPEG to a temporary file beside `destination`, then swaps it in. `comment`, when given,
+    /// goes in the EXIF UserComment field (the preview's ``StandardPreviewFormat``; ImageIO drops TIFF Software
+    /// from JPEGs).
+    nonisolated private static func writeJPEG(_ image: CGImage, quality: Double, comment: String? = nil, replacing destination: URL) throws {
         let temporary = destination.deletingLastPathComponent().appending(path: ".\(UUID().uuidString).jpg")
         defer { try? FileManager.default.removeItem(at: temporary) }
         guard let output = CGImageDestinationCreateWithURL(temporary as CFURL, UTType.jpeg.identifier as CFString, 1, nil)
         else { throw CocoaError(.fileWriteUnknown, userInfo: [NSURLErrorKey: destination]) }
-        CGImageDestinationAddImage(output, image, [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
+        var properties: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
+        if let comment { properties[kCGImagePropertyExifDictionary] = [kCGImagePropertyExifUserComment: comment] }
+        CGImageDestinationAddImage(output, image, properties as CFDictionary)
         guard CGImageDestinationFinalize(output) else { throw CocoaError(.fileWriteUnknown, userInfo: [NSURLErrorKey: destination]) }
         if FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)) {
             _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporary)

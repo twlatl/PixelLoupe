@@ -52,6 +52,8 @@ extension CatalogWindowController {
     /// Displays were connected, disconnected or rearranged: the toolbar button follows, the window
     /// closes when its display goes away (and comes back with it), or moves to the chosen display.
     @objc func screenParametersDidChange(_ notification: Notification) {
+        // Standard Preview Size ▸ Auto follows the largest display.
+        store.applyPreviewSettings()
         updateDisplayToolbarItem()
         guard let controller = secondaryWindowController else {
             restoreSecondaryWindow()

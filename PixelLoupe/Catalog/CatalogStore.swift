@@ -50,7 +50,7 @@ final class CatalogStore: NSObject {
     /// Brings back edits other apps save to files sent with Photo ▸ Edit In (see ``ExternalEditMonitor``).
     private(set) lazy var externalEdits = ExternalEditMonitor(store: self)
 
-    private static let logger = Logger(subsystem: "net.pixegen.PixelLoupe", category: "Catalog")
+    static let logger = Logger(subsystem: "net.pixegen.PixelLoupe", category: "Catalog")
 
     /// Loaded once; multiple models describing the same entities confuse Core Data's class mapping.
     static let managedObjectModel: NSManagedObjectModel = {
@@ -85,6 +85,7 @@ final class CatalogStore: NSObject {
             } catch {
                 Self.logger.error("Failed to save catalog settings: \(error.localizedDescription, privacy: .public)")
             }
+            applyPreviewSettings()
         }
     }
 
@@ -106,6 +107,8 @@ final class CatalogStore: NSObject {
         container.persistentStoreDescriptions = [description]
         super.init()
         thumbnails.rendersThroughDevelop = { [unowned standardPreviews] id in standardPreviews.contains(id) }
+        standardPreviews.onOutdated = { [unowned self] id in standardPreviewBuilder.redraw(id) }
+        applyPreviewSettings()
 
         var loadError: Error?
         container.loadPersistentStores { _, error in loadError = error }
