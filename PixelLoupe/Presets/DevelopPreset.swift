@@ -262,6 +262,7 @@ nonisolated enum PresetMerge {
             $1.effects.grain = $0.effects.grain
             $1.effects.grainSize = $0.effects.grainSize
             $1.effects.grainRoughness = $0.effects.grainRoughness
+            $1.effects.grainProcess = $0.effects.grainProcess
             if $1.effects.grainSeed == 0 { $1.effects.grainSeed = $0.effects.grainSeed }
         }
 

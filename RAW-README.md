@@ -61,7 +61,8 @@ all as lazy `CIImage` graphs on the GPU:
 8. Masks and local adjustments
    ([LocalAdjustmentRenderer.swift](PixelLoupe/Develop/Masking/LocalAdjustmentRenderer.swift)).
 9. Straighten and crop.
-10. Post-crop vignette, then grain (seeded noise with an Overlay blend).
+10. Post-crop vignette, then grain (seeded, filtered noise added to luminance in gamma-encoded Display P3; grain from
+    before RAW-284 keeps the original Overlay blend).
 
 The output goes to a shared `CIContext`: Display P3 for on-screen rendering, sRGB for JPEG export.
 

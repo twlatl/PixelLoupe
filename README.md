@@ -613,8 +613,9 @@ have it.
 It works the same on RAW and other files (an active sharpen replaces the RAW engine's default). **Noise Reduction** has
 Amount, Color and Detail (Detail applies to non-RAW files). **Post-Crop Vignette** has Amount, Midpoint, Roundness,
 Feather and Highlights, and Highlight Priority, Color Priority and Paint Overlay styles. **Effects** has Grain with
-Amount, Size and Roughness; each photo has its own grain pattern, and the size is in full-size pixels, so it looks the same
-fitted or at 100%.
+Amount, Size and Roughness, fitted to Lightroom Classic's (RAW-284): monochrome, the same strength in every tone, and
+belonging to the photo's full-size pixels, so a fitted preview or a smaller export shows it averaged down as Lightroom's
+exports do. Each photo has its own grain pattern. Grain added before the fit keeps its original look.
 
 ## Portrait Lighting (Develop)
 

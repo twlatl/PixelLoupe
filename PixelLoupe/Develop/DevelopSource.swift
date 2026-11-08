@@ -402,10 +402,7 @@ nonisolated enum AdjustmentPipeline {
 
         image = VignetteRenderer.apply(adjustments.vignette, to: image)
 
-        let effects = adjustments.effects
-        if effects.isActive, effects.grain > 0, let grain = grainLayer(effects, extent: extent, scale: scale) {
-            image = grain.applyingFilter("CIOverlayBlendMode", parameters: [kCIInputBackgroundImageKey: image])
-        }
+        image = applyGrain(adjustments.effects, to: image, extent: extent, scale: scale)
 
         return image.cropped(to: extent)
     }
@@ -472,7 +469,19 @@ nonisolated enum AdjustmentPipeline {
         return image
     }
 
-    /// Film grain: neutral gray noise centered on 50% gray, for an Overlay blend (which leaves the
+    /// `image` with the effects' grain, under its process: the photo's, or a mask's (``LocalAdjustmentRenderer``).
+    static func applyGrain(_ effects: PhotoAdjustments.Effects, to image: CIImage, extent: CGRect, scale: CGFloat) -> CIImage {
+        guard effects.isActive, effects.grain > 0, !extent.isInfinite else { return image }
+        switch effects.grainProcess {
+        case .fitted:
+            return FittedGrainRenderer.apply(effects, to: image, extent: extent, scale: scale)
+        case .overlay:
+            guard let grain = grainLayer(effects, extent: extent, scale: scale) else { return image }
+            return grain.applyingFilter("CIOverlayBlendMode", parameters: [kCIInputBackgroundImageKey: image]).cropped(to: extent)
+        }
+    }
+
+    /// The original grain (before RAW-284). Film grain: neutral gray noise centered on 50% gray, for an Overlay blend (which leaves the
     /// image unchanged where the layer is 50% gray). Size is in pixels of the full-resolution
     /// photo, so the grain looks the same in a fitted preview and at 100%; roughness softens it;
     /// the seed moves the noise so each photo has its own pattern, the same every time.
