@@ -106,6 +106,10 @@
 			</dict>
 		</dict>
 	</array>
+	<key>PLInpaintingModelURL</key>
+	<string>https://github.com/twlatl/PixelLoupe/releases/download/models-lama-800-v1/Inpainting-LaMa-800-v1.zip</string>
+	<key>PLInpaintingModelSHA256</key>
+	<string>59b00f9309d204e2fe8c4fbde09868f8cd3ff591aa337abc918a919ca7956e7a</string>
 	<key>SUFeedURL</key>
 	<string>https://github.com/twlatl/PixelLoupe/releases/latest/download/appcast.xml</string>
 	<key>SUPublicEDKey</key>

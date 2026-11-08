@@ -185,6 +185,25 @@ struct RemoveTests {
         #expect(abs(value - 0.8) < 0.03, "scaled up to match: \(value)")
     }
 
+    @Test("A downloaded model that isn't the one expected isn't installed")
+    func checksum() async throws {
+        let directory = try TemporaryDirectory()
+        let file = directory.url.appending(path: "Inpainting.zip")
+        try Data("not a model".utf8).write(to: file)
+        let store = InpaintingModelStore(downloadURL: file, checksum: String(repeating: "0", count: 64), directory: directory.url.appending(path: "Models"))
+        #expect(store.state == .notDownloaded && !store.isAvailable)
+        store.download()
+        let start = Date()
+        while Date().timeIntervalSince(start) < 20 {
+            if case .failed = store.state { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        guard case .failed = store.state else { Issue.record("refused: \(store.state)"); return }
+        #expect(!FileManager.default.fileExists(atPath: store.compiledURL.path))
+        // Nowhere to download from and nothing installed: not offered.
+        #expect(InpaintingModelStore(downloadURL: nil, checksum: nil, directory: directory.url.appending(path: "None")).state == .unavailable)
+    }
+
     // MARK: Helpers
 
     private func stroke(_ points: [(Double, Double)], size: Double) -> PhotoAdjustments.BrushStroke {

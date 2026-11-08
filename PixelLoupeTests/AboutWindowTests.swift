@@ -65,7 +65,7 @@ struct AboutWindowTests {
             if let url = value as? URL { links.insert(url.absoluteString) } else if let string = value as? String { links.insert(string) }
         }
         let hrefs = Set(html.matches(of: /href="([^"]+)"/).map { String($0.output.1) })
-        #expect(hrefs.count == 9)
+        #expect(hrefs.count == 12)
         // The importer writes https://sparkle-project.org as https://sparkle-project.org/.
         func trimmed(_ urls: Set<String>) -> Set<String> { Set(urls.map { $0.hasSuffix("/") ? String($0.dropLast()) : $0 }) }
         #expect(trimmed(links) == trimmed(hrefs))

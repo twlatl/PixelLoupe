@@ -16,8 +16,9 @@ Refresh just picks a new seed. The fill's pixels are never written to the catalo
 **Both engines must be deterministic for a given seed**:
 
 - Patch fill uses the seed for every random choice it makes.
-- The generative model always runs on the same compute units (`cpuAndGPU`, fp32, never the Neural Engine), with
-  its noise and any random crops taken from the seed.
+- The generative model always runs on the same compute units (`cpuAndGPU`, never the Neural Engine). LaMa has no
+  noise of its own, so the seed picks how the box is framed for it (mirrored or not, and a slight zoom), which gives
+  Refresh another fill.
 
 **A fill is made at a fixed working resolution and cached.** The engine fills the spot's bounding box (plus a
 margin for context) taken from the full-resolution frame and scaled to at most 1024 px on its long edge. That one
@@ -58,5 +59,7 @@ and draws again when the fill arrives. Rendering off the main thread (thumbnails
 - **The engine `version` has to change** whenever either engine's output changes (a new model, a patch-fill
   tweak). Old fills are then made again and may look different, so bump it only on purpose and say so in the
   release notes.
+- **Core ML may change a model's numbers the first time it loads on a Mac** (it specializes the model for the
+  hardware), so the store runs one warm-up prediction before making any fill it keeps.
 - **The generative model is downloaded the first time it's used.** Until it has downloaded, generative Remove
   spots render with patch fill and say so in the panel.
