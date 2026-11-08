@@ -48,6 +48,11 @@ nonisolated struct CatalogSettings: Codable, Equatable, Sendable {
     /// files don't reveal how they were edited.
     var includesDevelopSettingsInExports = false
 
+    /// Automatically detect duplicates for all photos (RAW-292): originals are hashed in the background and photos
+    /// with the same contents show in the Catalog section's Duplicates. Off by default, since hashing a large
+    /// library reads every original.
+    var detectsDuplicates = false
+
     /// The cache limit in bytes; nil for none (a limit of zero or less is none).
     var previewCacheLimitBytes: Int64? {
         guard let previewCacheLimitGB, previewCacheLimitGB > 0 else { return nil }
@@ -65,7 +70,7 @@ nonisolated struct CatalogSettings: Codable, Equatable, Sendable {
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case standardPreviewSize, previewQuality, previewCacheLimitGB, includesDevelopSettingsInExports
+        case standardPreviewSize, previewQuality, previewCacheLimitGB, includesDevelopSettingsInExports, detectsDuplicates
     }
 
     /// Missing keys, and values a later version wrote that this one doesn't know, read as the defaults.
@@ -75,6 +80,7 @@ nonisolated struct CatalogSettings: Codable, Equatable, Sendable {
         previewQuality = (try? container.decodeIfPresent(PreviewQuality.self, forKey: .previewQuality)) ?? .medium
         previewCacheLimitGB = try? container.decodeIfPresent(Double.self, forKey: .previewCacheLimitGB)
         includesDevelopSettingsInExports = (try? container.decodeIfPresent(Bool.self, forKey: .includesDevelopSettingsInExports)) ?? false
+        detectsDuplicates = (try? container.decodeIfPresent(Bool.self, forKey: .detectsDuplicates)) ?? false
     }
 
     // MARK: File

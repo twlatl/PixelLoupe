@@ -47,6 +47,8 @@ final class CatalogStore: NSObject {
     private(set) lazy var cullingAnalysis = CullingAnalysis(store: self)
     /// Reads the locations of photos from before model v16 (see ``LocationBackfill``).
     private(set) lazy var locationBackfill = LocationBackfill(store: self)
+    private(set) lazy var duplicateDetection = DuplicateDetection(store: self)
+    private var photosSavedObserver: NSObjectProtocol?
     /// Brings back edits other apps save to files sent with Photo ▸ Edit In (see ``ExternalEditMonitor``).
     private(set) lazy var externalEdits = ExternalEditMonitor(store: self)
 
@@ -60,6 +62,10 @@ final class CatalogStore: NSObject {
         }
         return model
     }()
+
+    isolated deinit {
+        if let photosSavedObserver { NotificationCenter.default.removeObserver(photosSavedObserver) }
+    }
 
     var viewContext: NSManagedObjectContext { container.viewContext }
     var name: String { info.name }
@@ -76,6 +82,9 @@ final class CatalogStore: NSObject {
         }
     }
 
+    /// Posted (with the store) when Catalog Settings change.
+    static let settingsDidChangeNotification = Notification.Name("CatalogStoreSettingsDidChange")
+
     /// The catalog's settings (Catalog Settings…), saved in the package.
     var settings: CatalogSettings {
         didSet {
@@ -86,6 +95,10 @@ final class CatalogStore: NSObject {
                 Self.logger.error("Failed to save catalog settings: \(error.localizedDescription, privacy: .public)")
             }
             applyPreviewSettings()
+            NotificationCenter.default.post(name: Self.settingsDidChangeNotification, object: self)
+            if settings.detectsDuplicates != oldValue.detectsDuplicates {
+                if settings.detectsDuplicates { duplicateDetection.start(after: .zero) } else { duplicateDetection.stop() }
+            }
         }
     }
 
@@ -124,6 +137,20 @@ final class CatalogStore: NSObject {
             self, selector: #selector(viewContextObjectsDidChange(_:)),
             name: .NSManagedObjectContextObjectsDidChange, object: container.viewContext
         )
+        // Photos added or removed by any context (imports save in the background): Duplicate Detection hashes the new
+        // ones and works out which have duplicates again.
+        let coordinator = container.persistentStoreCoordinator
+        photosSavedObserver = NotificationCenter.default.addObserver(
+            forName: .NSManagedObjectContextDidSave, object: nil, queue: nil
+        ) { [weak self] notification in
+            guard let context = notification.object as? NSManagedObjectContext, context.persistentStoreCoordinator === coordinator
+            else { return }
+            let changed = [NSInsertedObjectsKey, NSDeletedObjectsKey].contains { key in
+                (notification.userInfo?[key] as? Set<NSManagedObject>)?.contains { $0 is Photo } == true
+            }
+            guard changed else { return }
+            Task { @MainActor in self?.duplicateDetection.photosDidChange() }
+        }
     }
 
     /// Re-renders thumbnails when a photo's Develop settings change, including through undo, and marks its Standard

@@ -150,7 +150,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `⌘F` | Show the Library Filter bar's Text mode (alongside any other active modes) and put the cursor in its search field |
 | `` ` `` | Show or hide the Develop loupe (hold and click to place it) |
 | `⌘,` | Settings (General: confirm when quitting; Appearance: appearance, matte color and Monochrome Mode; Import: JPEG sidecars and opening the import window when a card is inserted; Displays: the secondary window's display; External Editing) |
-| `⌥⌘,` | Catalog Settings (the open catalog's own settings, in a sheet on its window; General: where the catalog is, its file name, when it was made and the size of its database; Previews: Standard preview size and quality, a limit on the preview cache, and how much space previews take; Metadata: whether exported, published and Edit In files carry the photo's develop settings) |
+| `⌥⌘,` | Catalog Settings (the open catalog's own settings, in a sheet on its window; General: where the catalog is, its file name, when it was made and the size of its database; Previews: Standard preview size and quality, a limit on the preview cache, and how much space previews take; Metadata: whether exported, published and Edit In files carry the photo's develop settings, and Duplicate Detection) |
 | `⌘Q` | Quit, after asking "Are you sure you want to quit?" (Return quits; turn the question off in Settings ▸ General or with its Don't ask again box) |
 | `⌃⌘F` | Enter or exit full screen for the app window |
 | `F6` | Show or hide the filmstrip |
@@ -507,6 +507,10 @@ The Catalog section of the left sidebar (below the Navigator) has, as in Lightro
   place as the photos come in; if every photo of the last import is removed, it shows the one before. It's dimmed
   until something is imported, which includes catalogs made before PixelLoupe kept track of imports (until their next
   import). A catalog imported from Lightroom Classic starts with Lightroom's own previous import.
+- **Duplicates:** with Catalog Settings ▸ Metadata ▸ Automatically detect duplicates on (it's off at first), the photos
+  whose original file is identical to another photo's. Originals are read in the background ("Checking for
+  Duplicates" under the grid), new photos as they're added; offline originals are tried again the next time the
+  catalog opens. Virtual copies and a RAW file's JPEG never count, and nothing is removed.
 
 The grid's source (a Catalog item, folder or collection) is restored when the catalog is opened again.
 
