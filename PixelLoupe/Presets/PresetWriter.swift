@@ -264,8 +264,16 @@ nonisolated enum PresetWriter {
             || (key.hasPrefix("SplitToning") && (key.hasSuffix("Hue") || key.hasSuffix("Saturation")))
     }
 
-    /// A complete preset file.
-    static func xmp(name: String, group: String, settings: [String: Value], uuid: String = UUID().uuidString.replacingOccurrences(of: "-", with: "")) -> Data {
+    /// The photo's develop settings as Camera Raw's XMP, for an exported file (Catalog Settings ▸ Metadata ▸
+    /// Include Develop Settings, RAW-268): every section's settings with `crs:HasSettings`, without a preset's name
+    /// and support flags.
+    static func developSettingsXMP(for adjustments: PhotoAdjustments, profiles: AdobeProfileLibrary = .shared) -> Data {
+        xmp(name: "", group: "", settings: settings(for: adjustments, sections: Set(PresetSection.allCases), profiles: profiles), isPreset: false)
+    }
+
+    /// A complete preset file; with `isPreset` false, only the settings (for a photo's metadata).
+    static func xmp(name: String, group: String, settings: [String: Value], uuid: String = UUID().uuidString.replacingOccurrences(of: "-", with: ""),
+                    isPreset: Bool = true) -> Data {
         func escaped(_ text: String) -> String {
             text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "\"", with: "&quot;")
                 .replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
@@ -275,7 +283,7 @@ nonisolated enum PresetWriter {
             let text = value == value.rounded() ? String(Int(value)) : String(value)
             return value > 0 && !unsigned(key) ? "+" + text : text
         }
-        var attributes: [(String, String)] = [
+        var attributes: [(String, String)] = !isPreset ? [("Version", "15.0"), ("ProcessVersion", "11.0")] : [
             ("PresetType", "Normal"), ("Cluster", ""), ("UUID", uuid), ("SupportsAmount", "True"), ("SupportsColor", "True"),
             ("SupportsMonochrome", "True"), ("SupportsHighDynamicRange", "True"), ("SupportsNormalDynamicRange", "True"),
             ("SupportsSceneReferred", "True"), ("SupportsOutputReferred", "True"), ("CameraModelRestriction", ""), ("Copyright", ""),
@@ -308,11 +316,8 @@ nonisolated enum PresetWriter {
           <rdf:Description rdf:about=""
             xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
         \(attributes.map { "   crs:\($0.0)=\"\(escaped($0.1))\"" }.joined(separator: "\n"))>
-        \(alt("Name", name))
-        \(alt("ShortName", ""))
-        \(alt("SortName", ""))
-        \(alt("Group", group))
-        \(alt("Description", ""))
+        \((isPreset ? [alt("Name", name), alt("ShortName", ""), alt("SortName", ""), alt("Group", group), alt("Description", "")] : [])
+            .joined(separator: "\n"))
         \(elements.joined(separator: "\n"))
           </rdf:Description>
          </rdf:RDF>

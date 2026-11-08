@@ -41,6 +41,13 @@ nonisolated struct CatalogSettings: Codable, Equatable, Sendable {
     /// recently viewed go first.
     var previewCacheLimitGB: Double?
 
+    // MARK: Metadata (RAW-268)
+
+    /// Include Develop Settings in metadata inside JPEG, TIFF, PNG and PSD files: exports, Publish, Edit In and
+    /// web galleries carry the photo's develop settings as Lightroom `crs:` XMP. Off by default, so exported
+    /// files don't reveal how they were edited.
+    var includesDevelopSettingsInExports = false
+
     /// The cache limit in bytes; nil for none (a limit of zero or less is none).
     var previewCacheLimitBytes: Int64? {
         guard let previewCacheLimitGB, previewCacheLimitGB > 0 else { return nil }
@@ -58,7 +65,7 @@ nonisolated struct CatalogSettings: Codable, Equatable, Sendable {
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case standardPreviewSize, previewQuality, previewCacheLimitGB
+        case standardPreviewSize, previewQuality, previewCacheLimitGB, includesDevelopSettingsInExports
     }
 
     /// Missing keys, and values a later version wrote that this one doesn't know, read as the defaults.
@@ -67,6 +74,7 @@ nonisolated struct CatalogSettings: Codable, Equatable, Sendable {
         standardPreviewSize = (try? container.decodeIfPresent(PreviewSize.self, forKey: .standardPreviewSize)) ?? .auto
         previewQuality = (try? container.decodeIfPresent(PreviewQuality.self, forKey: .previewQuality)) ?? .medium
         previewCacheLimitGB = try? container.decodeIfPresent(Double.self, forKey: .previewCacheLimitGB)
+        includesDevelopSettingsInExports = (try? container.decodeIfPresent(Bool.self, forKey: .includesDevelopSettingsInExports)) ?? false
     }
 
     // MARK: File

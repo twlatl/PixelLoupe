@@ -150,7 +150,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `⌘F` | Show the Library Filter bar's Text mode (alongside any other active modes) and put the cursor in its search field |
 | `` ` `` | Show or hide the Develop loupe (hold and click to place it) |
 | `⌘,` | Settings (General: confirm when quitting; Appearance: appearance, matte color and Monochrome Mode; Import: JPEG sidecars and opening the import window when a card is inserted; Displays: the secondary window's display; External Editing) |
-| `⌥⌘,` | Catalog Settings (the open catalog's own settings, in a sheet on its window; General: where the catalog is, its file name, when it was made and the size of its database; Previews: Standard preview size and quality, a limit on the preview cache, and how much space previews take) |
+| `⌥⌘,` | Catalog Settings (the open catalog's own settings, in a sheet on its window; General: where the catalog is, its file name, when it was made and the size of its database; Previews: Standard preview size and quality, a limit on the preview cache, and how much space previews take; Metadata: whether exported, published and Edit In files carry the photo's develop settings) |
 | `⌘Q` | Quit, after asking "Are you sure you want to quit?" (Return quits; turn the question off in Settings ▸ General or with its Don't ask again box) |
 | `⌃⌘F` | Enter or exit full screen for the app window |
 | `F6` | Show or hide the filmstrip |
