@@ -296,6 +296,11 @@ final class LibraryState {
         didSet { if smartPreviewStatus != oldValue { notify(.importStatus) } }
     }
 
+    /// Duplicate Detection's progress hashing originals (RAW-292), shown under the grid when nothing else is.
+    var duplicateStatus: ImportStatus? {
+        didSet { if duplicateStatus != oldValue { notify(.importStatus) } }
+    }
+
     /// Progress of building Standard previews (RAW-84), shown under the grid.
     var standardPreviewStatus: ImportStatus? {
         didSet { if standardPreviewStatus != oldValue { notify(.importStatus) } }

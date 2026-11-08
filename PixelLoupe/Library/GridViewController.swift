@@ -149,6 +149,10 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
             self, selector: #selector(contextObjectsDidChange(_:)),
             name: .NSManagedObjectContextObjectsDidChange, object: context
         )
+        // Duplicate Detection marks photos with batch updates, which the fetched results don't see.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(duplicatesDidChange(_:)), name: DuplicateDetection.didMarkNotification, object: store
+        )
         NotificationCenter.default.addObserver(
             self, selector: #selector(thumbnailDidUpdate(_:)),
             name: ThumbnailStore.didUpdateNotification, object: store.thumbnails
@@ -188,6 +192,10 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
     }
 
     // MARK: - Fetching
+
+    @objc private func duplicatesDidChange(_ notification: Notification) {
+        if state.filter.scope == .duplicates { refetch() }
+    }
 
     private func refetch() {
         fetchedResultsController.fetchRequest.predicate = state.filter.predicate

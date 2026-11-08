@@ -11,6 +11,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             case allPhotos
             /// The most recent import, or nil (a dimmed row) when there's none.
             case previousImport(id: UUID?)
+            /// Photos with a duplicate (RAW-292), shown while Duplicate Detection is on.
+            case duplicates
             case folder(path: String)
             /// The Collections header, with its + menu.
             case collectionsHeader
@@ -51,6 +53,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             case .header, .collectionsHeader, .collectionFilter: nil
             case .allPhotos: .allPhotos
             case .previousImport(let id): id.map { .previousImport(id: $0) }
+            case .duplicates: .duplicates
             case .folder(let path): .folder(path: path)
             case .collection(let id, _): content.map { .collection(id: id, content: $0) }
             case .publishService(let id): .publishService(id: id)
@@ -209,6 +212,17 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         NotificationCenter.default.addObserver(
             self, selector: #selector(settingsDidChange(_:)), name: AppSettings.didChangeNotification, object: nil
         )
+        // Duplicates comes and goes with Duplicate Detection.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(catalogSettingsDidChange(_:)), name: CatalogStore.settingsDidChangeNotification, object: store
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(catalogSettingsDidChange(_:)), name: DuplicateDetection.didMarkNotification, object: store
+        )
+    }
+
+    @objc private func catalogSettingsDidChange(_ notification: Notification) {
+        reload()
     }
 
     /// Monochrome Mode recolors the icons and the selection.
@@ -308,6 +322,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         let catalogHeader = Item(kind: .header, title: "Catalog")
         catalogHeader.children = [all, previousImport]
+        if store.settings.detectsDuplicates {
+            let duplicates = Item(kind: .duplicates, title: "Duplicates")
+            let photos = Photo.fetchRequest()
+            photos.predicate = NSPredicate(format: "hasDuplicate == YES")
+            duplicates.count = (try? context.count(for: photos)) ?? 0
+            catalogHeader.children.append(duplicates)
+        } else if state.filter.scope == .duplicates {
+            state.filter.scope = .allPhotos
+        }
         let foldersHeader = Item(kind: .header, title: "Folders")
         foldersHeader.children = rootFolders.map(makeItem)
 
@@ -967,6 +990,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let symbol = switch item.kind {
         case .allPhotos: "photo.on.rectangle"
         case .previousImport: "square.and.arrow.down"
+        case .duplicates: "square.on.square"
         case .collection(_, .collection): "rectangle.stack"
         case .collection(_, .smart): "gearshape.2"
         case .collection(_, .set): "archivebox"
@@ -991,6 +1015,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         case .publishService(let id): "publishService.\(id.uuidString)"
         case .publishAlbum(let id, _, _): "publishAlbum.\(id.uuidString)"
         case .previousImport: "previousImport"
+        case .duplicates: "duplicates"
         default: nil
         }
         cell.setAccessibilityIdentifier(accessibilityIdentifier)

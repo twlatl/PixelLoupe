@@ -10,6 +10,8 @@ nonisolated enum SelectionSource: Codable, Hashable, Sendable {
     case previousImport(id: UUID)
     case publishService(id: UUID)
     case publishAlbum(id: UUID)
+    /// The Catalog section's Duplicates (RAW-292).
+    case duplicates
 
     /// The source a grid scope is; nil for one that isn't remembered (a Lightroom import's differences).
     init?(_ scope: LibraryFilter.Scope) {
@@ -20,6 +22,7 @@ nonisolated enum SelectionSource: Codable, Hashable, Sendable {
         case .previousImport(let id): self = .previousImport(id: id)
         case .publishService(let id): self = .publishService(id: id)
         case .publishAlbum(let id, _, _): self = .publishAlbum(id: id)
+        case .duplicates: self = .duplicates
         case .importDifference: return nil
         }
     }
@@ -130,7 +133,7 @@ final class SelectionMemory {
             case .collection(let id): collections.append(id)
             case .publishService(let id): services.append(id)
             case .publishAlbum(let id): albums.append(id)
-            case .allPhotos, .previousImport: break
+            case .allPhotos, .previousImport, .duplicates: break
             }
         }
         let existingFolders = ids(Folder.self, key: "path", among: folders)
@@ -142,7 +145,7 @@ final class SelectionMemory {
         return saved.filter { entry in
             guard seen.insert(entry.source).inserted else { return false }
             switch entry.source {
-            case .allPhotos: return true
+            case .allPhotos, .duplicates: return true
             case .folder(let path): return existingFolders.contains(path)
             case .collection(let id): return existingCollections.contains(id)
             case .publishService(let id): return existingServices.contains(id)

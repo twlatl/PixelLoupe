@@ -17,6 +17,12 @@ nonisolated final class Photo: NSManagedObject {
     /// newest is what Previous Import shows. `nil` for photos from before v15 and for photos made in
     /// the app (merges, Edit In copies).
     @NSManaged var importID: UUID?
+    /// The SHA-256 of the original's bytes, in hex (model v21, RAW-292); nil until Duplicate Detection hashes it, and
+    /// always for a virtual copy (it shares its master's file).
+    @NSManaged var contentHash: String?
+    /// Whether another photo's original has the same contents (model v21): what the Catalog section's Duplicates
+    /// shows. Kept up to date by ``DuplicateDetection``.
+    @NSManaged var hasDuplicate: Bool
     @NSManaged var editDate: Date
     @NSManaged var rating: Int16
     @NSManaged var flag: Int16

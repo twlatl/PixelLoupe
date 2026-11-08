@@ -82,6 +82,8 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         store.thumbnailMaintenance.onProgress = { [weak self] progress in self?.state.thumbnailStatus = progress }
         store.thumbnailMaintenance.start()
         store.locationBackfill.start()
+        store.duplicateDetection.onProgress = { [weak self] progress in self?.state.duplicateStatus = progress }
+        store.duplicateDetection.start()
         store.smartPreviewBuilder.onProgress = { [weak self] progress in self?.state.smartPreviewStatus = progress }
         store.smartPreviewBuilder.start()
         store.standardPreviewBuilder.onProgress = { [weak self] progress in self?.state.standardPreviewStatus = progress }
@@ -158,6 +160,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         store.availability.stop()
         store.thumbnailMaintenance.stop()
         store.locationBackfill.stop()
+        store.duplicateDetection.stop()
         store.smartPreviewBuilder.stop()
         store.standardPreviewBuilder.stop()
         store.cullingAnalysis.stop()
@@ -195,6 +198,9 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         if let height = viewState.metadataBrowserHeight { state.metadataBrowserHeight = height }
         if let id = viewState.collectionID, let collection = PhotoCollection.with(id: id, in: context) {
             state.filter.scope = .collection(id: id, content: collection.content)
+        } else if viewState.showsDuplicates {
+            // The sidebar goes back to All Photographs if Duplicate Detection has been turned off.
+            state.filter.scope = .duplicates
         } else if viewState.showsPreviousImport, let id = Photo.latestImportID(in: context) {
             state.filter.scope = .previousImport(id: id)
         } else if let path = viewState.folderPath {
@@ -225,6 +231,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         if case .folder(let path) = state.filter.scope { viewState.folderPath = path } else { viewState.folderPath = nil }
         viewState.collectionID = state.filter.scope.collectionID
         if case .previousImport = state.filter.scope { viewState.showsPreviousImport = true } else { viewState.showsPreviousImport = false }
+        viewState.showsDuplicates = state.filter.scope == .duplicates
         viewState.filterCriteria = state.filter.criteria
         viewState.isFilterBarVisible = state.isFilterBarVisible
         viewState.metadataBrowserHeight = state.metadataBrowserHeight
