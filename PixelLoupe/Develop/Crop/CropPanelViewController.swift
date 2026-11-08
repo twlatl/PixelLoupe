@@ -32,7 +32,7 @@ final class CropPanelViewController: NSViewController {
     private let lockButton = NSButton()
     private let angleSlider = AdjustmentSlider(value: 0, minValue: CropGeometry.angleRange.lowerBound,
                                                maxValue: CropGeometry.angleRange.upperBound)
-    private let angleValue = NSTextField(labelWithString: "0.00")
+    private let angleValue = EditableValueLabel()
     private let straightenButton = NSButton()
     private let constrainCheckbox = NSButton(checkboxWithTitle: "Constrain to Image", target: nil, action: nil)
     private let overlayPopUp = NSPopUpButton()
@@ -107,10 +107,11 @@ final class CropPanelViewController: NSViewController {
         angleSlider.setAccessibilityLabel("Angle")
         angleSlider.setAccessibilityIdentifier("cropAngle")
         angleSlider.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        angleValue.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
-        angleValue.textColor = .secondaryLabelColor
-        angleValue.alignment = .right
-        angleValue.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        // Wide enough for "-45.00" in its editing bezel, so the slider doesn't move when the value is clicked.
+        angleValue.widthAnchor.constraint(equalToConstant: Self.angleValueWidth(font: angleValue.font)).isActive = true
+        angleValue.focusAfterCancel = angleSlider
+        angleValue.onEndEditing = { [unowned self] typed in enterAngle(typed) }
+        angleValue.setAccessibilityLabel("Angle value")
         angleValue.setAccessibilityIdentifier("cropAngleValue")
         let resetAngle = NSClickGestureRecognizer(target: self, action: #selector(resetAngle(_:)))
         resetAngle.numberOfClicksRequired = 2
@@ -301,6 +302,38 @@ final class CropPanelViewController: NSViewController {
     private func showAngle(_ angle: Double) {
         angleValue.stringValue = String(format: "%.2f", angle)
         angleValue.textColor = (angle * 100).rounded() == 0 ? .secondaryLabelColor : .labelColor
+    }
+
+    /// Wide enough for the widest angle ("-45.00") plus the editing bezel's margins.
+    static func angleValueWidth(font: NSFont?) -> CGFloat {
+        let font = font ?? .systemFont(ofSize: NSFont.smallSystemFontSize)
+        let widest = CropGeometry.angleRange.lowerBound
+        return ceil((String(format: "%.2f", widest) as NSString).size(withAttributes: [.font: font]).width) + 12
+    }
+
+    /// Makes the angle's value a text field for typing a new angle.
+    func beginEditingAngle() { angleValue.beginEditingValue() }
+
+    /// Whether the angle is being typed.
+    var isEditingAngle: Bool { angleValue.isEditingValue }
+
+    /// Enters a typed angle, clamped to the slider's range and rounded as the slider rounds; Escape (nil) or text
+    /// that isn't a number keeps the old one.
+    private func enterAngle(_ typed: String?) {
+        guard let typed, let number = Self.angle(forTyped: typed) else {
+            showAngle(crop.angle)
+            return
+        }
+        var crop = crop
+        crop.angle = number
+        display(crop)
+        onChange(crop, true)
+    }
+
+    /// The angle a typed number stands for, in degrees, clamped to −45…45 and rounded to hundredths.
+    nonisolated static func angle(forTyped text: String) -> Double? {
+        guard let number = SliderRow.number(in: text), number.isFinite else { return nil }
+        return (number.clamped(to: CropGeometry.angleRange) * 100).rounded() / 100
     }
 
     @objc private func resetAngle(_ sender: Any?) {
