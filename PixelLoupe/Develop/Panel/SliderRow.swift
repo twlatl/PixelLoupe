@@ -46,20 +46,16 @@ enum SliderScale {
 }
 
 /// A labelled slider with its current value. Double-click the label or the knob to reset it, and
-/// the value to type a new one (as in Lightroom).
-final class SliderRow: NSView, NSTextFieldDelegate {
+/// click the value to type a new one (as in Lightroom).
+final class SliderRow: NSView {
     let slider: AdjustmentSlider
     private let titleLabel: NSTextField
-    private let valueLabel = NSTextField(labelWithString: "")
+    private let valueLabel = EditableValueLabel()
     private let format: (Double) -> String
     private let range: ClosedRange<Double>
     let scale: SliderScale
     /// Whether the value is being typed; Escape ends the edit without changing the value.
-    private(set) var isEditingValue = false
-    private var cancelsEdit = false
-    /// Keeps the field as wide as the row's longest value while it's edited; an editable field has no width of its
-    /// own and would otherwise stretch across the row.
-    private lazy var editingWidth = valueLabel.widthAnchor.constraint(equalToConstant: 0)
+    var isEditingValue: Bool { valueLabel.isEditingValue }
     var defaultValue: Double {
         get { scale.value(at: slider.defaultValue) }
         set {
@@ -104,9 +100,6 @@ final class SliderRow: NSView, NSTextFieldDelegate {
 
         titleLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         titleLabel.textColor = .secondaryLabelColor
-        valueLabel.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
-        valueLabel.textColor = .secondaryLabelColor
-        valueLabel.alignment = .right
 
         let track = scale.trackRange(for: range)
         slider.minValue = track.lowerBound
@@ -124,11 +117,9 @@ final class SliderRow: NSView, NSTextFieldDelegate {
         titleLabel.addGestureRecognizer(reset)
         titleLabel.toolTip = "Double-click to reset"
 
-        let edit = NSClickGestureRecognizer(target: self, action: #selector(beginEditingValue))
-        edit.numberOfClicksRequired = 2
-        valueLabel.addGestureRecognizer(edit)
-        valueLabel.toolTip = "Double-click to enter a value"
-        valueLabel.delegate = self
+        valueLabel.editingWidth = { [unowned self] in editingFieldWidth }
+        valueLabel.focusAfterCancel = slider
+        valueLabel.onEndEditing = { [unowned self] typed in enter(typed) }
         valueLabel.setAccessibilityLabel("\(title) value")
 
         for view in [titleLabel, valueLabel, slider] as [NSView] {
@@ -178,22 +169,7 @@ final class SliderRow: NSView, NSTextFieldDelegate {
     }
 
     /// Makes the value label a text field with its text selected, for typing a new value.
-    @objc func beginEditingValue() {
-        guard !isEditingValue, let window else { return }
-        isEditingValue = true
-        cancelsEdit = false
-        valueLabel.isEditable = true
-        valueLabel.isSelectable = true
-        valueLabel.isBezeled = true
-        valueLabel.bezelStyle = .squareBezel
-        valueLabel.drawsBackground = true
-        valueLabel.backgroundColor = .textBackgroundColor
-        valueLabel.textColor = .labelColor
-        editingWidth.constant = editingFieldWidth
-        editingWidth.isActive = true
-        window.makeFirstResponder(valueLabel)
-        valueLabel.currentEditor()?.selectAll(nil)
-    }
+    func beginEditingValue() { valueLabel.beginEditingValue() }
 
     /// Wide enough for the longest text the row shows (its range's ends, "−180°", "50,000") plus the bezel's margins.
     var editingFieldWidth: CGFloat {
@@ -203,24 +179,9 @@ final class SliderRow: NSView, NSTextFieldDelegate {
         return ceil(widest) + 12
     }
 
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        guard commandSelector == #selector(cancelOperation(_:)) else { return false }
-        cancelsEdit = true
-        window?.makeFirstResponder(slider)
-        return true
-    }
-
-    /// Return, Tab or clicking elsewhere enters the typed value; Escape or text that isn't a number keeps the old one.
-    func controlTextDidEndEditing(_ notification: Notification) {
-        guard isEditingValue else { return }
-        isEditingValue = false
-        let typed = valueLabel.stringValue
-        valueLabel.isEditable = false
-        valueLabel.isSelectable = false
-        valueLabel.isBezeled = false
-        valueLabel.drawsBackground = false
-        editingWidth.isActive = false
-        if !cancelsEdit, let entered = value(forDisplayed: typed) {
+    /// Return, Tab or clicking elsewhere enters the typed value; Escape (nil) or text that isn't a number keeps the old one.
+    private func enter(_ typed: String?) {
+        if let typed, let entered = value(forDisplayed: typed) {
             value = entered
             onChange?(value, true)
         } else {
