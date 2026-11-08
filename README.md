@@ -1113,6 +1113,12 @@ tuning `LightroomScales`: `SliderSweepFit` turns a slider sweep (−100…+100 a
 monotone table to paste in. The tests that check this tooling (published ΔE2000 data, SSIM, the report, the sweep fit) run with
 the normal suite; the comparison against real exports runs only when `PIXELLOUPE_FIDELITY_DIR` is set.
 
+Grain is random, so its cases (`Scripts/grain-sweep.swift`, family `effects-grain`) aren't compared pixel by pixel. Each names
+a base case without grain (`base.txt`), and `GrainStatistics` compares the grain alone, each app's export minus its base:
+its strength in four spatial bands, its mean and its color, per tone. Band strength has to be within 15% of Lightroom's, the
+mean within half a level, and the grain no more colored than Lightroom's. A case's `export-size.txt` tells the Lightroom
+plugin to export at full size (`full`) or another long edge instead of 2048 px.
+
 ## Panorama tests
 
 Photo Merge ▸ Panorama is checked in CI on synthetic panoramas (a textured scene photographed by a turning camera).

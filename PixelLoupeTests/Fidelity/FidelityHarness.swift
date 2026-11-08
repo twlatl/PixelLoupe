@@ -11,6 +11,9 @@ import UniformTypeIdentifiers
 /// A fixtures folder holds `<family>/<case>/` directories, each with `source.<ext>` (the photo),
 /// `settings.xmp` (the develop settings: a sidecar or a preset) and `reference.tif` (Lightroom's
 /// 16-bit Display P3 export at 2048 px). The family is the folder name (`basic`, `curve`, `hsl`, …).
+///
+/// A case with `base.txt` is compared by its grain instead (RAW-283): the file names a sibling case, the same source
+/// at the same size without grain, and each app's grain is its export minus its base's (see `GrainStatistics`).
 struct FidelityHarness {
     struct Case: Equatable {
         var family: String
@@ -18,6 +21,12 @@ struct FidelityHarness {
         var source: URL
         var settings: URL
         var reference: URL
+        /// The case without grain, for a grain case.
+        var base: URL? = nil
+
+        /// The base case: its settings and reference.
+        var baseSettings: URL? { base?.appending(path: "settings.xmp") }
+        var baseReference: URL? { base?.appending(path: "reference.tif") }
     }
 
     struct Metrics: Equatable {
@@ -52,9 +61,12 @@ struct FidelityHarness {
         var render: CGImage
         var reference: CGImage
         var differences: [ColorDifference.Lab]? = nil
+        /// A grain case's comparison. Its ΔE metrics aren't measured then (only the size difference).
+        var grain: GrainStatistics.Comparison? = nil
 
         var passes: Bool {
-            metrics.meanDeltaE <= target.meanDeltaE && metrics.p95DeltaE <= target.p95DeltaE
+            if let grain { return grain.passes && metrics.sizeDifference == 0 }
+            return metrics.meanDeltaE <= target.meanDeltaE && metrics.p95DeltaE <= target.p95DeltaE
                 && metrics.sizeDifference <= (target.pixels ?? Int.max)
         }
     }
@@ -73,7 +85,14 @@ struct FidelityHarness {
                       let settings = files.first(where: { $0.lastPathComponent == "settings.xmp" }),
                       let reference = files.first(where: { $0.deletingPathExtension().lastPathComponent == "reference" && ["tif", "tiff"].contains($0.pathExtension.lowercased()) })
                 else { continue }
-                cases.append(Case(family: family.lastPathComponent, name: directory.lastPathComponent, source: source, settings: settings, reference: reference))
+                var testCase = Case(family: family.lastPathComponent, name: directory.lastPathComponent, source: source, settings: settings, reference: reference)
+                if let text = try? String(contentsOf: directory.appending(path: "base.txt"), encoding: .utf8) {
+                    let base = family.appending(path: text.trimmingCharacters(in: .whitespacesAndNewlines), directoryHint: .isDirectory)
+                    // A grain case can't be measured until its base has a reference too.
+                    guard manager.fileExists(atPath: base.appending(path: "reference.tif").path) else { continue }
+                    testCase.base = base
+                }
+                cases.append(testCase)
             }
         }
         return cases
@@ -85,8 +104,14 @@ struct FidelityHarness {
 
     /// The photo with the case's settings imported by the mapper, scaled to `size` (the reference's).
     static func render(_ testCase: Case, size: CGSize, context: CIContext) throws -> CGImage {
-        let data = try Data(contentsOf: testCase.settings)
-        guard let table = XMPDevelopSettings.parse(data) else { throw FidelityError.unreadableSettings(testCase.settings.lastPathComponent) }
+        try render(testCase, settings: testCase.settings, size: size, context: context, format: testCase.base == nil ? .RGBA8 : .RGBA16)
+    }
+
+    /// The case's photo with `settings` (the case's own, or its base's).
+    /// Grain cases render at 16 bits (`format`), so their statistics aren't limited by 8-bit rounding.
+    static func render(_ testCase: Case, settings: URL, size: CGSize, context: CIContext, format: CIFormat = .RGBA8) throws -> CGImage {
+        let data = try Data(contentsOf: settings)
+        guard let table = XMPDevelopSettings.parse(data) else { throw FidelityError.unreadableSettings(settings.lastPathComponent) }
         guard let source = DevelopSource(url: testCase.source) else { throw FidelityError.unreadableSource(testCase.source.lastPathComponent) }
         var adjustments = PhotoAdjustments()
         let input = LightroomDevelopMapper.Input(
@@ -95,13 +120,17 @@ struct FidelityHarness {
         _ = LightroomDevelopMapper.apply(input, to: &adjustments)
         let scale = source.scale(toFit: max(size.width, size.height), adjustments: adjustments)
         var image = source.image(with: adjustments, scale: scale)
-        // Land exactly on the reference's size (the render can be a pixel off from rounding).
-        if Int(image.extent.width) != Int(size.width) || Int(image.extent.height) != Int(size.height) {
+        // Land exactly on the reference's size (the render can be a pixel off from rounding). A pixel or two over is
+        // cropped rather than resampled, which would soften fine detail such as grain.
+        let extra = (width: image.extent.width - size.width, height: image.extent.height - size.height)
+        if (0..<3).contains(Int(extra.width)), (0..<3).contains(Int(extra.height)) {
+            image = image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
+        } else if Int(image.extent.width) != Int(size.width) || Int(image.extent.height) != Int(size.height) {
             image = image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
                 .transformed(by: CGAffineTransform(scaleX: size.width / image.extent.width, y: size.height / image.extent.height))
         }
         let bounds = CGRect(origin: .zero, size: size)
-        guard let rendered = context.createCGImage(image.cropped(to: bounds), from: bounds, format: .RGBA8, colorSpace: displayP3) else {
+        guard let rendered = context.createCGImage(image.cropped(to: bounds), from: bounds, format: format, colorSpace: displayP3) else {
             throw FidelityError.renderFailed(testCase.name)
         }
         return rendered
@@ -153,9 +182,28 @@ struct FidelityHarness {
 
     static func run(_ testCase: Case, context: CIContext = CIContext(options: [.workingColorSpace: displayP3])) throws -> Result {
         let reference = try loadReference(testCase.reference)
-        let render = try render(testCase, size: CGSize(width: reference.width, height: reference.height), context: context)
+        let size = CGSize(width: reference.width, height: reference.height)
+        let render = try render(testCase, size: size, context: context)
+        if let baseSettings = testCase.baseSettings, let baseReference = testCase.baseReference {
+            return try runGrain(testCase, render: render, reference: reference, baseSettings: baseSettings, baseReference: baseReference, context: context)
+        }
         let (metrics, _) = compare(render: render, reference: reference)
         return Result(testCase: testCase, metrics: metrics, target: target(for: testCase.family), render: render, reference: reference)
+    }
+
+    /// A grain case: each app's grain (its export minus its base's) measured and compared. Pixel-by-pixel ΔE would
+    /// only measure two random patterns' difference, so it isn't taken; the base case's own ΔE shows whether the
+    /// picture under the grain matches.
+    static func runGrain(_ testCase: Case, render: CGImage, reference: CGImage, baseSettings: URL, baseReference: URL, context: CIContext) throws -> Result {
+        let size = CGSize(width: reference.width, height: reference.height)
+        let lightroomBase = try loadReference(baseReference)
+        let base = try self.render(testCase, settings: baseSettings, size: size, context: context, format: .RGBA16)
+        let grain = GrainStatistics.compare(
+            render: GrainStatistics.measure(image: render, base: base),
+            reference: GrainStatistics.measure(image: reference, base: lightroomBase))
+        let metrics = Metrics(meanDeltaE: 0, p95DeltaE: 0, ssim: 1, sizeDifference: max(abs(render.width - reference.width), abs(render.height - reference.height),
+                                     abs(lightroomBase.width - reference.width), abs(lightroomBase.height - reference.height)))
+        return Result(testCase: testCase, metrics: metrics, target: target(for: testCase.family), render: render, reference: reference, grain: grain)
     }
 
     // MARK: Report
@@ -163,7 +211,18 @@ struct FidelityHarness {
     /// A self-contained HTML page: a table of every case against its target, then each case's render, reference
     /// and difference (ΔE 0 black … 10 white) side by side.
     static func report(_ results: [Result], title: String = "PixelLoupe fidelity report") -> String {
-        func png(_ image: CGImage) -> String {
+        func png(_ full: CGImage) -> String {
+            // Full-size grain cases are 24 MP: embed them at 2048 px at most so the page stays loadable.
+            var image = full
+            let longEdge = max(full.width, full.height)
+            if longEdge > 2048 {
+                let width = full.width * 2048 / longEdge, height = full.height * 2048 / longEdge
+                let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: displayP3,
+                                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+                context?.interpolationQuality = .high
+                context?.draw(full, in: CGRect(x: 0, y: 0, width: width, height: height))
+                image = context?.makeImage() ?? full
+            }
             let data = NSMutableData()
             guard let destination = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil) else { return "" }
             CGImageDestinationAddImage(destination, image, nil)
@@ -184,6 +243,12 @@ struct FidelityHarness {
         for result in results {
             let m = result.metrics, t = result.target
             html += "<tr><td>\(escape(result.testCase.family))</td><td>\(escape(result.testCase.name))</td>"
+            if let grain = result.grain {
+                html += String(format: "<td colspan=3>grain: worst band ×%.2f, mean %+.2f, color %+.2f</td><td>%d px</td><td>±%.0f%%</td>",
+                               grain.worstBandRatio, grain.worstMeanShift, grain.worstChroma, m.sizeDifference, grain.target.bandTolerance * 100)
+                html += result.passes ? "<td class=pass>pass</td></tr>" : "<td class=fail>FAIL</td></tr>"
+                continue
+            }
             html += String(format: "<td>%.2f</td><td>%.2f</td><td>%.3f</td><td>%d px</td><td>≤ %.0f / %.0f</td>", m.meanDeltaE, m.p95DeltaE, m.ssim, m.sizeDifference, t.meanDeltaE, t.p95DeltaE)
             html += result.passes ? "<td class=pass>pass</td></tr>" : "<td class=fail>FAIL</td></tr>"
         }
@@ -191,6 +256,10 @@ struct FidelityHarness {
         let passed = results.filter(\.passes).count
         html += "<p>\(passed) of \(results.count) within target.</p>"
         for result in results {
+            if let grain = result.grain {
+                html += grainSection(result, grain, png: png, escape: escape)
+                continue
+            }
             let (_, deltas) = compare(render: result.render, reference: result.reference)
             html += "<h3>\(escape(result.testCase.family)) / \(escape(result.testCase.name))</h3><div class=row>"
             html += "<figure><img src=\"\(png(result.render))\"><figcaption>PixelLoupe</figcaption></figure>"
@@ -201,6 +270,32 @@ struct FidelityHarness {
             html += "</div>"
         }
         return html
+    }
+
+    /// A grain case's per-tone table and a 1:1 crop of each app's export (full-size exports are too big to embed).
+    static func grainSection(_ result: Result, _ grain: GrainStatistics.Comparison, png: (CGImage) -> String, escape: (String) -> String) -> String {
+        var html = "<h3>\(escape(result.testCase.family)) / \(escape(result.testCase.name))</h3>"
+        let bands = GrainStatistics.bandEdges
+        let bandNames = (0..<GrainStatistics.bandCount).map { String(format: "σ %g–%g", bands[$0], bands[$0 + 1]) }
+        html += "<table><tr><th>Tone</th><th>Samples</th>" + bandNames.map { "<th>\($0) PL / LR</th>" }.joined()
+        html += "<th>Mean PL / LR</th><th>Color PL / LR</th><th></th></tr>"
+        for bin in grain.bins {
+            html += "<tr><td>\(bin.tone.lowerBound)–\(bin.tone.upperBound)</td><td>\(bin.render.samples)</td>"
+            for (pl, lr) in zip(bin.render.bands, bin.reference.bands) {
+                html += String(format: "<td>%.2f / %.2f (×%.2f)</td>", pl, lr, pl / max(lr, 1e-9))
+            }
+            html += String(format: "<td>%+.2f / %+.2f</td><td>%.2f / %.2f</td>", bin.render.mean, bin.reference.mean, bin.render.chroma, bin.reference.chroma)
+            html += grain.passes(bin) ? "<td class=pass>pass</td></tr>" : "<td class=fail>FAIL</td></tr>"
+        }
+        html += "</table><p>Grain std in 8-bit levels, per spatial band (Gaussian σ in pixels) and base tone.</p><div class=row>"
+        // A 512 px square from the upper middle: the chart's flat gray.
+        let side = min(512, result.render.width, result.render.height)
+        let crop = CGRect(x: (result.render.width - side) / 2, y: max(0, result.render.height / 4 - side / 2), width: side, height: side)
+        if let render = result.render.cropping(to: crop), let reference = result.reference.cropping(to: crop) {
+            html += "<figure><img src=\"\(png(render))\"><figcaption>PixelLoupe, 1:1</figcaption></figure>"
+            html += "<figure><img src=\"\(png(reference))\"><figcaption>Lightroom, 1:1</figcaption></figure>"
+        }
+        return html + "</div>"
     }
 
     static func differenceImage(_ deltas: [Double], width: Int, height: Int) -> CGImage? {
