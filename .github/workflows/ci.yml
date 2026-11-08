@@ -1,5 +1,12 @@
 # Builds PixelLoupe and runs its unit tests on every pull request to main, and on pushes to main.
 # Free on GitHub-hosted standard runners once the repository is public.
+#
+# A run whose code has already passed skips the build and tests (RAW-293). Each run that passes saves a marker artifact
+# named after the tree it tested, ci-passed-<tree hash>; a later run of the same tree finds it and finishes in seconds.
+# That's what happens when the rest of a stack of pull requests is rebased after one of them merges, and on the push to
+# main a merge makes: their trees are the ones the pull requests already tested. The trees are of the commits checked
+# out, which for a pull request is its merge with main. Only markers from runs of this repository's own branches count,
+# not a fork's. A manual run (workflow_dispatch) always builds and tests.
 name: CI
 
 on:
@@ -11,6 +18,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # to look for an earlier run's ci-passed marker
 
 # A newer push to the same pull request (or branch) cancels the run in progress.
 concurrency:
@@ -31,16 +39,44 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Look for an earlier run that passed this tree
+        id: tested
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+        run: |
+          tree=$(git rev-parse 'HEAD^{tree}')
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            echo "A manual run always builds and tests."
+            exit 0
+          fi
+          # If the lookup fails, the run builds and tests as usual.
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=ci-passed-$tree&per_page=100" \
+            --jq "[.artifacts[] | select(.expired | not) | select(.workflow_run.head_repository_id == $REPOSITORY_ID)][0].workflow_run.id // empty" \
+            || true)
+          if [[ -n "$run" ]]; then
+            url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Tree $tree already passed in $url, so this run skips the build and tests."
+            echo "Tree \`$tree\` already passed in [run $run]($url), so this run skipped the build and tests." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Tree $tree hasn't passed before."
+          fi
+
       - name: Select Xcode
+        if: steps.tested.outputs.skip != 'true'
         run: |
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
 
       - name: Install the Metal Toolchain
+        if: steps.tested.outputs.skip != 'true'
         # Photo Merge's Core Image kernels (.ci.metal) need it; the image doesn't include it.
         run: xcodebuild -downloadComponent MetalToolchain
 
       - name: Build and run the unit tests
+        if: steps.tested.outputs.skip != 'true'
         # - Ad-hoc signed ("Sign to Run Locally"): no signing identity is needed. The project's development team (for
         #   signed, notarized builds) is cleared, since the runner has no certificate for it.
         # - Warnings fail the build (SKILLS.md: no build warnings).
@@ -81,3 +117,19 @@ jobs:
           name: TestResults
           path: TestResults.xcresult
           retention-days: 14
+
+      - name: Write the ci-passed marker
+        if: steps.tested.outputs.skip != 'true'
+        env:
+          TREE: ${{ steps.tested.outputs.tree }}
+        run: |
+          mkdir -p build/ci-passed
+          printf 'tree %s\ncommit %s\nrun %s\n' "$TREE" "$GITHUB_SHA" "$GITHUB_RUN_ID" > build/ci-passed/ci-passed.txt
+
+      - name: Save the ci-passed marker
+        if: steps.tested.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-passed-${{ steps.tested.outputs.tree }}
+          path: build/ci-passed/ci-passed.txt
+          retention-days: 30
