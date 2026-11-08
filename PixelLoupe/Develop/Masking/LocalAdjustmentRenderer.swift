@@ -169,10 +169,6 @@ nonisolated enum LocalAdjustmentRenderer {
                                               shadowsReference: shadowsReference)
         result = SharpenRenderer.apply(settings.sharpen, to: result, scale: scale)
 
-        let effects = settings.effects
-        if effects.isActive, effects.grain > 0, !extent.isInfinite, let grain = AdjustmentPipeline.grainLayer(effects, extent: extent, scale: scale) {
-            result = grain.applyingFilter("CIOverlayBlendMode", parameters: [kCIInputBackgroundImageKey: result]).cropped(to: extent)
-        }
-        return result
+        return AdjustmentPipeline.applyGrain(settings.effects, to: result, extent: extent, scale: scale)
     }
 }

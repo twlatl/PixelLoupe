@@ -633,6 +633,8 @@ nonisolated enum LightroomDevelopMapper {
             adjustments.effects.grainSize = LightroomScales.percent(value("GrainSize") ?? 25).clamped(to: 0...1)
             adjustments.effects.grainRoughness = LightroomScales.percent(value("GrainFrequency") ?? 50).clamped(to: 0...1)
             adjustments.effects.grainSeed = max(1, input.seed)
+            // Lightroom's grain: the fitted process, even over a photo whose earlier grain used the original one.
+            adjustments.effects.grainProcess = .current
         }
     }
 

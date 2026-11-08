@@ -266,16 +266,27 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
     /// Finishing effects (Lightroom's Effects panel). Grain lives here, so color photos can have it too.
     struct Effects: Codable, Equatable, Sendable {
         var isEnabled = true
-        /// Film grain amount, 0…1.
-        var grain = 0.0
+        /// Film grain amount, 0…1. Back at 0 it takes the current process.
+        var grain = 0.0 { didSet { if grain == 0 { grainProcess = .current } } }
         /// Grain size, 0…1 (0.25 is Lightroom's default).
         var grainSize = 0.25
         /// How crisp the grain is, 0…1: low is soft and blotchy, high is sharp (0.5 is the default).
         var grainRoughness = 0.5
         /// Makes this photo's grain pattern its own; a photo keeps the same grain every time it renders.
         var grainSeed = 0
+        /// How the grain renders. Grain added before RAW-284 keeps the original process, so its look doesn't change.
+        var grainProcess = GrainProcess.current
 
         var isActive: Bool { isEnabled && grain != 0 }
+
+        enum GrainProcess: Int, Codable, Sendable {
+            /// Gray noise enlarged to the grain size and laid over the photo with Overlay (before RAW-284).
+            case overlay = 1
+            /// Fitted to Lightroom Classic's grain (RAW-284).
+            case fitted = 2
+
+            static let current = fitted
+        }
     }
 
     /// Rim Light (RAW-203, from Pixegen's Filter ▸ Rim Light): up to three colored lights behind the subject that
@@ -925,7 +936,7 @@ nonisolated extension PhotoAdjustments.Vignette {
 }
 
 nonisolated extension PhotoAdjustments.Effects {
-    private enum CodingKeys: String, CodingKey { case isEnabled, grain, grainSize, grainRoughness, grainSeed }
+    private enum CodingKeys: String, CodingKey { case isEnabled, grain, grainSize, grainRoughness, grainSeed, grainProcess }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -935,6 +946,12 @@ nonisolated extension PhotoAdjustments.Effects {
         grainSize = try container.decodeIfPresent(Double.self, forKey: .grainSize) ?? grainSize
         grainRoughness = try container.decodeIfPresent(Double.self, forKey: .grainRoughness) ?? grainRoughness
         grainSeed = try container.decodeIfPresent(Int.self, forKey: .grainSeed) ?? grainSeed
+        if grain != 0 {
+            // Grain saved without a process predates RAW-284; a process this version doesn't know renders with the
+            // current one.
+            let stored = (try? container.decodeIfPresent(Int.self, forKey: .grainProcess)) ?? GrainProcess.overlay.rawValue
+            grainProcess = GrainProcess(rawValue: stored) ?? .current
+        }
     }
 }
 

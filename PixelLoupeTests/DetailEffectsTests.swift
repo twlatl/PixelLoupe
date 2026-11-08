@@ -293,6 +293,95 @@ struct DetailEffectsTests {
         #expect(abs(swing(full) - swing(half)) / swing(full) < 0.35)
     }
 
+    // MARK: Fitted grain (RAW-284)
+
+    @Test("Grain saved before RAW-284 keeps the original process; new grain and Amount back at 0 take the fitted one")
+    func grainProcess() throws {
+        func decode(_ json: String) throws -> PhotoAdjustments.Effects {
+            try JSONDecoder().decode(PhotoAdjustments.self, from: Data(#"{"effects":\#(json)}"#.utf8)).effects
+        }
+        #expect(try decode(#"{"grain":0.3}"#).grainProcess == .overlay)
+        #expect(try decode(#"{"grain":0.3,"grainProcess":2}"#).grainProcess == .fitted)
+        #expect(try decode(#"{"grain":0.3,"grainProcess":9}"#).grainProcess == .current, "an unknown process renders as current")
+        #expect(try decode(#"{"grain":0}"#).grainProcess == .current, "no grain to keep the look of")
+        var older = try decode(#"{"grain":0.3}"#)
+        older.grain = 0
+        #expect(older.grainProcess == .current)
+        #expect(PhotoAdjustments.Effects().grainProcess == .fitted)
+        var adjustments = PhotoAdjustments()
+        adjustments.effects = try decode(#"{"grain":0.3}"#)
+        #expect(PhotoAdjustments(data: adjustments.encoded).effects.grainProcess == .overlay)
+        // Lightroom's grain imports as the fitted process, even over older grain.
+        let settings = try #require(try LuaTableParser.parse("{ GrainAmount = 40 }").table)
+        _ = LightroomDevelopMapper.apply(.init(settings: settings, processVersion: "11.0", whiteBalance: nil, isRaw: false), to: &adjustments)
+        #expect(adjustments.effects.grain == 0.4 && adjustments.effects.grainProcess == .fitted)
+    }
+
+    @Test("The fitted filter: Size widens it, Roughness trades mottle for crispness, a downscale averages it")
+    func fittedGrainFilter() {
+        let base = FittedGrainRenderer.filter(amount: 0.5, size: 0.25, roughness: 0.5)
+        #expect(abs(base.sigma - 0.901) < 1e-9 && abs(base.gaussian - 17.97) < 1e-9 && abs(base.laplacian - 15.78) < 1e-9)
+        #expect(FittedGrainRenderer.filter(amount: 1, size: 0.25, roughness: 0.5).gaussian == 2 * base.gaussian)
+        #expect(FittedGrainRenderer.filter(amount: 0.5, size: 1, roughness: 0.5).sigma > 2 * base.sigma)
+        let smooth = FittedGrainRenderer.filter(amount: 0.5, size: 0.25, roughness: 1)
+        #expect(smooth.laplacian == 0 && smooth.gaussian > base.gaussian)
+        #expect(FittedGrainRenderer.filter(base, atScale: 1) == base)
+        let third = FittedGrainRenderer.filter(base, atScale: 1.0 / 3)
+        #expect(third.gaussian < base.gaussian / 2 && third.sigma < base.sigma)
+        // The taps reproduce the responses: h passes the mean, d (zero at f = 0) doesn't.
+        let (h, d) = FittedGrainRenderer.taps(sigma: base.sigma)
+        let hSum = h[0] + 2 * h.dropFirst().reduce(0, +), dSum = d[0] + 2 * d.dropFirst().reduce(0, +)
+        #expect(abs(hSum - 1) < 1e-3 && abs(dSum) < 1e-3)
+    }
+
+    /// The fitted grain alone over a 256 px square, in 8-bit levels.
+    private func fittedGrain(_ effects: PhotoAdjustments.Effects, scale: CGFloat = 1) throws -> [Double] {
+        let square = CGRect(x: 0, y: 0, width: 256, height: 256)
+        let grain = try #require(FittedGrainRenderer.grain(effects, extent: square, scale: scale))
+        let data = pixels(grain)
+        return stride(from: 0, to: data.count, by: 4).map { Double(data[$0]) * 255 }
+    }
+
+    private func deviation(_ values: [Double]) -> (mean: Double, std: Double) {
+        let mean = values.reduce(0, +) / Double(values.count)
+        return (mean, (values.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(values.count)).squareRoot())
+    }
+
+    @Test("Fitted grain is stable per seed, zero on average, and as strong as Lightroom's at full size and at a third")
+    func fittedGrainStrength() throws {
+        var effects = PhotoAdjustments.Effects(grain: 0.5, grainSeed: 7)
+        let a = try fittedGrain(effects)
+        #expect(try a == fittedGrain(effects))
+        effects.grainSeed = 8
+        #expect(try a != fittedGrain(effects))
+        // Lightroom's grain at Amount 50, Size 25, Roughness 50: 8.45 levels at full size, 4.61 at 2048 px of 6016.
+        let full = deviation(a), third = deviation(try fittedGrain(effects, scale: 2048.0 / 6016))
+        #expect(abs(full.mean) < 0.3 && abs(full.std - 8.45) < 0.85, "\(full)")
+        #expect(abs(third.std - 4.61) < 0.5, "\(third)")
+    }
+
+    @Test("Fitted grain is luminance only, the same strength in dark and light tones, and fades at black")
+    func fittedGrainTones() throws {
+        let context = CIContext(options: [.workingColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3)!])
+        let space = CGColorSpace(name: CGColorSpace.displayP3)!
+        let square = CGRect(x: 0, y: 0, width: 128, height: 128)
+        let effects = PhotoAdjustments.Effects(grain: 0.5, grainSeed: 3)
+        /// Std of each channel and of R − G, in gamma-encoded Display P3 levels, of grain over flat `level`.
+        func measure(_ level: CGFloat) -> (r: Double, g: Double, chroma: Double) {
+            let flat = CIImage(color: CIColor(red: level, green: level, blue: level, colorSpace: space)!).cropped(to: square)
+            let grained = FittedGrainRenderer.apply(effects, to: flat, extent: square, scale: 1)
+            var data = [Float](repeating: 0, count: 128 * 128 * 4)
+            context.render(grained, toBitmap: &data, rowBytes: 128 * 16, bounds: square, format: .RGBAf, colorSpace: space)
+            let r = stride(from: 0, to: data.count, by: 4).map { Double(data[$0]) * 255 }
+            let g = stride(from: 1, to: data.count, by: 4).map { Double(data[$0]) * 255 }
+            return (deviation(r).std, deviation(g).std, deviation(zip(r, g).map { $0 - $1 }).std)
+        }
+        let dark = measure(0.25), light = measure(0.75), black = measure(0.02)
+        #expect(dark.chroma < 0.05 && light.chroma < 0.05, "monochrome")
+        #expect(abs(dark.r - light.r) / light.r < 0.05, "\(dark.r) vs \(light.r)")
+        #expect(black.r < 0.5 * light.r, "fades near black: \(black.r) vs \(light.r)")
+    }
+
     // MARK: Noise reduction
 
     @Test("Noise reduction detail changes how a noisy non-RAW photo renders")
