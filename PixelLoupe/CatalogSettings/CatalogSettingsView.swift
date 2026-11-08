@@ -8,7 +8,7 @@ struct CatalogSettingsView: View {
         case general = "General"
         case previews = "Previews"
         case metadata = "Metadata"
-        // Backups (RAW-269) joins when it's built.
+        case backups = "Backups"
 
         var id: Self { self }
     }
@@ -33,6 +33,7 @@ struct CatalogSettingsView: View {
                 case .general: CatalogGeneralSettingsView(packageURL: store.packageURL, info: store.info)
                 case .previews: CatalogPreviewSettingsView(store: store)
                 case .metadata: CatalogMetadataSettingsView(store: store)
+                case .backups: CatalogBackupSettingsView(store: store)
                 }
             }
             .padding(20)

@@ -53,6 +53,65 @@ nonisolated struct CatalogSettings: Codable, Equatable, Sendable {
     /// library reads every original.
     var detectsDuplicates = false
 
+    // MARK: Backups (RAW-269)
+
+    /// Catalog Settings ▸ Backups ▸ Back Up Catalog: when PixelLoupe offers to back the catalog up as it quits.
+    enum BackupSchedule: String, Codable, CaseIterable, Identifiable, Sendable {
+        case never
+        case monthly
+        case weekly
+        case daily
+        case everyExit
+        /// Once, the next time PixelLoupe quits; then the schedule chosen before it comes back.
+        case nextExit
+
+        var id: Self { self }
+        var title: String {
+            switch self {
+            case .never: "Never"
+            case .monthly: "Once a month, when exiting PixelLoupe"
+            case .weekly: "Once a week, when exiting PixelLoupe"
+            case .daily: "Once a day, when exiting PixelLoupe"
+            case .everyExit: "Every time PixelLoupe exits"
+            case .nextExit: "When PixelLoupe next exits"
+            }
+        }
+    }
+
+    private(set) var backupSchedule = BackupSchedule.weekly
+    /// The schedule to go back to once a When PixelLoupe next exits backup is made.
+    private(set) var scheduleBeforeNextExit: BackupSchedule?
+    /// Where backups go; nil for a Backups folder next to the catalog.
+    var backupFolderPath: String?
+    /// Keep the last N backups: older ones are deleted once a new one is made.
+    var backupsToKeep = 10
+    /// The quit sheet's Test integrity before backing up checkbox, remembered.
+    var testsBackupIntegrity = true
+
+    /// Chooses a schedule; When PixelLoupe next exits remembers the one it replaces.
+    mutating func chooseBackupSchedule(_ schedule: BackupSchedule) {
+        guard schedule != backupSchedule else { return }
+        if schedule == .nextExit {
+            scheduleBeforeNextExit = backupSchedule
+        } else {
+            scheduleBeforeNextExit = nil
+        }
+        backupSchedule = schedule
+    }
+
+    /// A backup was made: When PixelLoupe next exits gives way to the schedule chosen before it.
+    mutating func backupDidFinish() {
+        guard backupSchedule == .nextExit else { return }
+        backupSchedule = scheduleBeforeNextExit ?? .weekly
+        scheduleBeforeNextExit = nil
+    }
+
+    /// The folder backups of the catalog at `package` go to.
+    func backupFolder(forCatalogAt package: URL) -> URL {
+        if let backupFolderPath { return URL(filePath: backupFolderPath, directoryHint: .isDirectory) }
+        return package.deletingLastPathComponent().appending(path: "Backups", directoryHint: .isDirectory)
+    }
+
     /// The cache limit in bytes; nil for none (a limit of zero or less is none).
     var previewCacheLimitBytes: Int64? {
         guard let previewCacheLimitGB, previewCacheLimitGB > 0 else { return nil }
@@ -71,6 +130,7 @@ nonisolated struct CatalogSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case standardPreviewSize, previewQuality, previewCacheLimitGB, includesDevelopSettingsInExports, detectsDuplicates
+        case backupSchedule, scheduleBeforeNextExit, backupFolderPath, backupsToKeep, testsBackupIntegrity
     }
 
     /// Missing keys, and values a later version wrote that this one doesn't know, read as the defaults.
@@ -81,6 +141,11 @@ nonisolated struct CatalogSettings: Codable, Equatable, Sendable {
         previewCacheLimitGB = try? container.decodeIfPresent(Double.self, forKey: .previewCacheLimitGB)
         includesDevelopSettingsInExports = (try? container.decodeIfPresent(Bool.self, forKey: .includesDevelopSettingsInExports)) ?? false
         detectsDuplicates = (try? container.decodeIfPresent(Bool.self, forKey: .detectsDuplicates)) ?? false
+        backupSchedule = (try? container.decodeIfPresent(BackupSchedule.self, forKey: .backupSchedule)) ?? .weekly
+        scheduleBeforeNextExit = try? container.decodeIfPresent(BackupSchedule.self, forKey: .scheduleBeforeNextExit)
+        backupFolderPath = try? container.decodeIfPresent(String.self, forKey: .backupFolderPath)
+        backupsToKeep = max(1, (try? container.decodeIfPresent(Int.self, forKey: .backupsToKeep)) ?? 10)
+        testsBackupIntegrity = (try? container.decodeIfPresent(Bool.self, forKey: .testsBackupIntegrity)) ?? true
     }
 
     // MARK: File
