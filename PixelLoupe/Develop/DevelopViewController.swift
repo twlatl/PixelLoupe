@@ -61,6 +61,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     private let presetsPanel = PresetsPanelViewController(embedded: true)
     private let cropToolButton = NSButton()
     private let maskToolButton = NSButton()
+    private let removeToolButton = NSButton()
     private let retouchToolButton = NSButton()
     private let historyToolButton = NSButton()
     private let historyPanel = HistoryPanelViewController()
@@ -68,6 +69,13 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     private var historyCursor: UUID?
     private let retouchPanel = RetouchPanelViewController()
     private let retouchOverlay = RetouchOverlayView()
+    private let removePanel = RemovePanelViewController()
+    private let removeOverlay = RemoveOverlayView()
+    /// The spot selected in Remove.
+    private var removeSelectedID: UUID?
+    /// Finding the object a stroke went round (Detect Objects).
+    private var detectionTask: Task<Void, Never>?
+    private var fillObserver: NSObjectProtocol?
     /// The preview as last drawn in the Masking or Spot Removal tool, for finding an eye to click.
     /// The scale the preview was last rendered at in Masking or Spot Removal, for finding red eyes on the
     /// whole frame at the size shown.
@@ -160,7 +168,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         whiteBalancePicker.isHidden = true
         maskOverlay.isHidden = true
         retouchOverlay.isHidden = true
-        for view in [metalView!, beforeAfterOverlay, zoomClickView, loupeOverlay, cropOverlay, maskOverlay, retouchOverlay, fringePicker, whiteBalancePicker, infoLabel, messageLabel, locateButton, spinner] as [NSView] {
+        removeOverlay.isHidden = true
+        for view in [metalView!, beforeAfterOverlay, zoomClickView, loupeOverlay, cropOverlay, maskOverlay, retouchOverlay, removeOverlay, fringePicker, whiteBalancePicker, infoLabel, messageLabel, locateButton, spinner] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             previewContainer.addSubview(view)
         }
@@ -197,6 +206,10 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             retouchOverlay.leadingAnchor.constraint(equalTo: metalView.leadingAnchor),
             retouchOverlay.trailingAnchor.constraint(equalTo: metalView.trailingAnchor),
             retouchOverlay.bottomAnchor.constraint(equalTo: metalView.bottomAnchor),
+            removeOverlay.topAnchor.constraint(equalTo: metalView.topAnchor),
+            removeOverlay.leadingAnchor.constraint(equalTo: metalView.leadingAnchor),
+            removeOverlay.trailingAnchor.constraint(equalTo: metalView.trailingAnchor),
+            removeOverlay.bottomAnchor.constraint(equalTo: metalView.bottomAnchor),
             maskOverlay.topAnchor.constraint(equalTo: metalView.topAnchor),
             maskOverlay.leadingAnchor.constraint(equalTo: metalView.leadingAnchor),
             maskOverlay.trailingAnchor.constraint(equalTo: metalView.trailingAnchor),
@@ -249,6 +262,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         configureCrop()
         configureMasks()
         configureRetouch()
+        configureRemove()
         configureHistory()
         configureHistogram()
         configurePresets()
@@ -266,8 +280,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             case .selection where view.window != nil: loadSelectedPhoto()
             case .loupe: loupeOverlay.isLoupeVisible = state.isLoupeVisible && state.developTool != .crop
             case .developTool:
-                // Crop, Masking and Spot Removal show the photo their own way, so they end Before/After.
-                if [.crop, .mask, .retouch].contains(state.developTool) { state.beforeAfter = nil }
+                // Crop, Masking, Remove and Spot Removal show the photo their own way, so they end Before/After.
+                if [.crop, .mask, .remove, .retouch].contains(state.developTool) { state.beforeAfter = nil }
                 updateTool()
                 zoomClickView.zoomDidChange()
                 retouchOverlay.zoomDidChange()
@@ -352,7 +366,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             (rimLightToolButton, "", "Rim Light", "developTool.rimLight"),
             (cropToolButton, "crop.rotate", "Crop & Straighten (R)", "developTool.crop"),
             (maskToolButton, "circle.dashed.inset.filled", "Masking (⇧W)", "developTool.mask"),
-            (retouchToolButton, "bandage", "Spot Removal (Q)", "developTool.retouch"),
+            (removeToolButton, "eraser.fill", "Remove (Q)", "developTool.remove"),
+            (retouchToolButton, "bandage", "Spot Removal (⇧Q)", "developTool.retouch"),
             (historyToolButton, "clock.arrow.circlepath", "History and Snapshots", "developTool.history"),
         ] {
             button.image = symbol.isEmpty
@@ -366,7 +381,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             button.setAccessibilityLabel(title)
             button.setAccessibilityIdentifier(identifier)
         }
-        let header = NSStackView(views: [adjustToolButton, rimLightToolButton, cropToolButton, maskToolButton, retouchToolButton, historyToolButton])
+        let header = NSStackView(views: [adjustToolButton, rimLightToolButton, cropToolButton, maskToolButton, removeToolButton, retouchToolButton, historyToolButton])
         // Up to eight tools fit the narrowest inspector (366 pt) at this spacing.
         header.spacing = 12
         // Exactly as tall as the tallest icon, so the line sits 10pt below the icons and the
@@ -381,7 +396,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         // Presets above the Adjust panel's sections and Lens Corrections below them, as Lightroom's Develop panels are.
         panel.addEmbeddedSection("Presets", symbol: "photo.on.rectangle.angled", content: presetsPanel.view, atTop: true)
         panel.addEmbeddedSection("Lens Corrections", symbol: "camera", content: lensPanel.view, atTop: false)
-        let content = [panel.view, rimLightPanel.view, cropPanel.view, maskPanel.view, retouchPanel.view, historyPanel.view]
+        let content = [panel.view, rimLightPanel.view, cropPanel.view, maskPanel.view, removePanel.view, retouchPanel.view, historyPanel.view]
         for view in [histogramView, header, headerLine] + content {
             view.translatesAutoresizingMaskIntoConstraints = false
             sidebar.addSubview(view)
@@ -413,6 +428,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         rimLightPanel.view.isHidden = tool != .rimLight
         cropPanel.view.isHidden = tool != .crop
         maskPanel.view.isHidden = tool != .mask
+        removePanel.view.isHidden = tool != .remove
         retouchPanel.view.isHidden = tool != .retouch
         historyPanel.view.isHidden = tool != .history
         updateToolButtons()
@@ -421,11 +437,11 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     }
 
     @objc private func toolButtonClicked(_ sender: NSButton) {
-        state.developTool = sender === rimLightToolButton ? .rimLight : sender === cropToolButton ? .crop : sender === maskToolButton ? .mask : sender === retouchToolButton ? .retouch : sender === historyToolButton ? .history : .adjust
+        state.developTool = sender === rimLightToolButton ? .rimLight : sender === cropToolButton ? .crop : sender === maskToolButton ? .mask : sender === removeToolButton ? .remove : sender === retouchToolButton ? .retouch : sender === historyToolButton ? .history : .adjust
     }
 
     private func updateToolButtons() {
-        for (button, tool) in [(adjustToolButton, DevelopTool.adjust), (rimLightToolButton, .rimLight), (cropToolButton, .crop), (maskToolButton, .mask), (retouchToolButton, .retouch), (historyToolButton, .history)] {
+        for (button, tool) in [(adjustToolButton, DevelopTool.adjust), (rimLightToolButton, .rimLight), (cropToolButton, .crop), (maskToolButton, .mask), (removeToolButton, .remove), (retouchToolButton, .retouch), (historyToolButton, .history)] {
             let active = state.developTool == tool
             button.contentTintColor = active ? Accent.color : .systemGray
             button.setAccessibilityValue(active ? "active" : "inactive")
@@ -821,6 +837,9 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         maskPanel.view.isHidden = state.developTool != .mask
         maskOverlay.isHidden = state.developTool != .mask
         retouchPanel.view.isHidden = state.developTool != .retouch
+        removePanel.view.isHidden = state.developTool != .remove
+        removeOverlay.isHidden = state.developTool != .remove
+        if state.developTool == .remove { showRemove() } else { _ = cancelPendingRemove() }
         historyPanel.view.isHidden = state.developTool != .history
         if state.developTool == .history { showHistory() }
         retouchOverlay.isHidden = state.developTool != .retouch
@@ -1091,6 +1110,9 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         retouchOverlay.spots = spots
         retouchOverlay.redEyes = eyes
         retouchPanel.display(spots: spots, redEyes: eyes)
+        // Remove shows the same spots.
+        removeOverlay.spots = spots
+        refreshRemoveFills()
         // Resizing a spot sets the size of the next one, as it looks on screen now.
         if ["Resize Spot", "Spot Size"].contains(actionName), let spot = spots.first(where: { $0.id == retouchPanel.selectedID }) {
             spotBrushRadius = spot.radius * retouchOverlay.zoomFactor
@@ -1147,8 +1169,223 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
 
     /// Delete in Spot Removal: removes the selected spot, if there is one.
     func deleteSelectedSpot() -> Bool {
-        state.developTool == .retouch && retouchPanel.deleteSelectedSpot()
+        (state.developTool == .retouch && retouchPanel.deleteSelectedSpot()) || (state.developTool == .remove && deleteSelectedRemoveSpot())
     }
+
+    // MARK: - Remove
+
+    private func configureRemove() {
+        removePanel.onModeChange = { [weak self] mode in self?.removeOverlay.mode = mode }
+        removePanel.onBrushChange = { [weak self] in
+            guard let self else { return }
+            removeOverlay.brushSize = removePanel.brushSize
+        }
+        removePanel.onToolOverlayChange = { [weak self] overlay in self?.removeOverlay.toolOverlay = overlay }
+        removePanel.onSubtractChange = { [weak self] on in self?.removeOverlay.subtracts = on }
+        removePanel.onCommitPending = { [weak self] in _ = self?.commitPendingRemove() }
+        removePanel.onCancelPending = { [weak self] in _ = self?.cancelPendingRemove() }
+        removePanel.onEditSelected = { [weak self] spot, isFinal, action in self?.editRemoveSpot(spot, isFinal: isFinal, actionName: action) }
+        removePanel.onDeleteSelected = { [weak self] in _ = self?.deleteSelectedRemoveSpot() }
+        removePanel.onReset = { [weak self] in
+            guard let self, !adjustments.spots.isEmpty else { return }
+            selectRemoveSpot(nil)
+            retouchChanged([], adjustments.redEyes, isFinal: true, actionName: "Clear Spots")
+        }
+        removePanel.onClose = { [weak self] in self?.state.developTool = .adjust }
+        removeOverlay.onStroke = { [weak self] stroke in self?.removeStroke(stroke) }
+        removeOverlay.onPlace = { [weak self] point in self?.placeRemoveCircle(at: point) }
+        removeOverlay.onSelect = { [weak self] id in self?.selectRemoveSpot(id) }
+        removeOverlay.onChange = { [weak self] spot, isFinal, action in self?.editRemoveSpot(spot, isFinal: isFinal, actionName: action) }
+        removeOverlay.onBrushResize = { [weak self] size in self?.removePanel.setBrushSize(size) }
+        removeOverlay.mode = removePanel.mode
+        removeOverlay.brushSize = removePanel.brushSize
+        removeOverlay.toolOverlay = removePanel.toolOverlay
+        // A fill made in the background: draw it now.
+        fillObserver = NotificationCenter.default.addObserver(forName: RemoveFillStore.didFill, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.refreshRemoveFills()
+                self?.metalView.needsDisplay = true
+            }
+        }
+    }
+
+    private func showRemove() {
+        removePanel.isEditingEnabled = source != nil
+        if let id = removeSelectedID, !adjustments.spots.contains(where: { $0.id == id }) { removeSelectedID = nil }
+        removeOverlay.spots = adjustments.spots
+        removeOverlay.selectedID = removeSelectedID
+        removePanel.showSelected(adjustments.spots.first { $0.id == removeSelectedID })
+        refreshRemoveFills()
+    }
+
+    /// Marks the pins of spots whose fills are still being made.
+    private func refreshRemoveFills() {
+        guard let source, state.developTool == .remove else {
+            removeOverlay.unfilledIDs = []
+            return
+        }
+        removeOverlay.unfilledIDs = Set(adjustments.spots.indices
+            .filter { !source.removeFills.isReady(for: source, adjustments: adjustments, spotIndex: $0) }
+            .map { adjustments.spots[$0].id })
+    }
+
+    private func selectRemoveSpot(_ id: UUID?) {
+        removeSelectedID = id
+        removeOverlay.selectedID = id
+        removePanel.showSelected(adjustments.spots.first { $0.id == id })
+    }
+
+    private func editRemoveSpot(_ spot: PhotoAdjustments.Spot, isFinal: Bool, actionName: String) {
+        guard let index = adjustments.spots.firstIndex(where: { $0.id == spot.id }), let source else { return }
+        var spot = spot
+        // A filled spot turned into Heal or Clone needs somewhere to copy from.
+        if spot.kind != .remove, adjustments.spots[index].kind == .remove, !spot.hasCustomSource {
+            spot.source = LightroomDevelopMapper.automaticSource(for: spot.center, radius: spot.radius, imageSize: source.frameSize(adjustments))
+        }
+        var spots = adjustments.spots
+        spots[index] = spot
+        retouchChanged(spots, adjustments.redEyes, isFinal: isFinal, actionName: actionName)
+        removePanel.showSelected(spot)
+    }
+
+    /// A stroke in Remove: more (or less) of the area waiting to be removed, an area to find the object in, or a
+    /// spot.
+    private func removeStroke(_ stroke: PhotoAdjustments.BrushStroke) {
+        guard source != nil else { return }
+        switch removePanel.pending {
+        case .ready(var area)?:
+            area.brush.strokes.append(stroke)
+            setPendingRemove(.ready(area))
+            return
+        case .detecting?:
+            return
+        case nil:
+            break
+        }
+        var stroke = stroke
+        stroke.isErasing = false
+        let painted = PhotoAdjustments.RemoveArea(brush: PhotoAdjustments.BrushMask(strokes: [stroke]))
+        switch removePanel.mode {
+        case .remove where removePanel.detectsObjects:
+            detectObject(stroke)
+        case .remove:
+            addRemoveSpot(painted)
+        case .heal, .clone:
+            addCopySpot(kind: removePanel.mode.kind, area: painted, at: nil)
+        }
+    }
+
+    /// A click in Heal or Clone: a round spot the brush's size.
+    private func placeRemoveCircle(at point: PhotoAdjustments.UnitPoint) {
+        guard removePanel.pending == nil else { return }
+        addCopySpot(kind: removePanel.mode.kind, area: nil, at: point)
+    }
+
+    private func addRemoveSpot(_ area: PhotoAdjustments.RemoveArea) {
+        guard let source, !area.isEmpty else { return }
+        var spot = PhotoAdjustments.Spot()
+        spot.kind = .remove
+        spot.area = area
+        spot.seed = UInt64.random(in: 1...UInt64.max)
+        spot.usesGenerativeAI = removePanel.usesGenerativeAI
+        let size = source.frameSize(adjustments)
+        spot.fitCircleToArea(aspect: Double(size.width / max(size.height, 1)))
+        spot.source = spot.center
+        append(spot, actionName: "Remove")
+    }
+
+    private func addCopySpot(kind: PhotoAdjustments.Spot.Kind, area: PhotoAdjustments.RemoveArea?, at point: PhotoAdjustments.UnitPoint?) {
+        guard let source else { return }
+        let size = source.frameSize(adjustments)
+        var spot = PhotoAdjustments.Spot()
+        spot.kind = kind
+        spot.feather = removePanel.feather
+        if let area {
+            spot.area = area
+            spot.fitCircleToArea(aspect: Double(size.width / max(size.height, 1)))
+        } else if let point {
+            spot.center = point
+            spot.radius = removePanel.brushSize
+        }
+        spot.source = LightroomDevelopMapper.automaticSource(for: spot.center, radius: spot.radius, imageSize: size)
+        append(spot, actionName: "Add Spot")
+    }
+
+    private func append(_ spot: PhotoAdjustments.Spot, actionName: String) {
+        removeSelectedID = spot.id
+        retouchChanged(adjustments.spots + [spot], adjustments.redEyes, isFinal: true, actionName: actionName)
+        selectRemoveSpot(spot.id)
+    }
+
+    /// Shows an area waiting for Remove (or being looked at by Detect Objects), or none.
+    private func setPendingRemove(_ pending: RemovePanelViewController.Pending?, marked: PhotoAdjustments.RemoveArea? = nil) {
+        removePanel.showPending(pending)
+        switch pending {
+        case .ready(let area)?: removeOverlay.pendingArea = area
+        case .detecting?: removeOverlay.pendingArea = marked
+        case nil: removeOverlay.pendingArea = nil
+        }
+        removeOverlay.isDetecting = pending == .detecting
+        if pending != nil { selectRemoveSpot(nil) }
+    }
+
+    /// Detect Objects: the object the stroke went round, found in the background, waits for Remove.
+    private func detectObject(_ stroke: PhotoAdjustments.BrushStroke) {
+        guard let source else { return }
+        let marked = PhotoAdjustments.RemoveArea(brush: PhotoAdjustments.BrushMask(strokes: [stroke]))
+        setPendingRemove(.detecting, marked: marked)
+        var geometry = PhotoAdjustments()
+        geometry.lens = adjustments.lens
+        geometry.orientation = adjustments.orientation
+        geometry.transform = adjustments.transform
+        let url = source.url, isSmartPreview = source.isSmartPreview, photo = displayedPhotoID
+        detectionTask?.cancel()
+        detectionTask = Task { [weak self] in
+            let matte = await Self.detectObject(stroke: stroke, url: url, isSmartPreview: isSmartPreview, geometry: geometry)
+            guard let self, !Task.isCancelled, displayedPhotoID == photo, removePanel.pending == .detecting else { return }
+            detectionTask = nil
+            setPendingRemove(.ready(matte.map { PhotoAdjustments.RemoveArea(object: $0) } ?? marked))
+        }
+    }
+
+    @concurrent
+    nonisolated private static func detectObject(
+        stroke: PhotoAdjustments.BrushStroke, url: URL, isSmartPreview: Bool, geometry: PhotoAdjustments
+    ) async -> PhotoAdjustments.ObjectMatte? {
+        guard let source = isSmartPreview ? DevelopSource(smartPreview: url) : DevelopSource(url: url) else { return nil }
+        return ObjectDetector.detect(stroke: stroke, source: source, geometry: geometry)
+    }
+
+    /// Remove (or Return): removes the area waiting; `false` when there isn't one.
+    @discardableResult
+    func commitPendingRemove() -> Bool {
+        guard state.developTool == .remove, let pending = removePanel.pending else { return false }
+        guard case .ready(let area) = pending else { return true }
+        setPendingRemove(nil)
+        addRemoveSpot(area)
+        return true
+    }
+
+    /// Cancel (or Esc): forgets the area waiting; `false` when there isn't one.
+    @discardableResult
+    func cancelPendingRemove() -> Bool {
+        guard removePanel.pending != nil else { return false }
+        detectionTask?.cancel()
+        detectionTask = nil
+        setPendingRemove(nil)
+        return true
+    }
+
+    private func deleteSelectedRemoveSpot() -> Bool {
+        guard let id = removeSelectedID, adjustments.spots.contains(where: { $0.id == id }) else { return false }
+        selectRemoveSpot(nil)
+        retouchChanged(adjustments.spots.filter { $0.id != id }, adjustments.redEyes, isFinal: true, actionName: "Delete Spot")
+        return true
+    }
+
+    /// The Remove panel and overlay (for tests).
+    var removePanelForTesting: RemovePanelViewController { removePanel }
+    var removeOverlayForTesting: RemoveOverlayView { removeOverlay }
 
     // MARK: - Loupe
 
@@ -1463,6 +1700,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         // The masks and spots too, or their panels would show (and their next edit put back) what was undone.
         showMasks()
         showRetouch()
+        showRemove()
         metalView.needsDisplay = true
     }
 
@@ -1501,6 +1739,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         endPresetPreview()
         displayedPhotoID = id
         historyCursor = nil
+        _ = cancelPendingRemove()
+        removeSelectedID = nil
         source = nil
         loupeSource = nil
         placeholder = store.thumbnails.cachedImage(for: photo.id).map { CIImage(cgImage: $0) }
@@ -1572,6 +1812,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             rimLightPanel.isEditingEnabled = true
             refreshRimLightStatus()
             if state.developTool == .adjust { loadLensContext() }
+            if state.developTool == .remove { showRemove() }
             metalView.needsDisplay = true
 
             // The loupe's full-resolution decoder isn't needed to show the photo; load it after.
@@ -1723,7 +1964,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             let cropping = state.developTool == .crop
             // Masks and spots are placed on the whole frame, but shown on the photo as cropped (RAW-202): their
             // overlays map through the crop and its straightening.
-            let masking = state.developTool == .mask || state.developTool == .retouch
+            let masking = [.mask, .remove, .retouch].contains(state.developTool)
             // A preset under the pointer in the Presets panel is previewed.
             let shownAdjustments = presetPreview ?? adjustments
             // A cropped photo renders at the size it's shown; the crop tool shows the whole frame.
@@ -1907,6 +2148,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
                         let frame = PreviewFrame.cropped(shown: shown, crop: shownAdjustments.crop, frameSize: source.frameSize(adjustments))
                         maskOverlay.previewFrame = frame
                         retouchOverlay.previewFrame = frame
+                        removeOverlay.previewFrame = frame
                         lastFrameScale = previewScale
                     }
                     newGeometry = PreviewGeometry(

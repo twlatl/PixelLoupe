@@ -26,6 +26,8 @@ enum DevelopTool {
     case rimLight
     case crop
     case mask
+    /// Remove, Heal and Clone painted or detected (RAW-260).
+    case remove
     case retouch
     case history
 }

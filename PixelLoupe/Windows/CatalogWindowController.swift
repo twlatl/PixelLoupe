@@ -289,6 +289,11 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
                 break
             }
         }
+        // In Remove, an area waiting to be removed: Return removes it, Esc cancels.
+        if state.mode == .develop, state.developTool == .remove {
+            if command == .toggleEnlarge, develop.commitPendingRemove() { return true }
+            if command == .exit, develop.cancelPendingRemove() { return true }
+        }
         switch command {
         case .cropTool:
             if state.mode != .develop {
@@ -386,7 +391,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
             rootViewController.main.toggleSidebars()
             updateInspectorButton()
         case .removePhoto:
-            // In Spot Removal, Delete removes the selected spot instead of the photo.
+            // In Remove and Spot Removal, Delete removes the selected spot instead of the photo.
             if state.mode == .develop, develop.deleteSelectedSpot() { return true }
             guard !removeTargets.isEmpty else { return false }
             removePhoto(nil)
@@ -400,6 +405,14 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
                 state.developTool = .mask
             } else {
                 state.developTool = state.developTool == .mask ? .adjust : .mask
+            }
+        case .removeTool:
+            if state.mode != .develop {
+                guard !selection.isEmpty else { return false }
+                switchTo(.develop)
+                state.developTool = .remove
+            } else {
+                state.developTool = state.developTool == .remove ? .adjust : .remove
             }
         case .spotRemovalTool:
             if state.mode != .develop {
@@ -432,7 +445,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
             // The same key again goes back to the edited photo. Crop, Masking and Spot Removal show the
             // photo their own way, so they close (as in Lightroom).
             guard state.mode == .develop, !selection.isEmpty else { return false }
-            if [.crop, .mask, .retouch].contains(state.developTool) { state.developTool = .adjust }
+            if [.crop, .mask, .remove, .retouch].contains(state.developTool) { state.developTool = .adjust }
             state.beforeAfter = state.beforeAfter == view ? nil : view
         case .whiteBalanceTool:
             guard state.mode == .develop, state.developTool == .adjust else { return false }
@@ -572,6 +585,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
     }
 
     @objc func maskingTool(_ sender: Any?) { _ = perform(.maskingTool) }
+    @objc func removeTool(_ sender: Any?) { _ = perform(.removeTool) }
     @objc func spotRemovalTool(_ sender: Any?) { _ = perform(.spotRemovalTool) }
     @objc func addLinearMask(_ sender: Any?) { _ = perform(.linearMask) }
     @objc func addRadialMask(_ sender: Any?) { _ = perform(.radialMask) }
@@ -1223,6 +1237,10 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         case #selector(maskingTool(_:)):
             let typing = (window?.firstResponder as? NSText)?.isEditable ?? false
             (item as? NSMenuItem)?.state = state.mode == .develop && state.developTool == .mask ? .on : .off
+            return !typing && (state.mode == .develop || !state.selectedPhotoIDs.isEmpty)
+        case #selector(removeTool(_:)):
+            let typing = (window?.firstResponder as? NSText)?.isEditable ?? false
+            (item as? NSMenuItem)?.state = state.mode == .develop && state.developTool == .remove ? .on : .off
             return !typing && (state.mode == .develop || !state.selectedPhotoIDs.isEmpty)
         case #selector(spotRemovalTool(_:)):
             let typing = (window?.firstResponder as? NSText)?.isEditable ?? false

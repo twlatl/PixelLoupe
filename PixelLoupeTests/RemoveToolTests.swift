@@ -1,0 +1,162 @@
+import AppKit
+import Foundation
+import Testing
+@testable import PixelLoupe
+
+/// The Remove tool in Develop (RAW-260): Q opens it, painting removes, Detect Objects waits for Remove, and the
+/// spots are the same ones Spot Removal (now ⇧Q) shows.
+@MainActor
+@Suite("Remove tool (RAW-260)", .serialized)
+struct RemoveToolTests {
+    @Test("Q is Remove and ⇧Q Spot Removal, as in Lightroom")
+    func keys() {
+        func event(_ characters: String, shift: Bool) -> NSEvent {
+            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: shift ? .shift : [], timestamp: 0, windowNumber: 0, context: nil,
+                             characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: 12)!
+        }
+        #expect(KeyCommand(event: event("q", shift: false)) == .removeTool)
+        #expect(KeyCommand(event: event("Q", shift: true)) == .spotRemovalTool)
+    }
+
+    /// A catalog window in Develop showing one 600 × 400 photo, with the Remove tool open.
+    private func openRemove(_ directory: TemporaryDirectory) async throws -> (CatalogWindowController, DevelopViewController, Photo) {
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "C.pixelloupe"))
+        let photo = Photo(context: store.viewContext)
+        photo.id = UUID()
+        photo.fileName = "IMG.jpg"
+        let url = directory.url.appending(path: photo.fileName)
+        try Fixtures.writeJPEG(to: url, width: 600, height: 400)
+        photo.filePath = url.path(percentEncoded: false)
+        photo.fileType = "JPG"
+        photo.pixelWidth = 600
+        photo.pixelHeight = 400
+        photo.orientation = 1
+        photo.captureDate = Date()
+        photo.importDate = Date()
+        photo.editDate = Date()
+        try store.viewContext.save()
+
+        let controller = CatalogWindowController(store: store)
+        controller.showWindow(nil)
+        controller.state.selectedPhotoIDs = [try #require(controller.state.photoOrder.first)]
+        controller.state.mode = .develop
+        #expect(controller.perform(.removeTool))
+        #expect(controller.state.developTool == .remove)
+        let develop = controller.rootViewController.main.develop
+        let start = Date()
+        while !develop.hasDrawnPhoto, Date().timeIntervalSince(start) < 30 { try await Task.sleep(for: .milliseconds(50)) }
+        return (controller, develop, photo)
+    }
+
+    private func stroke(_ points: [(Double, Double)], size: Double = 0.03) -> PhotoAdjustments.BrushStroke {
+        PhotoAdjustments.BrushStroke(points: points.map { .init(x: $0.0, y: $0.1) }, size: size, feather: 0.1, flow: 1, density: 1)
+    }
+
+    @Test("Painting with Detect Objects off removes at once; the spot can be refilled, turned into a heal, and deleted")
+    func paintRemovesAtOnce() async throws {
+        let directory = try TemporaryDirectory()
+        let (controller, develop, photo) = try await openRemove(directory)
+        defer { controller.close() }
+        let panel = develop.removePanelForTesting, overlay = develop.removeOverlayForTesting
+        #expect(!overlay.isHidden && !panel.view.isHidden)
+        let detects = panel.detectsObjects
+        defer { Defaults.store.set(detects, forKey: "RemoveDetectsObjects") }
+        Defaults.store.set(false, forKey: "RemoveDetectsObjects")
+        let fresh = RemovePanelViewController()
+        #expect(!fresh.detectsObjects)
+
+        // Detect Objects is off in this panel only once its checkbox says so.
+        let checkbox = try #require(panel.view.descendants.first { $0.accessibilityIdentifier() == "removeDetectObjects" } as? NSButton)
+        if checkbox.state == .on { checkbox.performClick(nil) }
+        panel.setMode(.remove)
+        overlay.mode = .remove
+        overlay.onStroke?(stroke([(0.3, 0.5), (0.4, 0.5)]))
+        var spots = photo.adjustments.spots
+        #expect(spots.count == 1)
+        let spot = try #require(spots.first)
+        #expect(spot.kind == .remove && spot.area != nil && spot.seed != 0 && spot.isFilled)
+        #expect(abs(spot.center.x - 0.35) < 0.01, "its pin is at the middle of the area")
+        #expect(overlay.selectedID == spot.id && !panel.cardForTesting.isHidden, "selected, with its Selected card")
+        #expect(DevelopHistory.steps(for: photo).last?.name == "Remove")
+
+        // Refresh picks another fill.
+        let refresh = try #require(panel.view.descendants.first { $0.accessibilityIdentifier() == "removeRefresh" } as? NSButton)
+        refresh.performClick(nil)
+        spots = photo.adjustments.spots
+        #expect(spots[0].seed != spot.seed && spots[0].area == spot.area)
+
+        // Fill ▸ Heal copies from beside it instead.
+        let fill = try #require(panel.view.descendants.first { $0.accessibilityIdentifier() == "removeFill" } as? NSPopUpButton)
+        fill.selectItem(at: 1)
+        fill.sendAction(fill.action, to: fill.target)
+        spots = photo.adjustments.spots
+        #expect(spots[0].kind == .heal && !spots[0].isFilled)
+        #expect(abs(spots[0].source.x - spots[0].center.x) > 0.01, "it has somewhere to copy from")
+
+        // Spot Removal shows the same spot; Delete removes it in Remove.
+        #expect(controller.perform(.removePhoto))
+        #expect(photo.adjustments.spots.isEmpty)
+    }
+
+    @Test("With Detect Objects on, a stroke waits for Remove (or Esc) and can be added to")
+    func detectWaitsForRemove() async throws {
+        let directory = try TemporaryDirectory()
+        let (controller, develop, photo) = try await openRemove(directory)
+        defer { controller.close() }
+        let panel = develop.removePanelForTesting, overlay = develop.removeOverlayForTesting
+        let checkbox = try #require(panel.view.descendants.first { $0.accessibilityIdentifier() == "removeDetectObjects" } as? NSButton)
+        let detects = panel.detectsObjects
+        defer { Defaults.store.set(detects, forKey: "RemoveDetectsObjects") }
+        if checkbox.state == .off { checkbox.performClick(nil) }
+        panel.setMode(.remove)
+
+        // A loop around the middle of the photo.
+        let loop = (0..<16).map { i -> (Double, Double) in
+            let angle = Double(i) / 15 * 2 * .pi
+            return (0.5 + 0.1 * cos(angle), 0.5 + 0.15 * sin(angle))
+        }
+        overlay.onStroke?(stroke(loop, size: 0.01))
+        #expect(panel.pending == .detecting && overlay.isDetecting)
+        let start = Date()
+        while panel.pending == .detecting, Date().timeIntervalSince(start) < 20 { try await Task.sleep(for: .milliseconds(50)) }
+        guard case .ready(let area)? = panel.pending else {
+            Issue.record("the stroke's area is waiting")
+            return
+        }
+        #expect(!area.isEmpty && photo.adjustments.spots.isEmpty, "nothing removed yet")
+        #expect(overlay.pendingArea == area)
+
+        // Painting adds to it.
+        overlay.onStroke?(stroke([(0.8, 0.8)]))
+        guard case .ready(let grown)? = panel.pending else { Issue.record("still waiting"); return }
+        #expect(grown.brush.strokes.count == area.brush.strokes.count + 1)
+
+        // Esc cancels; a new one, then Return removes it.
+        #expect(controller.perform(.exit))
+        #expect(panel.pending == nil && overlay.pendingArea == nil && photo.adjustments.spots.isEmpty)
+        #expect(!controller.perform(.exit) || controller.state.developTool == .remove, "Esc with nothing waiting does what it did")
+        overlay.onStroke?(stroke(loop, size: 0.01))
+        while panel.pending == .detecting, Date().timeIntervalSince(start) < 40 { try await Task.sleep(for: .milliseconds(50)) }
+        #expect(controller.perform(.toggleEnlarge))
+        #expect(panel.pending == nil)
+        #expect(photo.adjustments.spots.count == 1 && photo.adjustments.spots[0].kind == .remove)
+    }
+
+    @Test("In Heal and Clone a click places a round spot the brush's size")
+    func clickPlacesACircle() async throws {
+        let directory = try TemporaryDirectory()
+        let (controller, develop, photo) = try await openRemove(directory)
+        defer { controller.close() }
+        let panel = develop.removePanelForTesting, overlay = develop.removeOverlayForTesting
+        let mode = panel.mode
+        defer { panel.setMode(mode) }
+        panel.setMode(.clone)
+        overlay.onPlace?(.init(x: 0.25, y: 0.25))
+        let spot = try #require(photo.adjustments.spots.first)
+        #expect(spot.kind == .clone && spot.area == nil && abs(spot.radius - panel.brushSize) < 1e-9)
+        #expect(spot.source != spot.center)
+        // ⇧Q opens Spot Removal on the same spots.
+        #expect(controller.perform(.spotRemovalTool))
+        #expect(controller.state.developTool == .retouch)
+    }
+}

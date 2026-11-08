@@ -27,7 +27,8 @@ enum KeyCommand: Equatable {
     case showClipping           // J (Develop)
     case whiteBalanceTool       // W (Develop's White Balance Selector)
     case maskingTool            // ⇧W (Develop's Masking)
-    case spotRemovalTool        // Q (Develop's Spot Removal)
+    case removeTool             // Q (Develop's Remove, as in Lightroom)
+    case spotRemovalTool        // ⇧Q (Develop's Spot Removal)
     case linearMask             // M
     case radialMask             // ⇧M
     case brushMask              // K
@@ -43,7 +44,7 @@ enum KeyCommand: Equatable {
         let modifiers = event.modifierFlags
             .intersection(.deviceIndependentFlagsMask)
             .subtracting([.numericPad, .function, .capsLock])
-        // The few shifted commands: Move to Top of Stack, Lightroom's Masking (⇧W), Radial Gradient (⇧M),
+        // The few shifted commands: Move to Top of Stack, Lightroom's Masking (⇧W), Spot Removal (⇧Q), Radial Gradient (⇧M),
         // brush feather (⇧[ ⇧]) and Before/After Split Screen (⇧Y), and the secondary window's views (⇧G, ⇧E,
         // ⇧C, ⇧N).
         if modifiers == .shift {
@@ -52,6 +53,7 @@ enum KeyCommand: Equatable {
             case "}", "]": self = .brushFeather(1)
             case "s": self = .moveToTopOfStack
             case "w": self = .maskingTool
+            case "q": self = .spotRemovalTool
             case "m": self = .radialMask
             case "g": self = .secondaryView(.grid)
             case "e": self = .secondaryView(.loupe)
@@ -107,7 +109,7 @@ enum KeyCommand: Equatable {
         case "w": self = .whiteBalanceTool
         case "m": self = .linearMask
         case "k": self = .brushMask
-        case "q": self = .spotRemovalTool
+        case "q": self = .removeTool
         case "o": self = .maskOverlay
         case "y": self = .beforeAfter(.leftRight)
         case "\\": self = .beforeAfter(.beforeOnly)
