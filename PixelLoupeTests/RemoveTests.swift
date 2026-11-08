@@ -104,6 +104,29 @@ struct RemoveTests {
         #expect(PatchInpainter.fill(input, hole: hole, seed: 7).pixels == filled.pixels, "deterministic")
     }
 
+    @Test("Patch fill keeps a busy texture busy, rather than smoothing the hole into an average")
+    func patchFillKeepsTexture() {
+        // Seeded noise blobs (like rocks), with a smooth sky band on top to tempt it.
+        let width = 96, height = 96
+        var rng = SeededGenerator(seed: 11)
+        var pixels = [Float](repeating: 0, count: width * height * 3)
+        for y in 0..<height { for x in 0..<width {
+            let v: Float = y >= 80 ? 0.6 : Float(rng.next() % 1000) / 1000 * 0.8 + 0.1
+            for c in 0..<3 { pixels[(y * width + x) * 3 + c] = v }
+        } }
+        var hole = [Bool](repeating: false, count: width * height)
+        for y in 30..<60 { for x in 35..<55 { hole[y * width + x] = true; for c in 0..<3 { pixels[(y * width + x) * 3 + c] = 0 } } }
+        let filled = PatchInpainter.fill(PatchInpainter.Image(width: width, height: height, pixels: pixels), hole: hole, seed: 5)
+        func spread(_ indices: [Int]) -> Float {
+            let values = indices.map { filled.pixels[$0 * 3] }
+            let mean = values.reduce(0, +) / Float(values.count)
+            return (values.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Float(values.count)).squareRoot()
+        }
+        let inside = hole.indices.filter { hole[$0] }
+        let around = (0..<(width * 70)).filter { !hole[$0] }
+        #expect(spread(inside) > spread(around) * 0.5, "textured: \(spread(inside)) vs \(spread(around)) around it")
+    }
+
     // MARK: Fills
 
     @Test("A Remove spot is filled from around it, kept on disk, and refilled for another seed")
