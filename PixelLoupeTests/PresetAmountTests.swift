@@ -69,7 +69,7 @@ struct PresetAmountDevelopTests {
         controller.showWindow(nil)
         controller.state.selectedPhotoIDs = [photo.objectID]
         controller.state.mode = .develop
-        controller.state.developTool = .presets
+        controller.state.developTool = .adjust
         let develop = controller.rootViewController.main.develop
         let start = Date()
         while !develop.canAutoLight, Date().timeIntervalSince(start) < 60 { try? await Task.sleep(for: .seconds(0.1)) }

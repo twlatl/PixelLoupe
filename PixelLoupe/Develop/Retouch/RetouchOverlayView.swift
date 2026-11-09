@@ -99,7 +99,8 @@ final class RetouchOverlayView: NSView {
     private func handles() -> [(id: UUID, point: CGPoint, vertical: Bool)] {
         [selectedID, hoveredID].compactMap { $0 }.reduce(into: [UUID]()) { if !$0.contains($1) { $0.append($1) } }
             .flatMap { id -> [(id: UUID, point: CGPoint, vertical: Bool)] in
-                guard let (center, radius) = outlineCircle(id) else { return [] }
+                // A painted spot (Remove's) is moved here, not resized.
+                guard spots.first(where: { $0.id == id })?.area == nil, let (center, radius) = outlineCircle(id) else { return [] }
                 return [
                     (id, CGPoint(x: center.x, y: center.y + radius), true), (id, CGPoint(x: center.x + radius, y: center.y), false),
                     (id, CGPoint(x: center.x, y: center.y - radius), true), (id, CGPoint(x: center.x - radius, y: center.y), false),
@@ -122,7 +123,7 @@ final class RetouchOverlayView: NSView {
         for spot in spots.reversed() {
             let radius = max(spot.radius * longEdge, 4) + 3
             if hypot(point.x - viewPoint(spot.center).x, point.y - viewPoint(spot.center).y) <= radius { return .spot(spot) }
-            if hypot(point.x - viewPoint(spot.source).x, point.y - viewPoint(spot.source).y) <= radius { return .source(spot) }
+            if !spot.isFilled, hypot(point.x - viewPoint(spot.source).x, point.y - viewPoint(spot.source).y) <= radius { return .source(spot) }
         }
         for eye in redEyes.reversed() {
             if hypot(point.x - viewPoint(eye.center).x, point.y - viewPoint(eye.center).y) <= max(eye.radius * longEdge, 4) * Self.eyeOutline + 3 {
@@ -144,13 +145,14 @@ final class RetouchOverlayView: NSView {
             let center = viewPoint(spot.center), source = viewPoint(spot.source)
             let radius = max(spot.radius * longEdge, 4)
             // The arrow from the source to the spot.
-            if selected {
+            if selected, !spot.isFilled {
                 let line = NSBezierPath()
                 line.move(to: source)
                 line.line(to: center)
                 outline(line, selected: true, dashed: true)
             }
-            outline(NSBezierPath(ovalIn: circle(source, radius)), selected: selected, dashed: true)
+            // A filled spot (Remove's) has no source.
+            if !spot.isFilled { outline(NSBezierPath(ovalIn: circle(source, radius)), selected: selected, dashed: true) }
             outline(NSBezierPath(ovalIn: circle(center, radius)), selected: selected, dashed: false)
         }
         for eye in redEyes {
@@ -302,7 +304,14 @@ final class RetouchOverlayView: NSView {
         switch drag {
         case .spot(let id, let start, let original):
             guard let index = newSpots.firstIndex(where: { $0.id == id }) else { return }
-            newSpots[index].center = shifted(original.center, from: start).clamped01
+            let center = shifted(original.center, from: start).clamped01
+            if original.area != nil {
+                // Moving a painted spot moves what was painted, and its source with it.
+                newSpots[index] = original
+                newSpots[index].move(by: center.x - original.center.x, center.y - original.center.y)
+            } else {
+                newSpots[index].center = center
+            }
         case .source(let id, let start, let original):
             guard let index = newSpots.firstIndex(where: { $0.id == id }) else { return }
             newSpots[index].source = shifted(original.source, from: start)

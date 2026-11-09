@@ -30,8 +30,9 @@ final class AdjustmentSectionView: NSView {
         }
     }
 
+    /// `hasToggle`: whether it has an on/off circle (a section holding another panel, such as Presets, doesn't).
     /// `formerTitle`: what the section was called before a rename, so it stays open or closed as it was.
-    init(title: String, symbolName: String, hasAuto: Bool = false, expandedByDefault: Bool = false, scope: String = "",
+    init(title: String, symbolName: String, hasAuto: Bool = false, hasToggle: Bool = true, expandedByDefault: Bool = false, scope: String = "",
          formerTitle: String? = nil) {
         self.title = title
         self.scope = scope
@@ -81,6 +82,7 @@ final class AdjustmentSectionView: NSView {
         toggleButton.target = self
         toggleButton.action = #selector(toggle(_:))
         toggleButton.setAccessibilityIdentifier("toggle.\(title)")
+        toggleButton.isHidden = !hasToggle
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)

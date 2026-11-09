@@ -128,6 +128,7 @@ import AppKit
     @objc optional func showClipping(_ sender: Any?)
     @objc optional func whiteBalanceSelector(_ sender: Any?)
     @objc optional func maskingTool(_ sender: Any?)
+    @objc optional func removeTool(_ sender: Any?)
     @objc optional func spotRemovalTool(_ sender: Any?)
     @objc optional func addLinearMask(_ sender: Any?)
     @objc optional func addRadialMask(_ sender: Any?)
@@ -397,7 +398,9 @@ enum MainMenu {
         menu.addItem(item("White Balance Selector", #selector(PixelLoupeActions.whiteBalanceSelector(_:)), "w", modifiers: []))
         // Lightroom's masking keys: ⇧W opens Masking, M and ⇧M add a linear or radial gradient, K a brush, O shows the overlay.
         menu.addItem(item("Masking", #selector(PixelLoupeActions.maskingTool(_:)), "w", modifiers: [.shift]))
-        menu.addItem(item("Spot Removal", #selector(PixelLoupeActions.spotRemovalTool(_:)), "q", modifiers: []))
+        // Q is Lightroom's Remove; Spot Removal moves to ⇧Q (RAW-260).
+        menu.addItem(item("Remove", #selector(PixelLoupeActions.removeTool(_:)), "q", modifiers: []))
+        menu.addItem(item("Spot Removal", #selector(PixelLoupeActions.spotRemovalTool(_:)), "q", modifiers: [.shift]))
         menu.addItem(item("Linear Gradient Mask", #selector(PixelLoupeActions.addLinearMask(_:)), "m", modifiers: []))
         menu.addItem(item("Radial Gradient Mask", #selector(PixelLoupeActions.addRadialMask(_:)), "m", modifiers: [.shift]))
         menu.addItem(item("Brush Mask", #selector(PixelLoupeActions.addBrushMask(_:)), "k", modifiers: []))

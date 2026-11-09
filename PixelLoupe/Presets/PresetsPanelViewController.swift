@@ -73,9 +73,13 @@ final class PresetsPanelViewController: NSViewController, NSOutlineViewDataSourc
     private(set) var hoveredPreset: DevelopPreset?
     private var hoverTask: Task<Void, Never>?
 
-    init(library: PresetLibrary = .shared, defaults: UserDefaults = Defaults.store) {
+    /// Shown in a section of the Adjust panel (RAW-260): no heading or insets of its own, and a list of fixed height.
+    let isEmbedded: Bool
+
+    init(library: PresetLibrary = .shared, defaults: UserDefaults = Defaults.store, embedded: Bool = false) {
         self.library = library
         self.defaults = defaults
+        self.isEmbedded = embedded
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -104,7 +108,8 @@ final class PresetsPanelViewController: NSViewController, NSOutlineViewDataSourc
         createButton.target = self
         createButton.action = #selector(showCreatePreset(_:))
         createButton.setAccessibilityIdentifier("createPresetButton")
-        let header = NSStackView(views: [heading, NSView(), createButton, importButton])
+        // Embedded, the section's title names the panel.
+        let header = NSStackView(views: isEmbedded ? [NSView(), createButton, importButton] : [heading, NSView(), createButton, importButton])
 
         searchField.placeholderString = "Search presets"
         searchField.controlSize = .small
@@ -194,12 +199,17 @@ final class PresetsPanelViewController: NSViewController, NSOutlineViewDataSourc
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 14, right: 14)
+        stack.edgeInsets = isEmbedded ? NSEdgeInsets() : NSEdgeInsets(top: 12, left: 14, bottom: 14, right: 14)
+        let inset = stack.edgeInsets.left + stack.edgeInsets.right
         for view in [header, searchField, emptyView, scroll, amountRow] {
-            view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -28).isActive = true
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -inset).isActive = true
         }
-        scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
-        scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
+        if isEmbedded {
+            scroll.heightAnchor.constraint(equalToConstant: 220).isActive = true
+        } else {
+            scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
+            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
+        }
         stack.setAccessibilityIdentifier("presetsPanel")
         view = stack
     }

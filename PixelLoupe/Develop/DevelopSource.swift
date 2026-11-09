@@ -45,6 +45,8 @@ nonisolated final class DevelopSource {
     private var redEyeFilters: (scale: CGFloat, filters: [CIFilter])?
     /// Where Subject and Background masks find the photo's subject.
     var subjectMattes = SubjectMatteStore.shared
+    /// Where Remove spots' fills are made and kept (RAW-260).
+    var removeFills = RemoveFillStore.shared
     /// Where Portrait Lighting's Studio and Contour find the photo's faces.
     var faces = FaceStore.shared
 
@@ -199,14 +201,20 @@ nonisolated final class DevelopSource {
         let shadowsReference = adjustments.usesGainShadows
             ? self.shadowsReference(exposure: adjustments.light.isEnabled ? adjustments.light.exposure : 0)
             : ColorLUT.Transform.defaultShadowsReference
+        return AdjustmentPipeline.apply(adjustments, to: frameImage(with: adjustments, scale: scale), source: self, scale: scale,
+                                        geometry: geometry, shadowsReference: shadowsReference)
+    }
+
+    /// The whole frame spots and masks are placed on: decoded with `adjustments`' RAW settings, then Lens
+    /// Corrections, Rotate/Flip and Transform, before the shared pipeline.
+    func frameImage(with adjustments: PhotoAdjustments, scale: CGFloat) -> CIImage {
         let corrected = LensCorrector.apply(
             adjustments.lens, to: baseImage(with: adjustments, scale: scale),
             builtInApplied: isBuiltInLensProfileApplied(adjustments)
         )
         let oriented = Self.orient(corrected, adjustments.orientation)
         // Perspective correction works on the photo as shown, so after orientation and before the crop.
-        let base = TransformRenderer.apply(adjustments.transform, to: oriented)
-        return AdjustmentPipeline.apply(adjustments, to: base, source: self, scale: scale, geometry: geometry, shadowsReference: shadowsReference)
+        return TransformRenderer.apply(adjustments.transform, to: oriented)
     }
 
     /// The photo's bright end at `exposure` (stops), for per-pixel Shadows (RAW-231): the 95th
@@ -330,7 +338,12 @@ nonisolated enum AdjustmentPipeline {
         guard !extent.isEmpty, !extent.isInfinite else { return base }
         // An Adobe profile's own settings render with it, out of sight of the sliders.
         let adjustments = AdobeProfileLook.withProfileSettings(adjustments)
-        var image = RetouchRenderer.apply(spots: adjustments.spots, redEyes: adjustments.redEyes, to: base)
+        // Remove spots' fills: rendering off the main thread waits for them, Develop's preview draws without
+        // them until they're made (ADR 0004).
+        let waiting = !Thread.isMainThread
+        var image = RetouchRenderer.apply(spots: adjustments.spots, redEyes: adjustments.redEyes, to: base) { index in
+            source.removeFills.fill(for: source, adjustments: adjustments, spotIndex: index, waiting: waiting)
+        }
 
         if adjustments.redEye.isActive {
             for filter in source.redEyeCorrections(for: base, scale: scale) {

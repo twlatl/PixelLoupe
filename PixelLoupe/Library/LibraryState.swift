@@ -24,11 +24,10 @@ enum DevelopTool {
     case adjust
     /// Lighting effects (RAW-212): Rim Light's colored lights behind the subject (RAW-203).
     case lighting
-    /// Lightroom presets (RAW-13).
-    case presets
     case crop
-    case lens
     case mask
+    /// Remove, Heal and Clone painted or detected (RAW-260).
+    case remove
     case retouch
     case history
 }

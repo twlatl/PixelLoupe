@@ -124,8 +124,11 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `[` / `]` | Decrease / increase rating (each photo one star down or up); with a brush mask selected in Masking, a smaller / larger brush |
 | `⇧[` / `⇧]` | With a brush mask selected in Masking: a harder / softer brush (Feather) |
 | Two-finger swipe up / down (or scroll wheel) | While the brush is active in Masking (a brush, Subject or Background mask): a larger / smaller brush; with `⇧` held, softer / harder |
-| `Space` (held) | While the brush is active in Masking: the pointer becomes a hand, and dragging moves the zoomed photo around (instead of Toggle Zoom) |
+| `Space` (held) | While the brush is active in Masking, or in Remove with the photo zoomed: the pointer becomes a hand, and dragging moves the zoomed photo around (instead of Toggle Zoom; in Remove a tap still toggles it). Zoomed in Masking without a brush, dragging off the gradients' handles moves the photo too |
 | `M` / `⇧M` / `K` | Develop Masking: add a linear gradient / radial gradient / brush mask (`O` shows the selected mask in red) |
+| `Q` | Develop Remove: paint to remove, heal or clone (with Detect Objects, Return removes the area found and Esc cancels; Delete removes the selected spot) |
+| `⇧Q` | Develop Spot Removal: click heal and clone spots, and red eyes |
+| `⌥`-drag | In Remove, while a detected area waits for Remove: paint with the opposite of the Selected card's Add / Subtract (the brush shows a minus while it takes away) |
 | `P` / `U` / `X` | Flagged / Unflagged / Rejected |
 | `6` / `7` / `8` / `9` | Color label red / yellow / green / blue; press the same key again to clear it (purple has no key, as in Lightroom: Photo ▸ Set Color Label) |
 | Shift-click | Select every photo between the last one clicked and this one (grid and filmstrip); `⌘⇧`-click adds the range |
@@ -206,8 +209,8 @@ In the enlarged Library view and in Develop, a click on the photo switches betwe
 centered where you clicked. The pointer is a magnifying glass while the photo fits and a hand while it's zoomed; drag
 to move around. Zooming in and out animates, in the view and in the Navigator. Click or drag in the Navigator's
 preview to jump there. `Z` or `Space` does the same as a click. The zoom carries
-over from photo to photo and between Library and Develop. In Develop, click-to-zoom works with the Adjust, Lens
-Corrections and History tools (Crop, Masking and Spot Removal use clicks themselves; the Navigator still zooms there,
+over from photo to photo and between Library and Develop. In Develop, click-to-zoom works with the Adjust, Rim
+Light and History tools (Crop, Masking and Spot Removal use clicks themselves; the Navigator still zooms there,
 except Crop, which always shows the whole photo). Zoomed in with Spot Removal, the pointer is a hand too: drag off the spots
 to move around, and click to place one. Zoomed views render only the part on screen, at full resolution.
 
@@ -667,9 +670,30 @@ a few hundred bytes of compressed JSON with only the sections that differ from t
 **Import develop history and snapshots** (off by default): steps and snapshots come across with their dates and names, as
 compressed Lightroom settings that are converted the first time the photo's History is shown.
 
+## Remove (Develop)
+
+The **Remove** tool (**Q**, the eraser in the Develop sidebar) takes things out of a photo, as Lightroom's does. Pick a mode:
+
+- **Remove** fills what you paint with new pixels made to fit around it. With **Detect objects** on, paint roughly
+  around something (or over it): the object is found and shown in red, waiting. Paint more with **Add**, take some
+  away with **Subtract** (or hold Option to paint the other way), then click **Remove** (or press Return); Esc cancels. With it off, what you paint is removed
+  as soon as you let go. **Use generative AI** fills with an on-device model, downloaded the first time it's turned
+  on; until it's there, spots are filled from the photo's own patches.
+- **Heal** and **Clone** copy from beside the spot (Heal matching the colors around it): click for a round spot the
+  brush's size, or paint one. Feather softens the edge.
+
+The selected spot's card has **Fill** (switch it between Remove, Heal and Clone), **Opacity**, and **Refresh** for
+another fill. ⌘-drag on the photo gives a Remove spot a source of its own to copy from. Drag a spot's pin to move it,
+scroll to resize the brush, and press Delete (or the trash on the card) to delete the selected spot. **Tool Overlay**
+chooses when the pins show. Remove and Spot Removal edit the same spots.
+
+A fill is made once from the spot's area and a seed and kept in the app's caches, never in the catalog (see
+`docs/adr/0004-remove-fill-seed-cache.md`); a render waits for it off screen, and the Develop preview draws it when it's
+ready. Changing White Balance or Exposure doesn't fill again: the fill takes on the colors around it.
+
 ## Spot removal and red eye (Develop)
 
-The **Spot Removal** tool (**Q**) removes blemishes: pick Heal or Clone, then click the photo. A circle marks the spot and a
+The **Spot Removal** tool (**⇧Q**) removes blemishes: pick Heal or Clone, then click the photo. A circle marks the spot and a
 dashed one its source (chosen beside it); drag either, and use the sliders for Size, Feather and Opacity. To resize a spot,
 drag one of the four handles on the circle under the pointer or the selected one, or scroll. A new spot takes the size of
 the last one you resized, as it looked on screen, so zoomed in it covers less of the photo. Heal
@@ -731,7 +755,7 @@ the photo is reported.
 
 ## Presets (Develop)
 
-The Presets tool (second icon in Develop's right panel) lists Lightroom presets by group, searchable by name.
+The Presets section (in Develop's Adjust panel, below Profile) lists Lightroom presets by group, searchable by name.
 Double-click a preset (or select it and click **Apply**) to apply it to the photo: only the settings the preset holds
 change, as in Lightroom, and it's one undoable step in the photo's History, named after the preset. **Copy** puts the
 preset on the settings clipboard; **Photo ▸ Paste Settings** (`⇧⌘V`) then applies it to every selected photo, in
@@ -817,7 +841,7 @@ overlap), with the ISO, focal length, aperture and shutter speed underneath.
 
 ## Lens Corrections (Develop)
 
-The camera icon at the top of Develop's right sidebar shows Lens Corrections, with Lightroom's two tabs.
+Lens Corrections is the last section of Develop's Adjust panel, with Lightroom's two tabs.
 
 - **Profile:**
   - **Remove Chromatic Aberration** uses the lens profile's data, or measures the photo's lateral color fringing.
@@ -885,7 +909,7 @@ is back at its defaults.
 - **Split Screen** (`⇧Y`): one photo with a line down the middle, the before left of it and the edited photo right of it.
 
 Press the same key again (or choose the checked item) to go back to the edited photo. The view stays as you move from
-photo to photo. Crop & Straighten, Masking and Spot Removal show the photo their own way: opening one ends
+photo to photo. Crop & Straighten, Masking, Remove and Spot Removal show the photo their own way: opening one ends
 Before/After, and choosing a Before/After view closes it. The histogram always shows the edited photo.
 
 ## Export

@@ -152,6 +152,26 @@ struct CropInMaskingTests {
         #expect(placed.count == 1 && deselected == 1)
     }
 
+    @Test("Zoomed in Masking, a drag off the gradients' handles moves the photo, with a hand")
+    func zoomedMaskingPans() {
+        let overlay = MaskOverlayView()
+        let (window, frame) = setUp(overlay)
+        overlay.previewFrame = frame
+        var panned = CGVector.zero
+        overlay.onPan = { panned = CGVector(dx: panned.dx + $0.dx, dy: panned.dy + $0.dy) }
+        let start = CGPoint(x: 200, y: 200), end = CGPoint(x: 230, y: 190)
+        // At fit, nothing moves.
+        overlay.mouseDown(with: event(.leftMouseDown, at: start, in: window))
+        overlay.mouseDragged(with: event(.leftMouseDragged, at: end, in: window))
+        overlay.mouseUp(with: event(.leftMouseUp, at: end, in: window))
+        #expect(panned == .zero)
+        overlay.isZoomed = { true }
+        overlay.mouseDown(with: event(.leftMouseDown, at: start, in: window))
+        overlay.mouseDragged(with: event(.leftMouseDragged, at: end, in: window))
+        overlay.mouseUp(with: event(.leftMouseUp, at: end, in: window))
+        #expect(abs(panned.dx - 30) < 0.5 && abs(panned.dy + 10) < 0.5)
+    }
+
     @Test("Dragging a spot on a straightened crop moves it with the pointer")
     func dragSpotThroughTheAngle() {
         let overlay = RetouchOverlayView()

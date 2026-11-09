@@ -6,12 +6,23 @@ import CoreImage.CIFilterBuiltins
 /// Both work inside a box around each spot, so a photo with a few spots costs a few small renders
 /// whatever its size.
 nonisolated enum RetouchRenderer {
-    static func apply(spots: [PhotoAdjustments.Spot], redEyes: [PhotoAdjustments.RedEyeSpot], to image: CIImage) -> CIImage {
+    /// `fill` gives a Remove spot's fill by its index in `spots` (``RemoveFillStore``); a spot without one yet is
+    /// left as it is.
+    static func apply(
+        spots: [PhotoAdjustments.Spot], redEyes: [PhotoAdjustments.RedEyeSpot], to image: CIImage,
+        fill: (Int) -> RemoveFillStore.Fill? = { _ in nil }
+    ) -> CIImage {
         guard !spots.isEmpty || !redEyes.isEmpty else { return image }
         let extent = image.extent
         guard !extent.isEmpty, !extent.isInfinite else { return image }
         var result = image
-        for spot in spots { result = apply(spot, to: result) }
+        for (index, spot) in spots.enumerated() {
+            if spot.isFilled {
+                if let made = fill(index) { result = apply(made, opacity: spot.opacity, to: result) }
+            } else {
+                result = apply(spot, to: result)
+            }
+        }
         for eye in redEyes { result = apply(eye, to: result) }
         return result.cropped(to: extent)
     }
@@ -39,9 +50,14 @@ nonisolated enum RetouchRenderer {
         let radius = CGFloat(spot.radius) * longEdge
         guard radius >= 1, spot.opacity > 0 else { return image }
         let center = pixelPoint(spot.center, in: extent), source = pixelPoint(spot.source, in: extent)
-        // The box the spot changes, with room for the heal's blur.
+        // The box the spot changes, with room for the heal's blur: around the circle, or what was painted.
         let margin = radius * 1.6
-        let box = CGRect(x: center.x - margin, y: center.y - margin, width: margin * 2, height: margin * 2).intersection(extent)
+        var box = CGRect(x: center.x - margin, y: center.y - margin, width: margin * 2, height: margin * 2)
+        if let area = spot.area, let painted = area.bounds(aspect: Double(extent.width / max(extent.height, 1))) {
+            box = CGRect(x: extent.minX + painted.minX * extent.width, y: extent.minY + painted.minY * extent.height,
+                         width: painted.width * extent.width, height: painted.height * extent.height).insetBy(dx: -radius * 0.3, dy: -radius * 0.3)
+        }
+        box = box.integral.intersection(extent)
         guard !box.isEmpty else { return image }
 
         // The source moved onto the spot; beyond the photo's edge it repeats the edge pixels.
@@ -75,7 +91,7 @@ nonisolated enum RetouchRenderer {
             patch = patch.applyingFilter("CIMultiplyCompositing", parameters: [kCIInputBackgroundImageKey: ratio]).cropped(to: box)
         }
 
-        var mask = disc(center: center, radius: radius, feather: spot.feather, in: box)
+        var mask = spot.area.map { areaMask($0, box: box, extent: extent) } ?? disc(center: center, radius: radius, feather: spot.feather, in: box)
         if spot.opacity < 1 {
             let opacity = CGFloat(spot.opacity.clamped(to: 0...1))
             mask = mask.applyingFilter("CIColorMatrix", parameters: [
@@ -89,6 +105,63 @@ nonisolated enum RetouchRenderer {
         blend.maskImage = mask
         guard let blended = blend.outputImage else { return image }
         return blended.cropped(to: box).composited(over: image)
+    }
+
+    /// A painted area's coverage over `box` (pixels of `extent`), at most about 2048 pixels across.
+    static func areaMask(_ area: PhotoAdjustments.RemoveArea, box: CGRect, extent: CGRect) -> CIImage {
+        let unitBox = CGRect(x: (box.minX - extent.minX) / extent.width, y: (box.minY - extent.minY) / extent.height,
+                             width: box.width / extent.width, height: box.height / extent.height)
+        let shrink = min(1, 2048 / max(box.width, box.height, 1))
+        let width = max(1, Int((box.width * shrink).rounded())), height = max(1, Int((box.height * shrink).rounded()))
+        let coverage = RemoveAreaRaster.coverage(of: area, box: unitBox, frameSize: extent.size, width: width, height: height)
+        return RemoveAreaRaster.image(coverage, width: width, height: height, extent: box).cropped(to: box)
+    }
+
+    // MARK: Remove
+
+    /// A Remove spot's fill over `image`: scaled to its box, its colors scaled by how the ring around the hole
+    /// differs here from the neutral frame it was made on (White Balance, Exposure), and blended with its soft
+    /// edge (ADR 0004).
+    static func apply(_ fill: RemoveFillStore.Fill, opacity: Double, to image: CIImage) -> CIImage {
+        let extent = image.extent
+        guard opacity > 0, fill.width > 0, fill.height > 0 else { return image }
+        let box = CGRect(x: extent.minX + fill.box.minX * extent.width, y: extent.minY + fill.box.minY * extent.height,
+                         width: fill.box.width * extent.width, height: fill.box.height * extent.height)
+        let clipped = box.intersection(extent)
+        guard !clipped.isEmpty else { return image }
+        let place = CGAffineTransform(translationX: box.minX, y: box.minY)
+            .scaledBy(x: box.width / CGFloat(fill.width), y: box.height / CGFloat(fill.height))
+        let patch = fill.patchImage.samplingLinear().transformed(by: place).cropped(to: clipped)
+        let ring = fill.ringImage.samplingLinear().transformed(by: place).cropped(to: clipped)
+        var mask = fill.maskImage.samplingLinear().transformed(by: place).cropped(to: clipped)
+
+        // The ring's average here: the average of (image × ring) over the box, over the share the ring covers.
+        let ringed = image.cropped(to: clipped).applyingFilter("CIMultiplyCompositing", parameters: [kCIInputBackgroundImageKey: ring])
+        let average = ringed.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: clipped)])
+        let mean = fill.ringMean, share = CGFloat(max(fill.ringFraction, 1e-4))
+        func gain(_ channel: Float) -> CGFloat { channel > 1e-5 ? 1 / (share * CGFloat(channel)) : 0 }
+        let ratio = average.clampedToExtent().applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: gain(mean.x), y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: gain(mean.y), z: 0, w: 0),
+            "inputBVector": CIVector(x: 0, y: 0, z: gain(mean.z), w: 0), "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+            "inputBiasVector": CIVector(x: mean.x > 1e-5 ? 0 : 1, y: mean.y > 1e-5 ? 0 : 1, z: mean.z > 1e-5 ? 0 : 1, w: 1),
+        ]).applyingFilter("CIColorClamp", parameters: [
+            "inputMinComponents": CIVector(x: 0.25, y: 0.25, z: 0.25, w: 1), "inputMaxComponents": CIVector(x: 4, y: 4, z: 4, w: 1),
+        ])
+        let matched = patch.applyingFilter("CIMultiplyCompositing", parameters: [kCIInputBackgroundImageKey: ratio]).cropped(to: clipped)
+
+        if opacity < 1 {
+            let o = CGFloat(opacity.clamped(to: 0...1))
+            mask = mask.applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: o, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: o, y: 0, z: 0, w: 0),
+                "inputBVector": CIVector(x: o, y: 0, z: 0, w: 0), "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+            ])
+        }
+        let blend = CIFilter.blendWithMask()
+        blend.inputImage = matched
+        blend.backgroundImage = image.cropped(to: clipped)
+        blend.maskImage = mask
+        guard let blended = blend.outputImage else { return image }
+        return blended.cropped(to: clipped).composited(over: image)
     }
 
     // MARK: Red eye

@@ -60,6 +60,8 @@ final class AdjustmentsPanelViewController: NSViewController {
     var onSharpenMaskPreview: ((Bool) -> Void)?
 
     private let stack = NSStackView()
+    /// The other panels' views in embedded sections (``addEmbeddedSection(_:symbol:content:atTop:)``).
+    private var embeddedContent: [NSView] = []
     private let resetAllButton = NSButton(title: "Revert to Original", target: nil, action: nil)
     private var refreshers: [() -> Void] = []
     private var sectionStates: [() -> Void] = []
@@ -192,12 +194,33 @@ final class AdjustmentsPanelViewController: NSViewController {
 
     private func setControlsEnabled(_ enabled: Bool, in view: NSView) {
         for subview in view.subviews {
+            // Presets and Lens Corrections enable their own controls.
+            if embeddedContent.contains(where: { $0 === subview }) { continue }
             if let control = subview as? NSControl { control.isEnabled = enabled }
             setControlsEnabled(enabled, in: subview)
         }
     }
 
     // MARK: - Building
+
+    /// Adds a section holding another panel's view: Presets near the top (below Profile), Lens Corrections at the
+    /// bottom (RAW-260).
+    @discardableResult
+    func addEmbeddedSection(_ title: String, symbol: String, content: NSView, atTop: Bool) -> AdjustmentSectionView {
+        loadViewIfNeeded()
+        let section = AdjustmentSectionView(title: title, symbolName: symbol, hasToggle: false, scope: scopeName)
+        if atTop {
+            // Below the header (title and Revert to Original) and the Profile section, the panel's first.
+            let profile = stack.arrangedSubviews.firstIndex { ($0 as? AdjustmentSectionView)?.title == "Profile" }
+            stack.insertArrangedSubview(section, at: profile.map { $0 + 1 } ?? (scope == .mask ? 0 : 1))
+        } else {
+            stack.addArrangedSubview(section)
+        }
+        section.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -(stack.edgeInsets.left + stack.edgeInsets.right)).isActive = true
+        section.addControl(content)
+        embeddedContent.append(content)
+        return section
+    }
 
     /// Adds a section whose on/off switch is `enabled` and whose defaults are `defaultValue`.
     private func addSection<Section: Equatable>(
