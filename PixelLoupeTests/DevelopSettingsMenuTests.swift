@@ -47,6 +47,8 @@ struct DevelopSettingsMenuTests {
         a.calibration.redHue = 0.2
         a.rimLight.isEnabled = true
         a.rimLight.lights = [.init()]
+        a.portraitLighting.isEnabled = true
+        a.portraitLighting.effect = .stage
         a.masks = [.init(components: [.init(shape: .radial(.init(center: .init(x: 0.5, y: 0.5), radiusX: 0.2, radiusY: 0.2)))])]
         a.spots = [.init()]
         a.redEyes = [.init()]

@@ -11,6 +11,19 @@ final class CropOverlayView: NSView {
     var imageSize = CGSize(width: 1, height: 1)
     var crop = PhotoAdjustments.Crop() { didSet { needsDisplay = true } }
     var toolOverlay = CropPanelViewController.ToolOverlay.auto { didSet { needsDisplay = true } }
+    var guideOverlay = CropGuideOverlay.default { didSet { needsDisplay = true } }
+    /// The guide's ⇧O orientation (see ``CropGuideOverlay/orientationCount``).
+    var guideOrientation = 0 { didSet { needsDisplay = true } }
+    /// The Grid guide's cells across the long side (⌥-scroll).
+    var gridCells = CropGuideOverlay.defaultGridCells { didSet { needsDisplay = true } }
+    /// Called when ⌥-scroll changes the grid's density.
+    var onGridCellsChange: (Int) -> Void = { _ in }
+    private var gridScroll: Double = 0
+    /// The ratios the Aspect Ratios guide outlines.
+    var aspectRatios = Set(CropGuideOverlay.AspectRatio.allCases) { didSet { needsDisplay = true } }
+    /// The guide's name, shown briefly after O changes it.
+    private(set) var flashedName: String?
+    private var flashGeneration = 0
     var isStraightening = false {
         didSet { window?.invalidateCursorRects(for: self) }
     }
@@ -91,18 +104,21 @@ final class CropOverlayView: NSView {
         NSColor.black.withAlphaComponent(0.55).setFill()
         shade.fill()
 
-        let isDragging = drag != nil
-        if toolOverlay == .always || (toolOverlay == .auto && isDragging) {
-            let grid = NSBezierPath()
-            for fraction in [1.0 / 3, 2.0 / 3] {
-                grid.move(to: CGPoint(x: rect.minX + rect.width * fraction, y: rect.minY))
-                grid.line(to: CGPoint(x: rect.minX + rect.width * fraction, y: rect.maxY))
-                grid.move(to: CGPoint(x: rect.minX, y: rect.minY + rect.height * fraction))
-                grid.line(to: CGPoint(x: rect.maxX, y: rect.minY + rect.height * fraction))
+        if showsGuide {
+            let guide = NSBezierPath()
+            for segment in guideOverlay.segments(in: rect, orientation: guideOrientation, gridCells: gridCells) {
+                guide.move(to: segment.start)
+                guide.line(to: segment.end)
             }
-            grid.lineWidth = 0.5
-            NSColor.white.withAlphaComponent(0.6).setStroke()
-            grid.stroke()
+            for curve in guideOverlay.curves(in: rect, orientation: guideOrientation) {
+                guard let first = curve.first else { continue }
+                guide.move(to: first)
+                for point in curve.dropFirst() { guide.line(to: point) }
+            }
+            let boxes = guideOverlay == .aspectRatios ? CropGuideOverlay.aspectBoxes(in: rect, showing: aspectRatios) : []
+            for box in boxes { guide.append(NSBezierPath(rect: box.rect)) }
+            strokeGuide(guide)
+            drawAspectLabels(boxes, in: rect)
         }
 
         let border = NSBezierPath(rect: rect.insetBy(dx: 0.5, dy: 0.5))
@@ -144,7 +160,111 @@ final class CropOverlayView: NSView {
                 NSBezierPath(ovalIn: CGRect(x: p.x - 3, y: p.y - 3, width: 6, height: 6)).fill()
             }
         }
+
+        if let flashedName { drawName(flashedName, in: rect) }
     }
+
+    /// Strokes guide lines like Lightroom's: 2 pixels of white with 2 pixels of half-black on each side,
+    /// so they stand out on light and dark photos alike.
+    private func strokeGuide(_ path: NSBezierPath) {
+        let pixel = 1 / max(window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1, 1)
+        path.lineJoinStyle = .round
+        path.lineWidth = 6 * pixel
+        NSColor.black.withAlphaComponent(0.5).setStroke()
+        path.stroke()
+        path.lineWidth = 2 * pixel
+        NSColor.white.setStroke()
+        path.stroke()
+    }
+
+    /// Whether the guide shows: always, never, or (Auto) while dragging and just after O changes it.
+    var showsGuide: Bool {
+        switch toolOverlay {
+        case .always: true
+        case .never: false
+        case .auto: drag != nil || flashedName != nil
+        }
+    }
+
+    /// Shows the guide's name (or other text) for a second, centred near the top of the crop.
+    func flashGuideName(_ text: String? = nil) {
+        flashGeneration += 1
+        let generation = flashGeneration
+        let text = text ?? guideOverlay.title
+        flashedName = text
+        setAccessibilityValue(text)
+        needsDisplay = true
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard let self, flashGeneration == generation else { return }
+            flashedName = nil
+            needsDisplay = true
+        }
+    }
+
+    /// Labels each box on one of its inner edges, stepped so neighbouring labels don't overlap, like
+    /// Lightroom's.
+    private func drawAspectLabels(_ boxes: [CropGuideOverlay.AspectBox], in rect: CGRect) {
+        let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
+        for (index, box) in boxes.enumerated() {
+            let text = NSAttributedString(string: box.aspect.title, attributes: [.font: font, .foregroundColor: NSColor.white])
+            let size = text.size()
+            let step = CGFloat(index) * (size.height + 10)
+            // Narrower than the crop: on the box's left side; shorter: on its top.
+            let origin = box.rect.width < rect.width - 1
+                ? CGPoint(x: box.rect.minX - size.width / 2, y: rect.maxY - 28 - size.height - step)
+                : CGPoint(x: rect.minX + 28 + step * 3, y: box.rect.maxY - size.height / 2)
+            let badge = CGRect(origin: origin, size: size).insetBy(dx: -4, dy: -2)
+            NSColor.black.withAlphaComponent(0.6).setFill()
+            NSBezierPath(roundedRect: badge, xRadius: 3, yRadius: 3).fill()
+            text.draw(at: origin)
+        }
+    }
+
+    private func drawName(_ name: String, in rect: CGRect) {
+        let text = NSAttributedString(string: name, attributes: [
+            .font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .medium),
+            .foregroundColor: NSColor.white,
+        ])
+        let size = text.size()
+        let badge = CGRect(x: rect.midX - size.width / 2 - 10, y: rect.maxY - size.height - 20,
+                           width: size.width + 20, height: size.height + 8)
+        NSColor.black.withAlphaComponent(0.6).setFill()
+        NSBezierPath(roundedRect: badge, xRadius: badge.height / 2, yRadius: badge.height / 2).fill()
+        text.draw(at: CGPoint(x: badge.minX + 10, y: badge.minY + 4))
+    }
+
+    // MARK: - Scrolling
+
+    /// ⌥ and two fingers up or down: a finer or coarser Grid guide, as in Lightroom. Anything else
+    /// scrolls as usual.
+    override func scrollWheel(with event: NSEvent) {
+        guard event.modifierFlags.contains(.option), guideOverlay == .grid, showsGuideForScrolling else {
+            super.scrollWheel(with: event)
+            return
+        }
+        if event.phase == .began { gridScroll = 0 }
+        var vertical = Double(event.scrollingDeltaY)
+        // ⌥ doesn't turn a wheel sideways, but ⇧ might be held too.
+        if vertical == 0 { vertical = Double(event.scrollingDeltaX) }
+        // Lines from a wheel, points from a trackpad.
+        if !event.hasPreciseScrollingDeltas { vertical *= Self.scrollPointsPerCell }
+        // Fingers moving up, whichever way the system scrolls.
+        gridScroll += event.isDirectionInvertedFromDevice ? -vertical : vertical
+        let steps = Int((gridScroll / Self.scrollPointsPerCell).rounded(.towardZero))
+        guard steps != 0 else { return }
+        gridScroll -= Double(steps) * Self.scrollPointsPerCell
+        let cells = (gridCells + steps).clamped(to: CropGuideOverlay.gridCellRange)
+        guard cells != gridCells else { return }
+        gridCells = cells
+        onGridCellsChange(cells)
+        flashGuideName("Grid: \(cells) across")
+    }
+
+    private static let scrollPointsPerCell = 8.0
+
+    /// The Grid guide changes size only when it can be seen (or would be, with Auto).
+    private var showsGuideForScrolling: Bool { toolOverlay != .never }
 
     // MARK: - Cursors
 

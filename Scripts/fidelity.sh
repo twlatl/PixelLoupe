@@ -18,7 +18,7 @@ report="${2:-$fixtures/report.html}"
 TEST_RUNNER_PIXELLOUPE_FIDELITY_DIR="$fixtures" \
 TEST_RUNNER_PIXELLOUPE_FIDELITY_REPORT="$report" \
   xcodebuild test -project PixelLoupe.xcodeproj -scheme PixelLoupe -destination 'platform=macOS' \
-  -only-testing:PixelLoupeTests/FidelityTests/lightroomExports
+  "-only-testing:PixelLoupeTests/FidelityTests/lightroomExports()"
 
 echo "Report: $report"
 open "$report"

@@ -31,12 +31,6 @@ float2 panoramaWarp(float3 r0, float3 r1, float3 r2, float4 camera, float4 pano,
     return float2(camera.y + offset.x, camera.w - (camera.z + offset.y));
 }
 
-/// One level of the blend: adds a photo's band of detail (its level minus the next level up,
-/// enlarged) where its mask (red) chooses it.
-float4 panoramaAddBand(sample_t total, sample_t level, sample_t coarser, sample_t mask) {
-    return total + (level - coarser) * mask.r;
-}
-
 /// The coarsest level of the blend: adds a photo's level where its mask chooses it.
 float4 panoramaAddLevel(sample_t total, sample_t level, sample_t mask) {
     return total + level * mask.r;
@@ -59,6 +53,38 @@ float4 panoramaFinish(sample_t blended, sample_t coverage, float3 fill) {
     return float4(mix(fill, color, covered), 1.0);
 }
 
+/// Halves a level of the blend pyramid: each pixel is the 6 × 6 of the finer level's around it, weighted
+/// 1 5 10 10 5 1 / 32 each way (a blur of about a pixel, then the 2 × 2 averaged). Pairs of taps are read as one
+/// bilinear sample between them, so it's 9 reads. The kernel places its own taps, so it draws the same in any graph
+/// (Core Image's blur and scaling transform didn't: the blend changed with what was drawn after it).
+float4 panoramaHalve(sampler image, destination dest) {
+    float2 center = dest.coord() * 2.0;
+    const float offsets[3] = { -5.0 / 3.0, 0.0, 5.0 / 3.0 };
+    const float weights[3] = { 6.0, 20.0, 6.0 };
+    float4 sum = float4(0.0);
+    for (int j = 0; j < 3; j++) {
+        for (int i = 0; i < 3; i++) {
+            sum += weights[i] * weights[j] * image.sample(image.transform(center + float2(offsets[i], offsets[j])));
+        }
+    }
+    return sum / 1024.0;
+}
+
+/// One level of the blend: adds a photo's band of detail (its level minus the next level up, enlarged here, bilinear
+/// at each pixel's center, rather than by a transform, which Core Image drew differently in different graphs) where
+/// its mask (red) chooses it.
+float4 panoramaAddBandUp(sampler total, sampler level, sampler coarser, sampler mask, destination dest) {
+    float2 p = dest.coord();
+    float4 detail = level.sample(level.transform(p)) - coarser.sample(coarser.transform(p * 0.5));
+    return total.sample(total.transform(p)) + detail * mask.sample(mask.transform(p)).r;
+}
+
+/// Collapsing the blend: a band plus the level above it enlarged (bilinear at each pixel's center).
+float4 panoramaAddUp(sampler coarser, sampler band, destination dest) {
+    float2 p = dest.coord();
+    return coarser.sample(coarser.transform(p * 0.5)) + band.sample(band.transform(p));
+}
+
 /// Boundary Warp: each pixel takes the panorama's pixel the warp's map (red, green: fractions of the
 /// panorama from its top left; blue: 1 where the map says anything) gives. `size` is (panorama
 /// width, height, map width, map height).
@@ -69,6 +95,42 @@ float4 panoramaBoundaryWarp(sampler panorama, sampler map, float4 size, destinat
     if (entry.b < 0.5) { return float4(0.0); }
     float2 source = float2(entry.r * size.x, size.y - entry.g * size.y);
     return panorama.sample(panorama.transform(source));
+}
+
+/// Fill Edges' fill laid under the panorama: the blended photos (premultiplied; or opaque color) where they cover (red),
+/// the fill where they don't, mixed across partial coverage. Fully covered pixels are as panoramaFinish draws them.
+float4 panoramaFillMix(sample_t blended, sample_t coverage, sample_t fill) {
+    // As panoramaFinish, with the fill in place of white: the photos' own color where they partly cover, not one
+    // already mixed with white (which left a light line along their edges).
+    float3 color = blended.a > 1e-4 ? max(blended.rgb / blended.a, float3(0.0)) : fill.rgb;
+    float covered = clamp(coverage.r, 0.0, 1.0);
+    return float4(mix(fill.rgb, color, covered), 1.0);
+}
+
+/// Fill Edges at any resolution (see PanoramaFill.Field): each pixel takes what the matches of the solved pixels
+/// around it copy there from `color`, offsets scaled to `color`'s resolution, weighted by how well they match and
+/// how near they are. `field` holds each solved pixel's match: the copied patch's center (in solved pixels, from the
+/// bottom left), its weight, and 1 where there is one. `scale` is (output pixels per solved pixel in x and y, the
+/// field's width and height); `origin` is the output's origin.
+float4 panoramaFillReconstruct(sampler color, sampler field, float4 scale, float2 origin, destination dest) {
+    float2 local = (dest.coord() - origin) / scale.xy;
+    float2 base = floor(local);
+    float3 sum = float3(0.0);
+    float total = 0.0;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            float2 center = base + float2(dx, dy) + 0.5;
+            if (center.x < 0.0 || center.y < 0.0 || center.x > scale.z || center.y > scale.w) { continue; }
+            float4 entry = field.sample(field.transform(center));
+            if (entry.a < 0.5) { continue; }
+            float2 offset = local - center;
+            float w = entry.b * exp(-dot(offset, offset) / 0.72);
+            float2 source = dest.coord() + (entry.rg - center) * scale.xy;
+            sum += w * color.sample(color.transform(source)).rgb;
+            total += w;
+        }
+    }
+    return float4(total > 0.0 ? sum / total : float3(0.0), 1.0);
 }
 
 }

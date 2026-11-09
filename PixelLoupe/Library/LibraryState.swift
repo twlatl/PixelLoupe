@@ -22,8 +22,8 @@ enum AppMode: Int, CaseIterable {
 
 enum DevelopTool {
     case adjust
-    /// Colored lights behind the subject (RAW-203).
-    case rimLight
+    /// Lighting effects (RAW-212): Rim Light's colored lights behind the subject (RAW-203).
+    case lighting
     case crop
     case mask
     /// Remove, Heal and Clone painted or detected (RAW-260).
@@ -92,9 +92,25 @@ final class LibraryState {
         didSet { if filter != oldValue { notify(.filter) } }
     }
 
-    /// Selected photos in grid order.
+    /// Selected photos in grid order, except that the active photo (the first) stays first when the grid re-fetches.
+    /// Setting it changes what the source remembers (see ``showSelection(_:)``).
     var selectedPhotoIDs: [NSManagedObjectID] = [] {
-        didSet { if selectedPhotoIDs != oldValue { notify(.selection) } }
+        didSet {
+            if !isShowingSelection { selectionMemory?.remember(selectedPhotoIDs, for: filter.scope) }
+            if selectedPhotoIDs != oldValue { notify(.selection) }
+        }
+    }
+
+    /// Remembers each source's selection (RAW-259); nil in windows that don't (a secondary window's grid).
+    var selectionMemory: SelectionMemory?
+    private var isShowingSelection = false
+
+    /// Selects the part of the source's selection the grid can show (a filter or a collapsed stack hides the rest),
+    /// leaving what the source remembers as it was, so the rest comes back when it's shown again.
+    func showSelection(_ ids: [NSManagedObjectID]) {
+        isShowingSelection = true
+        defer { isShowingSelection = false }
+        selectedPhotoIDs = ids
     }
 
     var thumbnailSize: Double {
@@ -277,6 +293,22 @@ final class LibraryState {
     /// Library ▸ Previews ▸ Build Smart Previews' progress, shown like import's when nothing else is.
     var smartPreviewStatus: ImportStatus? {
         didSet { if smartPreviewStatus != oldValue { notify(.importStatus) } }
+    }
+
+    /// Duplicate Detection's progress hashing originals (RAW-292), shown under the grid when nothing else is.
+    var duplicateStatus: ImportStatus? {
+        didSet { if duplicateStatus != oldValue { notify(.importStatus) } }
+    }
+
+    /// Progress of building Standard previews (RAW-84), shown under the grid.
+    var standardPreviewStatus: ImportStatus? {
+        didSet { if standardPreviewStatus != oldValue { notify(.importStatus) } }
+    }
+
+    /// Progress of drawing missing thumbnails in the background (see ``ThumbnailMaintenance``), shown under the grid
+    /// when nothing else is.
+    var thumbnailStatus: ImportStatus? {
+        didSet { if thumbnailStatus != oldValue { notify(.importStatus) } }
     }
 
     /// The editor Edit In is preparing photos for, for the progress label.

@@ -10,10 +10,30 @@ nonisolated struct PanoramaMergeOptions: Codable, Equatable, Sendable {
     /// 0…100: how far the panorama's edge is bent to fill the rectangle (see ``PanoramaBoundaryWarp``).
     var boundaryWarp = 0
     var autoCrop = false
+    /// Fills where the photos don't reach with content-aware fill (``PanoramaFill``), so nothing has to be
+    /// cropped away. Turns Auto Crop off while on, as in Lightroom.
+    var fillEdges = false
     var autoSettings = true
     var createsStack = false
 
+    /// Whether the merge is cropped to the rectangle the photos cover: Auto Crop, unless Fill Edges fills it.
+    var cropsToCovered: Bool { autoCrop && !fillEdges }
+
     private static let defaultsKey = "PanoramaMergeOptions"
+
+    init() {}
+
+    /// Settings saved before an option existed load with that option's default.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = PanoramaMergeOptions()
+        projection = try container.decodeIfPresent(PanoramaProjection.self, forKey: .projection) ?? defaults.projection
+        boundaryWarp = try container.decodeIfPresent(Int.self, forKey: .boundaryWarp) ?? defaults.boundaryWarp
+        autoCrop = try container.decodeIfPresent(Bool.self, forKey: .autoCrop) ?? defaults.autoCrop
+        fillEdges = try container.decodeIfPresent(Bool.self, forKey: .fillEdges) ?? defaults.fillEdges
+        autoSettings = try container.decodeIfPresent(Bool.self, forKey: .autoSettings) ?? defaults.autoSettings
+        createsStack = try container.decodeIfPresent(Bool.self, forKey: .createsStack) ?? defaults.createsStack
+    }
 
     static func load(from defaults: UserDefaults = Defaults.store) -> PanoramaMergeOptions {
         guard let data = defaults.data(forKey: defaultsKey),
@@ -34,14 +54,16 @@ nonisolated struct PanoramaCoverage: Sendable {
 }
 
 nonisolated struct PanoramaMergeResult: Sendable {
-    /// The panorama, scene-linear at the photos' average exposure, white where the photos don't reach.
+    /// The panorama, scene-linear at the photos' average exposure, white where the photos don't reach (or filled,
+    /// with Fill Edges).
     var image: LinearDNGImage
-    /// Auto Crop's crop (Develop's unit rectangle, origin bottom left), or nil with Auto Crop off.
+    /// Auto Crop's crop (Develop's unit rectangle, origin bottom left), or nil with Auto Crop off (or Fill Edges on).
     var crop: CGRect?
     /// The largest rectangle the photos cover entirely (unit, origin bottom left): what Auto Settings
     /// measures, and Auto Crop's crop.
     var coveredRect: CGRect
-    /// Where the photos cover the result, for the merge sheet's preview (nil at full resolution).
+    /// Where the photos cover the result, for the merge sheet's preview (nil at full resolution, and with Fill Edges,
+    /// which covers it all).
     var coverage: PanoramaCoverage?
 }
 
@@ -56,7 +78,8 @@ nonisolated enum PanoramaMergeError: LocalizedError, Equatable {
     }
 }
 
-/// Merges overlapping photos into a panorama, as Lightroom's Photo Merge ▸ Panorama.
+/// Merges overlapping photos into a panorama, as Lightroom's Photo Merge ▸ Panorama (or, for HDR Panorama,
+/// overlapping bracket sets, each merged by ``HDRMerger`` and treated as one photo; see ``init(brackets:)``).
 ///
 /// Each photo is decoded linearly by the RAW engine with the reference photo's white balance (the
 /// earliest photo's, whose settings and metadata the panorama takes), its lens profile applied, and
@@ -72,12 +95,24 @@ nonisolated enum PanoramaMergeError: LocalizedError, Equatable {
 /// Not thread-safe: use one instance per task.
 nonisolated final class PanoramaMerger {
     struct Frame {
+        /// The photo, or a bracket set's reference (middle) exposure.
         let source: PhotoMergeSource
         fileprivate let filter: CIRAWFilter
+        /// A bracket set's exposures, merged into one HDR frame (HDR Panorama), or nil for a single photo.
+        fileprivate let bracket: HDRMerger?
         fileprivate let lens: LensSetup
         /// How much the photo's values are scaled to match the photos' average exposure (from
         /// shutter speed, aperture and ISO).
         let exposureGain: Double
+    }
+
+    private final class OpenedBrackets: @unchecked Sendable {
+        private let lock = NSLock()
+        private(set) var results: [Result<HDRMerger, Error>?]
+
+        init(count: Int) { results = Array(repeating: nil, count: count) }
+
+        func store(_ result: Result<HDRMerger, Error>, at index: Int) { lock.withLock { results[index] = result } }
     }
 
     /// The photos decoded side by side (each with its own RAW filter), and what each produced.
@@ -144,9 +179,52 @@ nonisolated final class PanoramaMerger {
     private var analyses: [PanoramaProjection: Analysis] = [:]
     private var warps: [PanoramaProjection: PanoramaBoundaryWarp] = [:]
     private var warpMaps: [WarpKey: WarpMap] = [:]
+    private var fills: [FillKey: PanoramaFill.Solution] = [:]
+    /// The full-resolution panorama Fill Edges last copied from (see ``filled(_:analysis:warp:options:scale:canvas:drawn:)``).
+    private var panoramaCopies: [CopyKey: (rect: CGRect, image: CIImage)] = [:]
 
-    init(sources: [PhotoMergeSource]) throws {
+    private struct CopyKey: Hashable {
+        var fill: FillKey
+        var scale: CGFloat
+    }
+    /// The largest scale merged from the small copies (normally just above their own); tests lower it, so small
+    /// synthetic photos take the full-resolution path.
+    var largestSnapshotScale: CGFloat?
+    /// Bracket sets merged into memory-mapped files at a large scale (see ``materialized(_:scale:)``), by frame and scale.
+    private var materializedBrackets: [MaterializedKey: CIImage] = [:]
+    private let scratch = FileManager.default.temporaryDirectory
+        .appending(path: "PixelLoupe-HDRPanorama-\(UUID().uuidString)", directoryHint: .isDirectory)
+
+    private struct MaterializedKey: Hashable {
+        var index: Int
+        var scale: CGFloat
+    }
+
+    deinit {
+        try? FileManager.default.removeItem(at: scratch)
+    }
+
+    convenience init(sources: [PhotoMergeSource]) throws {
         if let problem = PhotoMergeSource.problem(merging: sources) { throw problem }
+        try self.init(frames: sources, brackets: Array(repeating: nil, count: sources.count))
+    }
+
+    /// HDR Panorama: each bracket set (``HDRBrackets``) is one frame, its exposures merged by ``HDRMerger``
+    /// (Auto Align, no deghosting or tone mapping) as Core Image needs them, at the scale each render needs.
+    /// The set's reference exposure stands for it: its exposure, lens and metadata. The merged sets keep
+    /// their brightness, and the panorama is stored scaled to its own peak, so they all match.
+    convenience init(brackets: [[PhotoMergeSource]]) throws {
+        if let problem = PhotoMergeSource.problem(merging: brackets.flatMap { $0 }) { throw problem }
+        // Opened side by side: reading each set's files is most of it.
+        let opened = OpenedBrackets(count: brackets.count)
+        DispatchQueue.concurrentPerform(iterations: brackets.count) { index in
+            opened.store(Result { try HDRMerger(sources: brackets[index]) }, at: index)
+        }
+        let mergers = try opened.results.map { try ($0 ?? .failure(PhotoMergeError.tooFewPhotos)).get() }
+        try self.init(frames: mergers.map(\.reference), brackets: mergers)
+    }
+
+    private init(frames sources: [PhotoMergeSource], brackets: [HDRMerger?]) throws {
         var filters: [CIRAWFilter] = []
         var size: CGSize?
         for source in sources {
@@ -175,7 +253,7 @@ nonisolated final class PanoramaMerger {
         let shooting = sources.map { ShootingInfo.read(from: $0.url) }
         frames = sources.indices.map { index in
             let gain = averageExposure.flatMap { average in exposure(sources[index]).map { average / $0 } } ?? 1
-            return Frame(source: sources[index], filter: filters[index],
+            return Frame(source: sources[index], filter: filters[index], bracket: brackets[index],
                          lens: Self.lensSetup(for: sources[index], filter: filters[index], shooting: shooting[index]),
                          exposureGain: gain)
         }
@@ -191,6 +269,12 @@ nonisolated final class PanoramaMerger {
         let neutral = neutral, context = context
         DispatchQueue.concurrentPerform(iterations: frames.count) { index in
             let frame = job.frames[index]
+            // A bracket set's exposures decoded side by side, once, for its alignment and this copy.
+            if let bracket = frame.bracket {
+                Self.configure(bracket, for: frame, neutral: neutral)
+                bracket.prepare(scale: scale)
+            }
+            defer { frame.bracket?.forgetPrepared() }
             let image = Self.decoded(frame, scale: scale, neutral: neutral)
             let extent = CGRect(origin: .zero, size: image.extent.integral.size)
             let rowBytes = Int(extent.width) * 8
@@ -270,9 +354,16 @@ nonisolated final class PanoramaMerger {
         return equivalent / hypot(36, 24) * hypot(Double(size.width), Double(size.height))
     }
 
-    /// The photo decoded linearly at `scale` with the reference's white balance, its lens profile
-    /// applied, origin at zero.
+    /// The photo (or bracket set, merged) decoded linearly at `scale` with the reference's white balance,
+    /// its lens profile applied, origin at zero.
     fileprivate static func decoded(_ frame: Frame, scale: CGFloat, neutral: (temperature: Float, tint: Float)) -> CIImage {
+        if let bracket = frame.bracket {
+            configure(bracket, for: frame, neutral: neutral)
+            var image = bracket.radiance(scale: scale)
+            if case .profile(let lens) = frame.lens { image = LensCorrector.apply(lens, to: image) }
+            let extent = image.extent
+            return image.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
+        }
         let filter = frame.filter
         filter.scaleFactor = Float(scale)
         filter.exposure = 0
@@ -289,6 +380,13 @@ nonisolated final class PanoramaMerger {
         if case .profile(let lens) = frame.lens { image = LensCorrector.apply(lens, to: image) }
         let extent = image.extent
         return image.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
+    }
+
+    /// A bracket set decodes with the panorama's white balance, and the camera's built-in lens profile only when
+    /// that's the frame's lens correction.
+    fileprivate static func configure(_ bracket: HDRMerger, for frame: Frame, neutral: (temperature: Float, tint: Float)) {
+        bracket.neutral = neutral
+        if case .builtIn = frame.lens { bracket.builtInLensCorrection = true } else { bracket.builtInLensCorrection = false }
     }
 
     /// A photo's brightness for the aligner: luminance scaled by its exposure gain, gamma encoded.
@@ -341,7 +439,7 @@ nonisolated final class PanoramaMerger {
         // Each merged photo warped onto the small panorama, read back with where it covers and how
         // central each pixel is in it.
         let merged = frames.indices.filter { layout.cameras[$0] != nil }
-        let sources = sourceImages(scale: CGFloat(scale))
+        let sources = try sourceImages(scale: CGFloat(scale))
         // The photos are compared with whatever gains are known; the first time, none are yet.
         let gainsKnown = overlapGains != nil
         var photos: [PanoramaSeams.Photo] = []
@@ -529,11 +627,22 @@ nonisolated final class PanoramaMerger {
         let layout = analysis.layout
         let width = max(1, Int((layout.size.width * scale).rounded())), height = max(1, Int((layout.size.height * scale).rounded()))
         let canvas = CGRect(x: 0, y: 0, width: width, height: height)
-        let composite = composite(analysis, scale: scale, canvas: canvas, warp: warp)
+        // Boundary Warp and Fill Edges sample the panorama far from where they draw.
+        let drawn = region.flatMap { region -> CGRect? in
+            guard warp == nil, !options.fillEdges else { return nil }
+            return CGRect(x: region.minX, y: canvas.height - region.maxY, width: region.width, height: region.height).integral
+        }
+        let composite = try composite(analysis, scale: scale, canvas: canvas, warp: warp, region: drawn)
 
         var extent = canvas
         var image = composite.image
         var coverageImage = composite.coverage
+        if options.fillEdges {
+            let part = region.map { CGRect(x: $0.minX, y: canvas.height - $0.maxY, width: $0.width, height: $0.height).integral } ?? canvas
+            image = try filled(composite, analysis: analysis, warp: warp, options: options, scale: scale, canvas: canvas,
+                               drawn: part.intersection(canvas))
+            progress(0.1)
+        }
         if let region {
             // Core Image's origin is the bottom left.
             let part = CGRect(x: region.minX, y: canvas.height - region.maxY, width: region.width, height: region.height)
@@ -554,10 +663,62 @@ nonisolated final class PanoramaMerger {
             width: Int(extent.width), height: Int(extent.height), pixels: pixels,
             headroom: LinearDNGWriter.headroom(peak: peakValue)
         )
-        let shownCoverage = scale < 1 || region != nil ? renderCoverage(coverageImage, extent: extent) : nil
+        let shownCoverage = (scale < 1 || region != nil) && !options.fillEdges ? renderCoverage(coverageImage, extent: extent) : nil
         return PanoramaMergeResult(
-            image: result, crop: options.autoCrop ? coveredRect : nil, coveredRect: coveredRect, coverage: shownCoverage
+            image: result, crop: options.cropsToCovered ? coveredRect : nil, coveredRect: coveredRect, coverage: shownCoverage
         )
+    }
+
+    // MARK: - Fill Edges
+
+    private struct FillKey: Hashable {
+        var projection: PanoramaProjection
+        var amount: Int
+        var width: Int
+        var height: Int
+    }
+
+    /// The most pixels Fill Edges is solved at; larger merges copy the solve's matches up (``PanoramaFill/Field``).
+    var fillPixels = 4_000_000
+
+    /// The composite with Fill Edges' fill where the photos don't reach (after Boundary Warp). The fill is solved on
+    /// a merge of at most `fillPixels` (this one, if it's that small; cached per projection, warp and size) and
+    /// copied up to `scale` from this merge's pixels.
+    private func filled(_ composite: (image: CIImage, coverage: CIImage, blended: CIImage), analysis: Analysis, warp: WarpMap?,
+                        options: PanoramaMergeOptions, scale: CGFloat, canvas: CGRect, drawn: CGRect) throws -> CIImage {
+        let layout = analysis.layout
+        let fullPixels = Double(layout.size.width * layout.size.height)
+        let solveScale = min(scale, CGFloat(sqrt(Double(fillPixels) / fullPixels)))
+        let solveCanvas = CGRect(x: 0, y: 0, width: max(1, Int((layout.size.width * solveScale).rounded())),
+                                 height: max(1, Int((layout.size.height * solveScale).rounded())))
+        let key = FillKey(projection: options.projection, amount: min(max(options.boundaryWarp, 0), 100),
+                          width: Int(solveCanvas.width), height: Int(solveCanvas.height))
+        let solution: PanoramaFill.Solution
+        if let cached = fills[key] {
+            solution = cached
+        } else {
+            let source = solveCanvas == canvas ? composite : try self.composite(analysis, scale: solveScale, canvas: solveCanvas, warp: warp)
+            solution = try PanoramaFill.solve(color: source.image, coverage: source.coverage, context: context,
+                                              maxPixels: fillPixels, isCancelled: { Task.isCancelled })
+            // Kept for the settings the sheet goes back and forth between, within reason.
+            if fills.count > 8 { fills.removeAll() }
+            fills[key] = solution
+        }
+        guard solveCanvas != canvas else { return PanoramaFill.composite(composite.blended, coverage: composite.coverage, fill: solution.fill) }
+        // The fill copies from anywhere in the panorama. Drawn from the merge itself, each block made Core Image
+        // render most of the full-resolution panorama at once (RAW-225), so it copies from a tiled copy of what it
+        // reads, written once (kept while the merge's settings and the part drawn stay within it).
+        let reads = solution.field.sourceRect(for: drawn, target: canvas).union(drawn).integral.intersection(canvas)
+        let copyKey = CopyKey(fill: key, scale: scale)
+        let source: CIImage
+        if let copy = panoramaCopies[copyKey], copy.rect.contains(reads) {
+            source = copy.image
+        } else {
+            source = try tiledCopy(of: composite.image, in: reads, name: "panorama-\(UUID().uuidString)")
+            panoramaCopies = [copyKey: (reads, source)]
+        }
+        let fill = solution.field.fill(from: source, target: canvas)
+        return PanoramaFill.composite(composite.blended, coverage: composite.coverage, fill: fill)
     }
 
     /// Auto Crop's rectangle for these options (Develop's unit crop rectangle, origin bottom left):
@@ -587,7 +748,7 @@ nonisolated final class PanoramaMerger {
                 adjustments = auto
             }
         }
-        if options.autoCrop {
+        if options.cropsToCovered {
             adjustments.crop.rect = covered
             adjustments.crop.aspect = .custom
             adjustments.crop.isAspectLocked = false
@@ -609,9 +770,10 @@ nonisolated final class PanoramaMerger {
     }
 
     /// The photos at `scale`: the small copies for previews, otherwise decoded at that scale (Core
-    /// Image decodes only what a render needs).
-    private func sourceImages(scale: CGFloat) -> [CIImage] {
-        if scale <= alignmentScale * 1.05 {
+    /// Image decodes only what a render needs). Bracket sets `needs` says the render draws are merged
+    /// into files first (``materialized(_:scale:)``).
+    private func sourceImages(scale: CGFloat, needs: (Int) -> Bool = { _ in false }) throws -> [CIImage] {
+        if scale <= (largestSnapshotScale ?? alignmentScale * 1.05) {
             // Much smaller than the copies: shrink them first so the warp doesn't alias.
             let ratio = scale / alignmentScale
             guard ratio < 0.5 else { return snapshots }
@@ -621,14 +783,108 @@ nonisolated final class PanoramaMerger {
                 ])
             }
         }
-        return frames.map { Self.decoded($0, scale: scale, neutral: neutral) }
+        return try frames.indices.map { index in
+            guard frames[index].bracket != nil, needs(index) else { return Self.decoded(frames[index], scale: scale, neutral: neutral) }
+            return try materialized(index, scale: scale)
+        }
+    }
+
+    /// A bracket set merged at `scale` once, into a memory-mapped file, for the panorama to sample. Left to Core
+    /// Image, every block of a full-resolution merge merged the set again (seven RAW decodes and the HDR kernels
+    /// each time), and Core Image's cache of those intermediates grew until rendering crawled and the app stopped
+    /// responding (RAW-225). Kept for the merger's life: the sheet's 100% view comes back to the same sets.
+    private func materialized(_ index: Int, scale: CGFloat) throws -> CIImage {
+        let key = MaterializedKey(index: index, scale: scale)
+        if let image = materializedBrackets[key] { return image }
+        let image = Self.decoded(frames[index], scale: scale, neutral: neutral)
+        let pixels = try tiledCopy(of: image, in: CGRect(origin: .zero, size: image.extent.integral.size),
+                                   name: "\(index)-\(Int(scale * 1000))")
+        materializedBrackets[key] = pixels
+        return pixels
+    }
+
+    /// `rect` of `image` rendered once, in blocks, into a memory-mapped file in RGBA half floats, and read back as
+    /// Core Image asks for it, a tile at a time (a bitmap image would copy the whole file into memory, and Core Image
+    /// would upload all of it). The file goes with the merger.
+    private func tiledCopy(of image: CIImage, in rect: CGRect, name: String) throws -> CIImage {
+        let width = Int(rect.width), height = Int(rect.height), rowBytes = width * 8
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        let url = scratch.appending(path: "\(name).rgbah")
+        guard FileManager.default.createFile(atPath: url.path(percentEncoded: false), contents: nil) else {
+            throw PhotoMergeError.unreadable(name)
+        }
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        try handle.truncate(atOffset: UInt64(rowBytes * height))
+        let block = Self.copyBlock
+        var buffer = Data(count: min(block, width) * min(block, height) * 8)
+        // Top down, as a bitmap's rows go; Core Image's origin is the bottom left.
+        for top in stride(from: 0, to: height, by: block) {
+            let rows = min(block, height - top)
+            for left in stride(from: 0, to: width, by: block) {
+                try Task.checkCancellation()
+                let columns = min(block, width - left)
+                let bounds = CGRect(x: Int(rect.minX) + left, y: Int(rect.minY) + height - top - rows, width: columns, height: rows)
+                try buffer.withUnsafeMutableBytes { pixels in
+                    context.render(image, toBitmap: pixels.baseAddress!, rowBytes: columns * 8, bounds: bounds, format: .RGBAh, colorSpace: nil)
+                    for row in 0..<rows {
+                        try handle.seek(toOffset: UInt64((top + row) * rowBytes + left * 8))
+                        try handle.write(contentsOf: UnsafeRawBufferPointer(rebasing: pixels[(row * columns * 8)..<((row + 1) * columns * 8)]))
+                    }
+                }
+            }
+        }
+        try handle.close()
+        context.clearCaches()
+        let provider = MappedTiles(data: try Data(contentsOf: url, options: .alwaysMapped), rowBytes: rowBytes)
+        return CIImage(imageProvider: provider, size: width, height, format: .RGBAh, colorSpace: nil,
+                       options: [.providerTileSize: [Self.tileSize, Self.tileSize]])
+            .transformed(by: CGAffineTransform(translationX: rect.minX, y: rect.minY))
+    }
+
+    /// The blocks a ``tiledCopy(of:in:name:)`` is rendered in, and the tiles it's read back in.
+    private static let copyBlock = 2048
+    private static let tileSize = 512
+
+    /// A merged bracket set's pixels (RGBA half floats, top row first) in a memory-mapped file, handed to Core
+    /// Image a tile at a time.
+    private final class MappedTiles: NSObject, @unchecked Sendable {
+        let data: Data
+        let rowBytes: Int
+
+        init(data: Data, rowBytes: Int) {
+            self.data = data
+            self.rowBytes = rowBytes
+        }
+
+        /// Core Image's image provider callback: the tile at `x`, `y` (from the top left), `width` × `height`.
+        override func provideImageData(
+            _ destination: UnsafeMutableRawPointer, bytesPerRow: Int, origin x: Int, _ y: Int, size width: Int, _ height: Int,
+            userInfo info: Any?
+        ) {
+            data.withUnsafeBytes { source in
+                guard let base = source.baseAddress else { return }
+                for row in 0..<height {
+                    memcpy(destination + row * bytesPerRow, base + (y + row) * rowBytes + x * 8, width * 8)
+                }
+            }
+        }
     }
 
     /// Everything for one merge as Core Image images on `canvas`: the finished panorama (opaque,
-    /// white beyond the photos) and where the photos cover it (red).
-    private func composite(_ analysis: Analysis, scale: CGFloat, canvas: CGRect, warp: WarpMap?) -> (image: CIImage, coverage: CIImage) {
+    /// white beyond the photos), where the photos cover it (red), and the blend before it's finished (premultiplied,
+    /// for Fill Edges).
+    /// `region` (Core Image's axes) is the part a render draws, when that's all it samples, so only the bracket
+    /// sets there are merged into files.
+    private func composite(
+        _ analysis: Analysis, scale: CGFloat, canvas: CGRect, warp: WarpMap?, region: CGRect? = nil
+    ) throws -> (image: CIImage, coverage: CIImage, blended: CIImage) {
         let layout = analysis.layout
-        let sources = sourceImages(scale: scale)
+        let drawn = region ?? canvas
+        let sources = try sourceImages(scale: scale) { [self] index in
+            !ciRect(pixelRect(layout.footprint(of: index), scale: scale, extent: canvas), canvasHeight: canvas.height)
+                .intersection(drawn).isEmpty
+        }
         let maskScale = CGAffineTransform(scaleX: canvas.width / CGFloat(analysis.width), y: canvas.height / CGFloat(analysis.height))
         var photos: [BlendPhoto] = []
         for index in frames.indices where layout.cameras[index] != nil {
@@ -651,7 +907,7 @@ nonisolated final class PanoramaMerger {
         }
         let fill = CIVector(x: CGFloat(peakValue), y: CGFloat(peakValue), z: CGFloat(peakValue))
         let finished = PanoramaKernels.finish.apply(extent: canvas, arguments: [blended, coverage, fill]) ?? blended
-        return (finished, coverage)
+        return (finished, coverage, blended)
     }
 
     /// A photo warped onto the panorama at `scale`, scaled by its gains: premultiplied, its alpha
@@ -734,13 +990,16 @@ nonisolated final class PanoramaMerger {
         var extents = [canvas]
         for _ in 0..<levels {
             let last = extents[extents.count - 1]
-            extents.append(CGRect(x: last.minX / 2, y: last.minY / 2, width: last.width / 2, height: last.height / 2))
+            extents.append(CGRect(x: last.minX / 2, y: last.minY / 2, width: last.width / 2, height: last.height / 2).integral)
         }
-        func down(_ image: CIImage, to extent: CGRect) -> CIImage {
-            image.applyingGaussianBlur(sigma: 1).transformed(by: CGAffineTransform(scaleX: 0.5, y: 0.5)).cropped(to: extent)
-        }
-        func up(_ image: CIImage, to extent: CGRect) -> CIImage {
-            image.transformed(by: CGAffineTransform(scaleX: 2, y: 2)).cropped(to: extent)
+        func down(_ image: CIImage, to extent: CGRect) -> CIImage { halved(image).cropped(to: extent) }
+        // Kernels reading a coarser level at half the coordinates: its rect is half the output's, and a pixel more.
+        func upROI(coarserIndex: Int32) -> CIKernelROICallback {
+            { index, rect in
+                index == coarserIndex
+                    ? CGRect(x: rect.minX / 2, y: rect.minY / 2, width: rect.width / 2, height: rect.height / 2).insetBy(dx: -1, dy: -1)
+                    : rect
+            }
         }
         var bands = extents.map { blank($0) }
         for photo in photos {
@@ -748,8 +1007,10 @@ nonisolated final class PanoramaMerger {
             var mask = photo.mask
             for level in 0..<levels {
                 let next = down(image, to: extents[level + 1])
-                let detail = up(next, to: extents[level])
-                bands[level] = PanoramaKernels.addBand.apply(extent: extents[level], arguments: [bands[level], image, detail, mask]) ?? bands[level]
+                bands[level] = PanoramaKernels.addBandUp.apply(
+                    extent: extents[level], roiCallback: upROI(coarserIndex: 2),
+                    arguments: [bands[level], image, next, mask]
+                ) ?? bands[level]
                 image = next
                 if level + 1 < levels { mask = down(mask, to: extents[level + 1]) }
             }
@@ -759,9 +1020,21 @@ nonisolated final class PanoramaMerger {
         }
         var result = bands[levels]
         for level in stride(from: levels - 1, through: 0, by: -1) {
-            result = PanoramaKernels.add.apply(extent: extents[level], arguments: [up(result, to: extents[level]), bands[level]]) ?? result
+            result = PanoramaKernels.addUp.apply(
+                extent: extents[level], roiCallback: upROI(coarserIndex: 0), arguments: [result, bands[level]]
+            ) ?? result
         }
         return result
+    }
+
+    /// `image` at half size for the blend's pyramid (see `panoramaHalve`). Beyond its edges it repeats them, so every
+    /// level is defined wherever a kernel reads.
+    static func halved(_ image: CIImage) -> CIImage {
+        let extent = image.extent
+        let half = CGRect(x: extent.minX / 2, y: extent.minY / 2, width: extent.width / 2, height: extent.height / 2).integral
+        return PanoramaKernels.halve.apply(extent: half, roiCallback: { _, rect in
+            CGRect(x: rect.minX * 2, y: rect.minY * 2, width: rect.width * 2, height: rect.height * 2).insetBy(dx: -3, dy: -3)
+        }, arguments: [image.clampedToExtent()]) ?? image
     }
 
     /// `image` bent by Boundary Warp's map.
@@ -866,12 +1139,16 @@ nonisolated final class PanoramaMerger {
 /// The Core Image kernels in PanoramaKernels.ci.metal.
 nonisolated enum PanoramaKernels {
     static let warp = load(name: "panoramaWarp") { try CIWarpKernel(functionName: $0, fromMetalLibraryData: $1) }
-    static let addBand = color("panoramaAddBand")
     static let addLevel = color("panoramaAddLevel")
     static let add = color("panoramaAdd")
     static let coverage = color("panoramaCoverage")
     static let finish = color("panoramaFinish")
+    static let halve = load(name: "panoramaHalve") { try CIKernel(functionName: $0, fromMetalLibraryData: $1) }
+    static let addBandUp = load(name: "panoramaAddBandUp") { try CIKernel(functionName: $0, fromMetalLibraryData: $1) }
+    static let addUp = load(name: "panoramaAddUp") { try CIKernel(functionName: $0, fromMetalLibraryData: $1) }
     static let boundaryWarp = load(name: "panoramaBoundaryWarp") { try CIKernel(functionName: $0, fromMetalLibraryData: $1) }
+    static let fillMix = color("panoramaFillMix")
+    static let fillReconstruct = load(name: "panoramaFillReconstruct") { try CIKernel(functionName: $0, fromMetalLibraryData: $1) }
 
     private static let library: Data? = Bundle.main.url(forResource: "default", withExtension: "metallib")
         .flatMap { try? Data(contentsOf: $0) }
@@ -887,3 +1164,4 @@ nonisolated enum PanoramaKernels {
         return kernel
     }
 }
+

@@ -281,7 +281,8 @@ struct WatermarkEditorTests {
     @Test func editWatermarksIsInTheAppMenu() {
         let appMenu = MainMenu.make().items.first?.submenu
         let titles = appMenu?.items.map(\.title) ?? []
+        // Settings…, then Catalog Settings… (RAW-266), then Edit Watermarks….
         let settings = titles.firstIndex(of: "Settings…")
-        #expect(titles.firstIndex(of: "Edit Watermarks…") == settings.map { $0 + 1 })
+        #expect(titles.firstIndex(of: "Edit Watermarks…") == settings.map { $0 + 2 })
     }
 }

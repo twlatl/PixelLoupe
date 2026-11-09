@@ -20,8 +20,10 @@ has none to match).
 - **What is scored:** the unedited original with default rendering. Edits never trigger re-analysis. Virtual copies
   use their master's scores. Videos are skipped (they appear only under All).
 - **Sources** (revised while building the engine; see "Engine notes"):
-  - The unedited photo is rendered from the original, or its Smart Preview when the original is offline, twice: an
-    **overview** 1024 px on the long edge and a **detail** render 2560 px on the long edge.
+  - The unedited photo is rendered twice: an **overview** 1024 px on the long edge and a **detail** render 2560 px on
+    the long edge. It's rendered from its Smart Preview when it has a current one, because that is already 2560 px
+    and decodes about three times faster than a large RAW file (RAW-210). Otherwise it's rendered from the original,
+    or from a stale Smart Preview when the original is offline.
   - On the overview: faces (Vision face rectangles), the subject (attention saliency), documents
     (`CalculateImageAestheticsScoresRequest.isUtility` plus text recognition), exposure and misfires.
   - On the detail render: each face's eye landmarks (from a crop around the face) and focus of the subject region and
@@ -135,6 +137,24 @@ Measured on 211 RAW files (Sony ARW, Fujifilm RAF, DNG) from the sample library;
   open at first, which looked as if nothing had been stacked). Collapsed photos are out of the source, so the Assisted
   Culling counts and Apply then see only the top photos. Clicking a stack's badge, or S, opens it.
 - The method and both sliders are remembered app-wide.
+
+## Speed notes (RAW-210)
+
+Measured with optimized Swift on 88 sample photos (Sony A7CR ARW, Fujifilm X-E5 RAF, JPEG), on an M4 Pro.
+
+- **The RAW decode is most of the time.** A photo took 0.27 s on average: ARW 0.48 s, RAF 0.33 s, JPEG 0.13 s. Of
+  that, the decode was about 0.15 s. Vision and the focus math together took about 0.07 s. Apple's RAW engine takes
+  the same time at 1024 px as at 2560 px, and draft mode or turning off noise reduction doesn't change that, so
+  decoding once instead of twice saved only 5%. (In Debug builds the Swift pixel loops are about 50 times slower
+  and look like the bottleneck, but they aren't.)
+- **Three photos at a time.** Total time for the 88: one at a time 23.6 s, two 18.4 s, three 15.5 s, four 15.5 s,
+  six 18.9 s. Three at a time adds about 150 MB at peak.
+- **Smart Previews first.** Analyzing all 88 from Smart Previews took 9.3 s instead of 23.6 s, one at a time.
+  Scores are close but not identical to the original's. Subject focus matches (mean difference 0.001), and no photo
+  changed between Select and Reject at the default sliders. Small background faces near the 3% cutoff were counted
+  differently on 5 of the 88 photos, which moves the least-open-eyes score by up to 0.29. Two of 23 ARWs became
+  exposure issues, because the Smart Preview's highlights render slightly differently. The analysis version wasn't
+  changed: scores already made from originals are kept, not redone.
 
 ## Delivery
 

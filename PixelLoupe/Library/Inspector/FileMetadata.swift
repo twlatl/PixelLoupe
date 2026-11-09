@@ -36,6 +36,7 @@ nonisolated struct FileMetadata: Sendable, Equatable {
         let gps = properties[kCGImagePropertyGPSDictionary] as? [CFString: Any] ?? [:]
         let iptc = properties[kCGImagePropertyIPTCDictionary] as? [CFString: Any] ?? [:]
         let dng = properties[kCGImagePropertyDNGDictionary] as? [CFString: Any]
+        let aux = properties[kCGImagePropertyExifAuxDictionary] as? [CFString: Any] ?? [:]
 
         func set(_ id: MetadataField.ID, _ value: String?) {
             guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines.union(.controlCharacters)),
@@ -84,8 +85,8 @@ nonisolated struct FileMetadata: Sendable, Equatable {
         set(.make, string(tiff, kCGImagePropertyTIFFMake))
         set(.model, string(tiff, kCGImagePropertyTIFFModel))
         set(.camera, Self.cameraName(make: string(tiff, kCGImagePropertyTIFFMake), model: string(tiff, kCGImagePropertyTIFFModel)))
-        set(.serialNumber, string(exif, kCGImagePropertyExifBodySerialNumber))
-        set(.lens, string(exif, kCGImagePropertyExifLensModel))
+        set(.serialNumber, string(exif, kCGImagePropertyExifBodySerialNumber) ?? string(aux, kCGImagePropertyExifAuxSerialNumber))
+        set(.lens, ImageMetadata.lensModel(properties))
         set(.artist, string(tiff, kCGImagePropertyTIFFArtist))
         set(.software, string(tiff, kCGImagePropertyTIFFSoftware))
         set(.userComment, string(exif, kCGImagePropertyExifUserComment))

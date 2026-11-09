@@ -2,7 +2,7 @@ import CoreData
 import Foundation
 import OSLog
 
-/// Scores photos for Assisted Culling (RAW-71) in the background at low priority, one at a time: those asked
+/// Scores photos for Assisted Culling (RAW-71) in the background at low priority, a few at a time: those asked
 /// for (the Assisted Culling panel's Analyze), and photos that were analyzed from their thumbnail alone once their
 /// original or a Smart Preview can be read again, to measure their focus.
 ///
@@ -26,6 +26,11 @@ final class CullingAnalysis {
     nonisolated private static let logger = Logger(subsystem: "net.pixegen.PixelLoupe", category: "Culling")
     /// Photos analyzed between saves.
     nonisolated static let saveInterval = 20
+    /// Photos analyzed at once. Most of a photo's time is the RAW decode, which doesn't use the whole machine, so
+    /// overlapping a few is about 1.5× faster; more than three was slower (RAW-210).
+    nonisolated static let concurrentPhotos = 3
+    /// Scores a photo from its pixels; replaced by tests.
+    var analyzer: @Sendable (PhotoSourceLocation, URL) async -> CullingScores? = { await CullingAnalyzer.analyze($0, thumbnail: $1) }
 
     /// The photos done and asked for since the analysis was last idle, for the Assisted Culling panel; nil while
     /// idle.
@@ -117,17 +122,25 @@ final class CullingAnalysis {
 
     private func run(_ generation: Int) async {
         var unsaved = 0
-        while generation == self.generation, !waiting.isEmpty {
-            let id = waiting.removeFirst()
-            if await analyzePhoto(id) { unsaved += 1 }
-            queued.remove(id)
-            guard generation == self.generation else { break }
-            if unsaved >= Self.saveInterval {
-                store.save()
-                unsaved = 0
+        await withTaskGroup(of: (id: UUID, analyzed: Bool).self) { group in
+            var running = 0
+            while generation == self.generation {
+                while running < Self.concurrentPhotos, !waiting.isEmpty {
+                    let id = waiting.removeFirst()
+                    running += 1
+                    group.addTask { (id, await self.analyzePhoto(id, generation: generation)) }
+                }
+                guard let (id, analyzed) = await group.next() else { break }
+                running -= 1
+                queued.remove(id)
+                guard generation == self.generation else { break }
+                if analyzed { unsaved += 1 }
+                if unsaved >= Self.saveInterval {
+                    store.save()
+                    unsaved = 0
+                }
+                progress?.completed += 1
             }
-            progress?.completed += 1
-            await Task.yield()
         }
         if unsaved > 0 { store.save() }
         guard generation == self.generation else { return }
@@ -135,19 +148,20 @@ final class CullingAnalysis {
         progress = nil
     }
 
-    /// Analyzes the photo with `id` and writes its scores; false when it couldn't be.
-    private func analyzePhoto(_ id: UUID) async -> Bool {
+    /// Analyzes the photo with `id` and writes its scores, unless the run of `generation` has been stopped; false
+    /// when it couldn't be.
+    private func analyzePhoto(_ id: UUID, generation: Int) async -> Bool {
         let request = Photo.fetchRequest()
         request.predicate = NSPredicate(format: "id == %@", id as CVarArg)
         request.fetchLimit = 1
         guard let photo = try? store.viewContext.fetch(request).first, !photo.isVideo else { return false }
         let location = store.sourceLocation(of: photo), thumbnail = store.thumbnails.url(for: id)
-        guard let scores = await CullingAnalyzer.analyze(location, thumbnail: thumbnail) else {
+        guard let scores = await analyzer(location, thumbnail) else {
             Self.logger.info("Couldn't analyze \(photo.fileName, privacy: .public)")
             return false
         }
-        // Removed while it was being analyzed.
-        guard !photo.isDeleted, let context = photo.managedObjectContext else { return false }
+        // Stopped (the catalog may be closing), or removed while it was being analyzed.
+        guard generation == self.generation, !photo.isDeleted, let context = photo.managedObjectContext else { return false }
         context.processPendingChanges()
         context.undoManager?.disableUndoRegistration()
         scores.write(to: photo)

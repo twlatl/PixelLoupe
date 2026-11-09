@@ -147,7 +147,7 @@ struct MaskSectionsTests {
         panel.display(masks: [mask])
         let view = panel.view
 
-        let titles = ["White Balance", "Light", "Presence", "Color Grading", "Black & White", "Curves", "Levels", "Definition",
+        let titles = ["White Balance", "Light", "Presence", "Color Grading", "Black & White", "Tone Curve", "Levels", "Definition",
                       "Color Mixer", "Noise Reduction", "Sharpen", "Effects"]
         let sections = titles.compactMap { subview("adjustSection.Mask.\($0)", of: AdjustmentSectionView.self, in: view) }
         #expect(sections.count == titles.count, "\(sections.count) of \(titles.count)")

@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import Testing
 @testable import PixelLoupe
 
@@ -35,6 +36,18 @@ struct ImageMetadataTests {
         #expect(metadata.pixelHeight == 48)
         #expect(metadata.captureDate == ISO8601DateFormatter().date(from: "2026-10-12T07:30:00Z"))
         #expect(metadata.keywords == ["Beach", "Sunset"], "keywords are de-duplicated case-insensitively")
+    }
+
+    @Test func readsTheLensFromExifAuxWhenExifHasNone() {
+        // Nikon NEFs: ImageIO puts the maker notes' lens name under {ExifAux}.
+        let aux: [CFString: Any] = [kCGImagePropertyExifAuxDictionary: [
+            kCGImagePropertyExifAuxLensModel: "AF-S Nikkor 24-120mm f/4G ED VR",
+        ] as [CFString: Any]]
+        #expect(ImageMetadata(properties: aux).lensModel == "AF-S Nikkor 24-120mm f/4G ED VR")
+        // The standard EXIF tag wins when both are there.
+        var both = aux
+        both[kCGImagePropertyExifDictionary] = [kCGImagePropertyExifLensModel: "RF24-70mm F2.8 L IS USM"] as [CFString: Any]
+        #expect(ImageMetadata(properties: both).lensModel == "RF24-70mm F2.8 L IS USM")
     }
 
     @Test func nonImageReturnsNil() throws {

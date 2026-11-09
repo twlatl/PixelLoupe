@@ -3,7 +3,7 @@ import Foundation
 /// The parts of the settings a preset can hold, as Lightroom's New Develop Preset dialog lists them.
 nonisolated enum PresetSection: String, CaseIterable, Codable, Sendable {
     case whiteBalance, basicTone, presence, toneCurve, colorMixer, colorGrading, blackAndWhite, detail, effects, lens, transform,
-         calibration, profile, rimLight
+         calibration, profile, portraitLighting, rimLight
 
     var title: String {
         switch self {
@@ -20,6 +20,7 @@ nonisolated enum PresetSection: String, CaseIterable, Codable, Sendable {
         case .transform: "Transform"
         case .calibration: "Calibration"
         case .profile: "Profile"
+        case .portraitLighting: "Portrait Lighting"
         case .rimLight: "Rim Light"
         }
     }
@@ -46,6 +47,21 @@ nonisolated enum RimLightPreset {
 
     static func rimLight(_ text: String?) -> PhotoAdjustments.RimLight? {
         text.flatMap { try? JSONDecoder().decode(PhotoAdjustments.RimLight.self, from: Data($0.utf8)) }
+    }
+}
+
+/// Portrait Lighting in a preset (RAW-214): PixelLoupe's own setting, written as JSON like ``RimLightPreset``.
+nonisolated enum PortraitLightingPreset {
+    static let key = "PixelLoupePortraitLighting"
+
+    static func text(_ portraitLighting: PhotoAdjustments.PortraitLighting) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return (try? encoder.encode(portraitLighting)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    static func portraitLighting(_ text: String?) -> PhotoAdjustments.PortraitLighting? {
+        text.flatMap { try? JSONDecoder().decode(PhotoAdjustments.PortraitLighting.self, from: Data($0.utf8)) }
     }
 }
 
@@ -98,31 +114,30 @@ nonisolated enum PresetWriter {
         if sections.contains(.basicTone) {
             number("Exposure2012", a.light.exposure, places: 2)
             number("Contrast2012", a.light.contrast * 100)
-            number("Highlights2012", a.light.highlights * 100)
-            number("Shadows2012", a.light.shadows * 100)
+            number("Highlights2012", LightroomScales.lightroom(fromHighlights: a.light.highlights))
+            number("Shadows2012", LightroomScales.lightroom(fromShadows: a.light.shadows, process: a.light.shadowsProcess))
             number("Whites2012", a.light.whites * 100)
             number("Blacks2012", -a.light.blackPoint * 100)
         }
         if sections.contains(.presence) {
             number("Texture", a.presence.texture * 100)
-            number("Clarity2012", a.presence.clarity * 100)
+            number("Clarity2012", LightroomScales.lightroom(fromClarity: a.presence.clarity))
             number("Dehaze", a.presence.dehaze * 100)
             number("Vibrance", a.presence.vibrance * 100)
             number("Saturation", a.presence.saturation * 100)
         }
         if sections.contains(.toneCurve) {
             func curve(_ curve: ToneCurve) -> Value { .curve(curve.points.map { (($0.x * 255).rounded(), ($0.y * 255).rounded()) }) }
-            out["ToneCurveName2012"] = .text(a.curves.rgb.isIdentity && a.curves.red.isIdentity && a.curves.green.isIdentity
-                                              && a.curves.blue.isIdentity ? "Linear" : "Custom")
+            out["ToneCurveName2012"] = .text(a.curves.pointCurveName)
             out["ToneCurvePV2012"] = curve(a.curves.rgb)
             out["ToneCurvePV2012Red"] = curve(a.curves.red)
             out["ToneCurvePV2012Green"] = curve(a.curves.green)
             out["ToneCurvePV2012Blue"] = curve(a.curves.blue)
             let parametric = a.curves.parametric
-            number("ParametricShadows", parametric.shadows * 100)
-            number("ParametricDarks", parametric.darks * 100)
-            number("ParametricLights", parametric.lights * 100)
-            number("ParametricHighlights", parametric.highlights * 100)
+            number("ParametricShadows", LightroomScales.lightroom(fromParametric: parametric.shadows))
+            number("ParametricDarks", LightroomScales.lightroom(fromParametric: parametric.darks))
+            number("ParametricLights", LightroomScales.lightroom(fromParametric: parametric.lights))
+            number("ParametricHighlights", LightroomScales.lightroom(fromParametric: parametric.highlights))
             number("ParametricShadowSplit", parametric.shadowSplit * 100)
             number("ParametricMidtoneSplit", parametric.midtoneSplit * 100)
             number("ParametricHighlightSplit", parametric.highlightSplit * 100)
@@ -135,9 +150,11 @@ nonisolated enum PresetWriter {
             }
         }
         if sections.contains(.colorGrading) {
+            // Lightroom reads the Shadows and Highlights wheels' hue and saturation only under their Split Toning names.
             for (name, wheel) in [("Shadow", a.color.shadows), ("Midtone", a.color.midtones), ("Highlight", a.color.highlights), ("Global", a.color.global)] {
-                number("ColorGrade\(name)Hue", wheel.hue * 360)
-                number("ColorGrade\(name)Sat", wheel.amount * 100)
+                let splitToning = name == "Shadow" || name == "Highlight"
+                number(splitToning ? "SplitToning\(name)Hue" : "ColorGrade\(name)Hue", wheel.hue * 360)
+                number(splitToning ? "SplitToning\(name)Saturation" : "ColorGrade\(name)Sat", wheel.amount * 100)
                 number("ColorGrade\(name)Lum", wheel.luminance * 100)
             }
             number("ColorGradeBlending", a.color.blending * 100)
@@ -223,6 +240,9 @@ nonisolated enum PresetWriter {
                 out["Look"] = .look(name: name, amount: profile.amount, uuid: nil)
             }
         }
+        if sections.contains(.portraitLighting), let text = PortraitLightingPreset.text(a.portraitLighting) {
+            out[PortraitLightingPreset.key] = .text(text)
+        }
         if sections.contains(.rimLight), let text = RimLightPreset.text(a.rimLight) {
             out[RimLightPreset.key] = .text(text)
         }
@@ -241,10 +261,19 @@ nonisolated enum PresetWriter {
             "ParametricShadowSplit", "ParametricMidtoneSplit", "ParametricHighlightSplit",
         ]
         return exact.contains(key) || key.hasPrefix("Defringe") || (key.hasPrefix("ColorGrade") && (key.hasSuffix("Hue") || key.hasSuffix("Sat")))
+            || (key.hasPrefix("SplitToning") && (key.hasSuffix("Hue") || key.hasSuffix("Saturation")))
     }
 
-    /// A complete preset file.
-    static func xmp(name: String, group: String, settings: [String: Value], uuid: String = UUID().uuidString.replacingOccurrences(of: "-", with: "")) -> Data {
+    /// The photo's develop settings as Camera Raw's XMP, for an exported file (Catalog Settings ▸ Metadata ▸
+    /// Include Develop Settings, RAW-268): every section's settings with `crs:HasSettings`, without a preset's name
+    /// and support flags.
+    static func developSettingsXMP(for adjustments: PhotoAdjustments, profiles: AdobeProfileLibrary = .shared) -> Data {
+        xmp(name: "", group: "", settings: settings(for: adjustments, sections: Set(PresetSection.allCases), profiles: profiles), isPreset: false)
+    }
+
+    /// A complete preset file; with `isPreset` false, only the settings (for a photo's metadata).
+    static func xmp(name: String, group: String, settings: [String: Value], uuid: String = UUID().uuidString.replacingOccurrences(of: "-", with: ""),
+                    isPreset: Bool = true) -> Data {
         func escaped(_ text: String) -> String {
             text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "\"", with: "&quot;")
                 .replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
@@ -254,7 +283,7 @@ nonisolated enum PresetWriter {
             let text = value == value.rounded() ? String(Int(value)) : String(value)
             return value > 0 && !unsigned(key) ? "+" + text : text
         }
-        var attributes: [(String, String)] = [
+        var attributes: [(String, String)] = !isPreset ? [("Version", "15.0"), ("ProcessVersion", "11.0")] : [
             ("PresetType", "Normal"), ("Cluster", ""), ("UUID", uuid), ("SupportsAmount", "True"), ("SupportsColor", "True"),
             ("SupportsMonochrome", "True"), ("SupportsHighDynamicRange", "True"), ("SupportsNormalDynamicRange", "True"),
             ("SupportsSceneReferred", "True"), ("SupportsOutputReferred", "True"), ("CameraModelRestriction", ""), ("Copyright", ""),
@@ -287,11 +316,8 @@ nonisolated enum PresetWriter {
           <rdf:Description rdf:about=""
             xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
         \(attributes.map { "   crs:\($0.0)=\"\(escaped($0.1))\"" }.joined(separator: "\n"))>
-        \(alt("Name", name))
-        \(alt("ShortName", ""))
-        \(alt("SortName", ""))
-        \(alt("Group", group))
-        \(alt("Description", ""))
+        \((isPreset ? [alt("Name", name), alt("ShortName", ""), alt("SortName", ""), alt("Group", group), alt("Description", "")] : [])
+            .joined(separator: "\n"))
         \(elements.joined(separator: "\n"))
           </rdf:Description>
          </rdf:RDF>

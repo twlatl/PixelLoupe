@@ -55,9 +55,21 @@ struct PresetWriterTests {
         #expect(preset.name == "My <Look> & More" && preset.group == "Mine" && preset.supportsAmount)
         let applied = preset.applied(to: PhotoAdjustments(), isRaw: true)
         #expect(applied.whiteBalance.temperature == 5200 && applied.whiteBalance.tint == 12)
-        #expect(applied.light == original.light, "\(applied.light) vs \(original.light)")
-        #expect(applied.presence == original.presence)
-        #expect(applied.curves.rgb == original.curves.rgb && applied.curves.parametric == original.curves.parametric)
+        // Shadows, Highlights, Clarity and the parametric curve aren't a straight ×100 in Lightroom (RAW-229), so
+        // Lightroom's whole numbers bring them back to within a slider step.
+        func close(_ a: Double, _ b: Double) -> Bool { abs(a - b) < 0.01 }
+        var light = applied.light
+        #expect(close(light.highlights, original.light.highlights) && close(light.shadows, original.light.shadows))
+        light.highlights = original.light.highlights
+        light.shadows = original.light.shadows
+        #expect(light == original.light, "\(applied.light) vs \(original.light)")
+        var presence = applied.presence
+        #expect(close(presence.clarity, original.presence.clarity))
+        presence.clarity = original.presence.clarity
+        #expect(presence == original.presence)
+        let (p, q) = (applied.curves.parametric, original.curves.parametric)
+        #expect(applied.curves.rgb == original.curves.rgb)
+        #expect(zip(p.amounts, q.amounts).allSatisfy { close($0, $1) } && p.shadowSplit == q.shadowSplit && p.highlightSplit == q.highlightSplit)
         #expect(applied.selectiveColor == original.selectiveColor)
         #expect(applied.color == original.color, "\(applied.color) vs \(original.color)")
         #expect(applied.blackAndWhite.isEnabled && applied.blackAndWhite[.red] == original.blackAndWhite[.red])
@@ -75,12 +87,12 @@ struct PresetWriterTests {
         photo.light.exposure = 1.2
         photo.presence.clarity = 0.4
         let settings = PresetWriter.settings(for: Self.edited(), sections: [.presence])
-        #expect(settings["Clarity2012"] == .number(25) && settings["Exposure2012"] == nil)
+        #expect(settings["Clarity2012"] == .number(30) && settings["Exposure2012"] == nil, "Clarity 0.25 is Lightroom's +30")
         let preset = try #require(DevelopPreset.parse(PresetWriter.xmp(name: "P", group: "G", settings: settings), url: URL(filePath: "/p/p.xmp"),
                                                       defaultGroup: "x"))
         let applied = preset.applied(to: photo, isRaw: true)
         #expect(applied.light.exposure == 1.2, "Basic Tone wasn't chosen")
-        #expect(applied.presence.clarity == 0.25)
+        #expect(abs(applied.presence.clarity - 0.25) < 0.01)
         #expect(PresetSection.sections(of: preset.settingKeys) == [.presence])
     }
 
@@ -88,7 +100,22 @@ struct PresetWriterTests {
         let text = String(decoding: PresetWriter.xmp(name: "S", group: "G", settings: PresetWriter.settings(for: Self.edited(), sections: Set(PresetSection.allCases))),
                           as: UTF8.self)
         #expect(text.contains(#"crs:Contrast2012="+20""#) && text.contains(#"crs:Blacks2012="-15""#))
-        #expect(text.contains(#"crs:GrainAmount="20""#) && text.contains(#"crs:ColorGradeShadowHue="216""#) && text.contains(#"crs:Temperature="5200""#))
+        #expect(text.contains(#"crs:GrainAmount="20""#) && text.contains(#"crs:SplitToningShadowHue="216""#) && text.contains(#"crs:Temperature="5200""#))
+    }
+
+    @Test("Shadows and Highlights go under Lightroom's Split Toning names, and read back")
+    func colorGradingKeys() throws {
+        let photo = Self.edited()
+        let settings = PresetWriter.settings(for: photo, sections: [.colorGrading])
+        #expect(settings["SplitToningShadowHue"] == .number(216) && settings["SplitToningShadowSaturation"] == .number(20))
+        #expect(settings["SplitToningHighlightHue"] == .number(36) && settings["SplitToningHighlightSaturation"] == .number(15))
+        #expect(settings["ColorGradeShadowLum"] == .number(-5))
+        #expect(settings["ColorGradeShadowHue"] == nil && settings["ColorGradeShadowSat"] == nil && settings["ColorGradeHighlightSat"] == nil,
+                "Lightroom ignores these for Shadows and Highlights")
+        let preset = try #require(DevelopPreset.parse(PresetWriter.xmp(name: "G", group: "G", settings: settings), url: URL(filePath: "/p/g.xmp"),
+                                                      defaultGroup: "x"))
+        let applied = preset.applied(to: PhotoAdjustments(), isRaw: true)
+        #expect(applied.color.shadows == photo.color.shadows && applied.color.highlights == photo.color.highlights)
     }
 }
 
@@ -111,7 +138,7 @@ struct UserPresetTests {
         let preset = try await library.createPreset(name: "Crisp", group: "Mine", from: settings, sections: [.presence])
         #expect(preset.group == "Mine" && library.groups.map(\.name) == ["Mine"])
         #expect(preset.url.deletingLastPathComponent().lastPathComponent == "Mine")
-        #expect(preset.applied(to: PhotoAdjustments(), isRaw: true).presence.clarity == 0.3)
+        #expect(abs(preset.applied(to: PhotoAdjustments(), isRaw: true).presence.clarity - 0.3) < 0.01)
         #expect(preset.applied(to: PhotoAdjustments(), isRaw: true).light.exposure == 0, "only Presence was chosen")
         await #expect(throws: PresetLibrary.PresetError.self) {
             try await library.createPreset(name: "Crisp", group: "Mine", from: settings, sections: [.presence])

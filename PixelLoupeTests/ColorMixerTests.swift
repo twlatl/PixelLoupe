@@ -88,9 +88,10 @@ struct ColorMixerTests {
         #expect(try tint(0.9, at: 0.55) > tint(0.1, at: 0.55) + 0.01)
         // Deep shadows get the tint either way.
         #expect(try tint(0.1, at: 0.05) > 0.1)
-        // At the default the original look is kept: shadows full at black, gone by the highlights.
+        // At the default, shadows are tinted at black (Lightroom's export: red minus blue 0.075) and untouched by the
+        // highlights.
         let original = try transform { $0.color.shadows = .init(hue: 0, amount: 1, luminance: 0) }
-        #expect(original.apply(0.02, 0.02, 0.02).r - original.apply(0.02, 0.02, 0.02).b > 0.2)
+        #expect(original.apply(0.02, 0.02, 0.02).r - original.apply(0.02, 0.02, 0.02).b > 0.05)
         #expect(abs(original.apply(0.9, 0.9, 0.9).r - 0.9) < 0.01)
     }
 
@@ -165,7 +166,7 @@ struct ColorMixerTests {
         #expect(try map("{ ColorGradeBlending = 50, ColorGradeShadowHue = 0, ColorGradeShadowSat = 0 }").0.isDefault)
     }
 
-    @Test("Old split toning becomes the shadow and highlight wheels, unless color grading is set")
+    @Test("Split Toning's hue and saturation are the Shadows and Highlights wheels, with Color Grading's luminance")
     func importsSplitToning() throws {
         let legacy = try map("""
             { SplitToningShadowHue = 200, SplitToningShadowSaturation = 40, SplitToningHighlightHue = 45, SplitToningHighlightSaturation = 20,
@@ -173,8 +174,16 @@ struct ColorMixerTests {
             """).0
         #expect(legacy.color.shadows == .init(hue: 0.556, amount: 0.4, luminance: 0))
         #expect(legacy.color.highlights == .init(hue: 0.125, amount: 0.2, luminance: 0) && legacy.color.balance == 0.1)
-        let modern = try map("{ ColorGradeShadowHue = 10, ColorGradeShadowSat = 50, SplitToningShadowHue = 200, SplitToningShadowSaturation = 40 }").0
-        #expect(modern.color.shadows.amount == 0.5)
+        // How Lightroom writes a graded photo: luminance under Color Grading's name, hue and saturation under Split Toning's.
+        let modern = try map("""
+            { SplitToningShadowHue = 180, SplitToningShadowSaturation = 40, ColorGradeShadowLum = -20,
+              SplitToningHighlightHue = 36, SplitToningHighlightSaturation = 25, ColorGradeHighlightLum = 10 }
+            """).0
+        #expect(modern.color.shadows == .init(hue: 0.5, amount: 0.4, luminance: -0.2))
+        #expect(modern.color.highlights == .init(hue: 0.1, amount: 0.25, luminance: 0.1))
+        // Lightroom renders the Split Toning values when both are there.
+        let both = try map("{ ColorGradeShadowHue = 10, ColorGradeShadowSat = 50, SplitToningShadowHue = 200, SplitToningShadowSaturation = 40 }").0
+        #expect(both.color.shadows.amount == 0.4 && both.color.shadows.hue == 0.556)
     }
 
     @Test("Lightroom's black & white and gray mixer import")

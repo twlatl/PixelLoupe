@@ -17,6 +17,10 @@ nonisolated struct ContactSheetLayout: Equatable, Sendable {
     static let pageNumberSize: CGFloat = 9
     /// Between the headline and the description.
     static let headerSpacing: CGFloat = 4
+    /// The logo's tallest (¾ inch); a wide logo is narrowed to the space between the margins instead.
+    static let logoHeight: CGFloat = 54
+    /// Between the logo and the headline (or description).
+    static let logoGap: CGFloat = 10
     /// Between the headline (or description) and the photos.
     static let headerGap: CGFloat = 18
     /// Between a photo's cell and its caption.
@@ -32,12 +36,15 @@ nonisolated struct ContactSheetLayout: Equatable, Sendable {
     let cellSize: CGFloat
     /// The caption's line under each cell, or 0 without captions.
     let captionHeight: CGFloat
+    /// The logo, at the top-left above the headline, or nil without one.
+    let logoRect: CGRect?
     let headlineRect: CGRect?
     let descriptionRect: CGRect?
     /// The top-left of the first cell, top-down from the page's top edge.
     private let gridOrigin: CGPoint
 
-    init(settings: ContactSheetSettings, photoCount: Int) {
+    /// `logoAspect` is the logo's width / height, nil without a logo (or before it has been read).
+    init(settings: ContactSheetSettings, photoCount: Int, logoAspect: CGFloat? = nil) {
         let page = settings.pageDimensions
         let margin = Self.margin
         let width = page.width - 2 * margin
@@ -46,10 +53,18 @@ nonisolated struct ContactSheetLayout: Equatable, Sendable {
 
         // The header, top-down.
         var top = margin
+        if let aspect = logoAspect, aspect.isFinite, aspect > 0 {
+            let height = min(Self.logoHeight, width / aspect)
+            logoRect = CGRect(x: margin, y: page.height - top - height, width: height * aspect, height: height)
+            top += height
+        } else {
+            logoRect = nil
+        }
         let headline = settings.headline.trimmingCharacters(in: .whitespacesAndNewlines)
         if headline.isEmpty {
             headlineRect = nil
         } else {
+            if logoRect != nil { top += Self.logoGap }
             let height = Self.lineHeight(Self.font(size: Self.headlineSize, bold: true))
             headlineRect = CGRect(x: margin, y: page.height - top - height, width: width, height: height)
             top += height
@@ -58,14 +73,18 @@ nonisolated struct ContactSheetLayout: Equatable, Sendable {
         if description.isEmpty {
             descriptionRect = nil
         } else {
-            if headlineRect != nil { top += Self.headerSpacing }
+            if headlineRect != nil {
+                top += Self.headerSpacing
+            } else if logoRect != nil {
+                top += Self.logoGap
+            }
             // At most a third of the page, so a long description can't push the photos off it.
             let height = Self.textHeight(description, font: Self.font(size: Self.descriptionSize, bold: false),
                                          width: width, maxHeight: (page.height - 2 * margin) / 3)
             descriptionRect = CGRect(x: margin, y: page.height - top - height, width: width, height: height)
             top += height
         }
-        if headlineRect != nil || descriptionRect != nil { top += Self.headerGap }
+        if logoRect != nil || headlineRect != nil || descriptionRect != nil { top += Self.headerGap }
 
         // The grid: whole columns across, as many rows as fit.
         let columns = min(max(settings.columns, ContactSheetSettings.columnRange.lowerBound), ContactSheetSettings.columnRange.upperBound)
@@ -119,6 +138,11 @@ nonisolated struct ContactSheetLayout: Equatable, Sendable {
     /// "4 × 5 per page · 3 pages"
     var summary: String {
         "\(columns) × \(rows) per page · \(pageCount) page\(pageCount == 1 ? "" : "s")"
+    }
+
+    /// An image's width / height.
+    static func aspect(of image: CGImage) -> CGFloat {
+        CGFloat(image.width) / CGFloat(max(image.height, 1))
     }
 
     /// A photo `aspect` (width / height) times as wide as it is tall, as large as fits in `cell`, centered.

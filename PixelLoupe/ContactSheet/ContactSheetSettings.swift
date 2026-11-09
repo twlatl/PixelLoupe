@@ -1,8 +1,8 @@
 import CoreGraphics
 import Foundation
 
-/// How a contact sheet (Window ▸ Contact Sheet) is laid out. The layout choices are remembered
-/// between sheets; the headline and description belong to one sheet and start empty.
+/// How a contact sheet (Window ▸ Contact Sheet) is laid out. The layout choices and logo are
+/// remembered between sheets; the headline and description belong to one sheet and start empty.
 nonisolated struct ContactSheetSettings: Codable, Equatable, Sendable {
     typealias Color = WatermarkSettings.Color
 
@@ -67,6 +67,8 @@ nonisolated struct ContactSheetSettings: Codable, Equatable, Sendable {
     var headline = ""
     var description = ""
 
+    /// The logo shown above the headline: its name in ``LogoImages``, or nil for none.
+    var logoName: String?
     /// Black on white by default: the colors are the printed page's, the same in Dark Mode.
     var textColor = Color(red: 0, green: 0, blue: 0)
     var backgroundColor = Color.white
@@ -83,7 +85,7 @@ nonisolated struct ContactSheetSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case textColor, backgroundColor, columns, showsBorder, showsShadow, showsCaption, captionField
-        case showsPageNumbers, pageSize, orientation
+        case showsPageNumbers, pageSize, orientation, logoName
     }
 
     // Tolerant decoding: missing or unknown values keep their defaults, so saved settings survive new options.
@@ -103,6 +105,7 @@ nonisolated struct ContactSheetSettings: Codable, Equatable, Sendable {
         showsPageNumbers = value(.showsPageNumbers, defaults.showsPageNumbers)
         pageSize = value(.pageSize, defaults.pageSize)
         orientation = value(.orientation, defaults.orientation)
+        logoName = value(.logoName, defaults.logoName)
     }
 
     /// The page in points, turned for the orientation.

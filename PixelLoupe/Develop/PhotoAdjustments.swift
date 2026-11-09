@@ -27,6 +27,7 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
     var transform = Transform()
     var profile = Profile()
     var calibration = Calibration()
+    var portraitLighting = PortraitLighting()
     var rimLight = RimLight()
     /// Local adjustments, in the order they are applied.
     var masks: [LocalAdjustment] = []
@@ -39,6 +40,12 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
 
     var isDefault: Bool { self == .default }
 
+    /// Whether Shadows renders with the per-pixel process anywhere: the photo's or a mask's.
+    var usesGainShadows: Bool {
+        (light.isEnabled && ColorLUT.Transform.hasGainShadows(light))
+            || masks.contains { $0.isActive && $0.settings.light.isEnabled && ColorLUT.Transform.hasGainShadows($0.settings.light) }
+    }
+
     // MARK: - Sections
 
     struct Light: Codable, Equatable, Sendable {
@@ -48,7 +55,13 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
         /// Lifts shadows and protects highlights together, -1…1.
         var brilliance = 0.0
         var highlights = 0.0
-        var shadows = 0.0
+        /// Lifts (positive) or deepens the dark tones, -1…1. Back at 0 it takes the current process.
+        var shadows = 0.0 {
+            didSet { if shadows == 0 { shadowsProcess = .current } }
+        }
+        /// How ``shadows`` renders. Edits made before RAW-230 keep the original process, so their look
+        /// doesn't change.
+        var shadowsProcess = ShadowsProcess.current
         /// Moves the white point: positive brightens the lightest tones, negative pulls them down, -1…1.
         var whites = 0.0
         var brightness = 0.0
@@ -56,6 +69,26 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
         var blackPoint = 0.0
 
         var isActive: Bool { isEnabled && self != Light(isEnabled: true) }
+
+        enum ShadowsProcess: Int, Codable, Sendable {
+            /// Core Image's highlight and shadow filter.
+            case highlightShadowFilter = 1
+            /// A gain in stops that fades out toward white, like Lightroom's (RAW-230).
+            case perPixelGain = 2
+
+            static let current = perPixelGain
+        }
+
+        /// `amount` of Shadows under `process` as the amount that looks about the same under
+        /// `target`, by way of the Lightroom value each matches.
+        static func shadows(_ amount: Double, from process: ShadowsProcess, to target: ShadowsProcess) -> Double {
+            guard process != target else { return amount }
+            let lightroom = LightroomScales.lightroom(fromShadows: amount, process: process)
+            switch target {
+            case .perPixelGain: return LightroomScales.shadows(lightroom)
+            case .highlightShadowFilter: return LightroomScales.filterShadows(lightroom)
+            }
+        }
     }
 
     /// Lightroom's Presence sliders: local contrast at two scales, haze, and color strength.
@@ -87,22 +120,44 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
         var amount = 0.0
         /// -1…1.
         var luminance = 0.0
+
+        /// Whether the wheel does anything: a tint or a luminance shift.
+        var isSet: Bool { amount > 0 || luminance != 0 }
     }
 
     struct ColorGrading: Codable, Equatable, Sendable {
         var isEnabled = true
-        var shadows = ColorWheel()
-        var midtones = ColorWheel()
-        var highlights = ColorWheel()
+        var shadows = ColorWheel() { didSet { takeCurrentProcessIfUnset() } }
+        var midtones = ColorWheel() { didSet { takeCurrentProcessIfUnset() } }
+        var highlights = ColorWheel() { didSet { takeCurrentProcessIfUnset() } }
         /// Tints the whole photo, whatever the tone.
-        var global = ColorWheel()
+        var global = ColorWheel() { didSet { takeCurrentProcessIfUnset() } }
         /// Shifts the split between shadows and highlights, -1…1.
         var balance = 0.0
         /// How far the shadow, midtone and highlight wheels reach into each other, 0…1 (0.5 is the
         /// default look; 0 splits the tones sharply).
         var blending = 0.5
+        /// How the wheels render. Grades made before RAW-242 keep the original process, so their look
+        /// doesn't change; with every wheel back at the center it takes the current one.
+        var process = Process.current
 
         var isActive: Bool { isEnabled && self != ColorGrading(isEnabled: true) }
+
+        /// Whether any wheel tints or shifts luminance.
+        var hasWheels: Bool { [shadows, midtones, highlights, global].contains(where: \.isSet) }
+
+        enum Process: Int, Codable, Sendable {
+            /// Additive tints in gamma-encoded RGB over smoothstep tonal ranges (v1.2.0).
+            case additiveTint = 1
+            /// Per-channel gains in linear ProPhoto RGB, fitted to Lightroom Classic (RAW-242).
+            case proPhotoGain = 2
+
+            static let current = proPhotoGain
+        }
+
+        private mutating func takeCurrentProcessIfUnset() {
+            if !hasWheels { process = .current }
+        }
     }
 
     struct BlackAndWhite: Codable, Equatable, Sendable {
@@ -211,16 +266,27 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
     /// Finishing effects (Lightroom's Effects panel). Grain lives here, so color photos can have it too.
     struct Effects: Codable, Equatable, Sendable {
         var isEnabled = true
-        /// Film grain amount, 0…1.
-        var grain = 0.0
+        /// Film grain amount, 0…1. Back at 0 it takes the current process.
+        var grain = 0.0 { didSet { if grain == 0 { grainProcess = .current } } }
         /// Grain size, 0…1 (0.25 is Lightroom's default).
         var grainSize = 0.25
         /// How crisp the grain is, 0…1: low is soft and blotchy, high is sharp (0.5 is the default).
         var grainRoughness = 0.5
         /// Makes this photo's grain pattern its own; a photo keeps the same grain every time it renders.
         var grainSeed = 0
+        /// How the grain renders. Grain added before RAW-284 keeps the original process, so its look doesn't change.
+        var grainProcess = GrainProcess.current
 
         var isActive: Bool { isEnabled && grain != 0 }
+
+        enum GrainProcess: Int, Codable, Sendable {
+            /// Gray noise enlarged to the grain size and laid over the photo with Overlay (before RAW-284).
+            case overlay = 1
+            /// Fitted to Lightroom Classic's grain (RAW-284).
+            case fitted = 2
+
+            static let current = fitted
+        }
     }
 
     /// Rim Light (RAW-203, from Pixegen's Filter ▸ Rim Light): up to three colored lights behind the subject that
@@ -262,6 +328,41 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
             return Light(angle: last.angle > 0 ? last.angle - 180 : last.angle + 180, red: color.0, green: color.1, blue: color.2,
                          strength: 0.5, width: last.width, choke: last.choke)
         }
+    }
+
+    /// Portrait Lighting (RAW-211): studio-style lighting on the people in the photo. Off on a new photo; turning it
+    /// off keeps the effect and Intensity for turning it back on.
+    struct PortraitLighting: Codable, Equatable, Sendable {
+        enum Effect: String, Codable, CaseIterable, Sendable {
+            /// A soft key light on each face, from above the camera.
+            case studio
+            /// A key light from one side of each face and a shadow on the other.
+            case contour
+            /// The people on black.
+            case stage
+            /// The people in black and white on black.
+            case stageMono
+
+            var title: String {
+                switch self {
+                case .studio: "Studio"
+                case .contour: "Contour"
+                case .stage: "Stage"
+                case .stageMono: "Stage Mono"
+                }
+            }
+
+            /// Whether the effect needs the faces as well as the people (RAW-215).
+            var usesFaces: Bool { self == .studio || self == .contour }
+        }
+
+        var isEnabled = false
+        var effect = Effect.studio
+        /// How strong the effect is, 0…1; for Stage, how dark the background goes.
+        var intensity = 1.0
+
+        /// Stage Mono still turns the people black and white at Intensity 0.
+        var isActive: Bool { isEnabled && (intensity > 0 || effect == .stageMono) }
     }
 
     struct RedEye: Codable, Equatable, Sendable {
@@ -348,6 +449,24 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
         }
 
         var isActive: Bool { isEnabled && self != Curves(isEnabled: true) }
+
+        /// What the Point Curve menu shows: the preset the point curve draws while the red, green and
+        /// blue curves are untouched, or `nil` for Custom. Worked out from the curves, not stored.
+        var pointCurvePreset: PointCurvePreset? {
+            guard red.isIdentity, green.isIdentity, blue.isIdentity else { return nil }
+            return PointCurvePreset(matching: rgb)
+        }
+
+        /// Lightroom's `ToneCurveName2012` for these curves.
+        var pointCurveName: String { pointCurvePreset?.rawValue ?? "Custom" }
+
+        /// As choosing a preset in the Point Curve menu: it replaces the point curve and resets red, green and blue.
+        mutating func apply(_ preset: PointCurvePreset) {
+            rgb = preset.curve
+            red = .identity
+            green = .identity
+            blue = .identity
+        }
     }
 
     struct Levels: Codable, Equatable, Sendable {
@@ -518,8 +637,8 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
 
     struct Vignette: Codable, Equatable, Sendable {
         var isEnabled = true
-        /// Darkens (positive) or lightens (negative) the edges, -1…1.
-        var strength = 0.0
+        /// Darkens (positive) or lightens (negative) the edges, -1…1. Back at 0 it takes the current process.
+        var strength = 0.0 { didSet { if strength == 0 { process = .current } } }
         /// Midpoint: how far from the center the effect begins, 0…1.
         var radius = 0.5
         /// Feather: how gradually it builds, 0…1.
@@ -529,6 +648,18 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
         var style = Style.highlightPriority
         /// With highlight priority, how much bright areas keep their brightness, 0…1.
         var highlightContrast = 0.0
+        /// How the vignette renders. Vignettes made before RAW-275 keep the original process, so their look
+        /// doesn't change.
+        var process = Process.current
+
+        enum Process: Int, Codable, Sendable {
+            /// Black or white laid over the photo in the working space, with a radial-gradient mask.
+            case linearOverlay = 1
+            /// Fitted to Lightroom Classic's post-crop vignette (RAW-275).
+            case fitted = 2
+
+            static let current = fitted
+        }
 
         enum Style: String, Codable, CaseIterable, Sendable {
             /// Darkens or lightens while protecting highlights.
@@ -556,7 +687,7 @@ nonisolated extension PhotoAdjustments {
 
     private enum CodingKeys: String, CodingKey {
         case light, color, blackAndWhite, redEye, whiteBalance, curves, levels, definition
-        case selectiveColor, noiseReduction, sharpen, vignette, crop, orientation, lens, presence, effects, transform, profile, calibration, rimLight
+        case selectiveColor, noiseReduction, sharpen, vignette, crop, orientation, lens, presence, effects, transform, profile, calibration, portraitLighting, rimLight
         case masks, spots, redEyes
     }
 
@@ -587,6 +718,7 @@ nonisolated extension PhotoAdjustments {
         transform = try decode(.transform, transform)
         profile = try decode(.profile, profile)
         calibration = try decode(.calibration, calibration)
+        portraitLighting = try decode(.portraitLighting, portraitLighting)
         rimLight = try decode(.rimLight, rimLight)
         masks = try decode(.masks, masks)
         spots = try decode(.spots, spots)
@@ -613,6 +745,19 @@ nonisolated extension PhotoAdjustments {
         // Stable output, so unchanged settings compare equal and don't dirty the photo.
         encoder.outputFormatting = .sortedKeys
         return try? encoder.encode(self)
+    }
+}
+
+/// Portrait Lighting's fields missing from saved settings, or an effect this version doesn't know, decode as defaults.
+nonisolated extension PhotoAdjustments.PortraitLighting {
+    private enum CodingKeys: String, CodingKey { case isEnabled, effect, intensity }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? isEnabled
+        effect = (try? container.decodeIfPresent(String.self, forKey: .effect)).flatMap { $0.flatMap(Effect.init(rawValue:)) } ?? effect
+        intensity = try container.decodeIfPresent(Double.self, forKey: .intensity) ?? intensity
     }
 }
 
@@ -646,10 +791,11 @@ nonisolated extension PhotoAdjustments.RimLight.Light {
     }
 }
 
-/// Saved settings from before `whites` existed still decode: missing fields keep their defaults.
+/// Saved settings from before `whites` existed still decode: missing fields keep their defaults. Shadows
+/// saved without a process predate RAW-230, so they keep the original one.
 nonisolated extension PhotoAdjustments.Light {
     private enum CodingKeys: String, CodingKey {
-        case isEnabled, exposure, brilliance, highlights, shadows, whites, brightness, contrast, blackPoint
+        case isEnabled, exposure, brilliance, highlights, shadows, shadowsProcess, whites, brightness, contrast, blackPoint
     }
 
     init(from decoder: Decoder) throws {
@@ -660,6 +806,11 @@ nonisolated extension PhotoAdjustments.Light {
         brilliance = try container.decodeIfPresent(Double.self, forKey: .brilliance) ?? brilliance
         highlights = try container.decodeIfPresent(Double.self, forKey: .highlights) ?? highlights
         shadows = try container.decodeIfPresent(Double.self, forKey: .shadows) ?? shadows
+        if shadows != 0 {
+            // A process this version doesn't know renders with the current one.
+            let stored = (try? container.decodeIfPresent(Int.self, forKey: .shadowsProcess)) ?? ShadowsProcess.highlightShadowFilter.rawValue
+            shadowsProcess = ShadowsProcess(rawValue: stored) ?? .current
+        }
         whites = try container.decodeIfPresent(Double.self, forKey: .whites) ?? whites
         brightness = try container.decodeIfPresent(Double.self, forKey: .brightness) ?? brightness
         contrast = try container.decodeIfPresent(Double.self, forKey: .contrast) ?? contrast
@@ -683,9 +834,10 @@ nonisolated extension PhotoAdjustments.Curves {
     }
 }
 
-/// Color grading saved before the Global wheel and Blending decode with them at their defaults.
+/// Color grading saved before the Global wheel and Blending decode with them at their defaults. Wheels saved
+/// without a process predate RAW-242, so they keep the original one.
 nonisolated extension PhotoAdjustments.ColorGrading {
-    private enum CodingKeys: String, CodingKey { case isEnabled, shadows, midtones, highlights, global, balance, blending }
+    private enum CodingKeys: String, CodingKey { case isEnabled, shadows, midtones, highlights, global, balance, blending, process }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -697,6 +849,11 @@ nonisolated extension PhotoAdjustments.ColorGrading {
         global = try container.decodeIfPresent(PhotoAdjustments.ColorWheel.self, forKey: .global) ?? global
         balance = try container.decodeIfPresent(Double.self, forKey: .balance) ?? balance
         blending = try container.decodeIfPresent(Double.self, forKey: .blending) ?? blending
+        if hasWheels {
+            // A process this version doesn't know renders with the current one.
+            let stored = (try? container.decodeIfPresent(Int.self, forKey: .process)) ?? Process.additiveTint.rawValue
+            process = Process(rawValue: stored) ?? .current
+        }
     }
 }
 
@@ -757,7 +914,7 @@ nonisolated extension PhotoAdjustments.NoiseReduction {
 }
 
 nonisolated extension PhotoAdjustments.Vignette {
-    private enum CodingKeys: String, CodingKey { case isEnabled, strength, radius, softness, roundness, style, highlightContrast }
+    private enum CodingKeys: String, CodingKey { case isEnabled, strength, radius, softness, roundness, style, highlightContrast, process }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -769,11 +926,17 @@ nonisolated extension PhotoAdjustments.Vignette {
         roundness = try container.decodeIfPresent(Double.self, forKey: .roundness) ?? roundness
         style = try container.decodeIfPresent(Style.self, forKey: .style) ?? style
         highlightContrast = try container.decodeIfPresent(Double.self, forKey: .highlightContrast) ?? highlightContrast
+        if strength != 0 {
+            // Vignettes saved without a process predate RAW-275; a process this version doesn't know renders with
+            // the current one.
+            let stored = (try? container.decodeIfPresent(Int.self, forKey: .process)) ?? Process.linearOverlay.rawValue
+            process = Process(rawValue: stored) ?? .current
+        }
     }
 }
 
 nonisolated extension PhotoAdjustments.Effects {
-    private enum CodingKeys: String, CodingKey { case isEnabled, grain, grainSize, grainRoughness, grainSeed }
+    private enum CodingKeys: String, CodingKey { case isEnabled, grain, grainSize, grainRoughness, grainSeed, grainProcess }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -783,6 +946,12 @@ nonisolated extension PhotoAdjustments.Effects {
         grainSize = try container.decodeIfPresent(Double.self, forKey: .grainSize) ?? grainSize
         grainRoughness = try container.decodeIfPresent(Double.self, forKey: .grainRoughness) ?? grainRoughness
         grainSeed = try container.decodeIfPresent(Int.self, forKey: .grainSeed) ?? grainSeed
+        if grain != 0 {
+            // Grain saved without a process predates RAW-284; a process this version doesn't know renders with the
+            // current one.
+            let stored = (try? container.decodeIfPresent(Int.self, forKey: .grainProcess)) ?? GrainProcess.overlay.rawValue
+            grainProcess = GrainProcess(rawValue: stored) ?? .current
+        }
     }
 }
 

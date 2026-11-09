@@ -4,7 +4,7 @@ import Foundation
 /// The panorama sheet's preview, rendered off the main thread.
 nonisolated struct PanoramaMergePreview: @unchecked Sendable {
     /// The panorama as it will first look in PixelLoupe (Display P3), with a checkerboard where the
-    /// photos don't reach.
+    /// photos don't reach (none with Fill Edges, which fills them).
     let image: CGImage
     /// The full-resolution size of what `image` shows (the crop, with Auto Crop on).
     let photoSize: CGSize
@@ -25,6 +25,7 @@ actor PanoramaMergePreviewer {
     private struct Key: Equatable {
         var projection: PanoramaProjection
         var boundaryWarp: Int
+        var fillEdges: Bool
         var maxPixels: CGFloat
     }
     private struct SettingsKey: Hashable {
@@ -32,16 +33,18 @@ actor PanoramaMergePreviewer {
         var boundaryWarp: Int
         var autoSettings: Bool
         var autoCrop: Bool
+        var fillEdges: Bool
     }
     private var cached: (key: Key, url: URL, result: PanoramaMergeResult, scale: CGFloat)?
     private var settings: [SettingsKey: PhotoAdjustments] = [:]
 
-    init(sources: [PhotoMergeSource]) throws {
-        merger = try PanoramaMerger(sources: sources)
+    /// With `brackets` (HDR Panorama), each set is merged as one photo, and the counts are of sets.
+    init(sources: [PhotoMergeSource], brackets: [[PhotoMergeSource]]? = nil) throws {
+        merger = try brackets.map { try PanoramaMerger(brackets: $0) } ?? PanoramaMerger(sources: sources)
         lensWarning = merger.lensWarning
         allowsPerspective = merger.allowsPerspective
         mergedCount = merger.mergedCount
-        photoCount = sources.count
+        photoCount = brackets?.count ?? sources.count
         directory = FileManager.default.temporaryDirectory
             .appending(path: "PixelLoupe-PanoramaPreview-\(UUID().uuidString)", directoryHint: .isDirectory)
     }
@@ -57,7 +60,7 @@ actor PanoramaMergePreviewer {
         let full = try merger.size(for: options.projection)
         let crop = adjustments.crop.rect
         let shown = CGSize(width: full.width * crop.width, height: full.height * crop.height)
-        let image = try draw(merged.url, adjustments: adjustments, coverage: options.autoCrop ? nil : merged.result.coverage)
+        let image = try draw(merged.url, adjustments: adjustments, coverage: options.cropsToCovered ? nil : merged.result.coverage)
         return PanoramaMergePreview(image: image, photoSize: shown)
     }
 
@@ -85,14 +88,14 @@ actor PanoramaMergePreviewer {
         // The part is already cut out: its settings without the crop.
         var uncropped = adjustments
         uncropped.crop = PhotoAdjustments.Crop()
-        let image = try draw(url, adjustments: uncropped, coverage: options.autoCrop ? nil : result.coverage)
+        let image = try draw(url, adjustments: uncropped, coverage: options.cropsToCovered ? nil : result.coverage)
         return PanoramaMergePreview(image: image, photoSize: shown.size)
     }
 
     /// Auto Settings' and Auto Crop's starting settings, worked out once for each combination.
     private func startingAdjustments(_ options: PanoramaMergeOptions) async throws -> PhotoAdjustments {
         let key = SettingsKey(projection: options.projection, boundaryWarp: options.boundaryWarp,
-                              autoSettings: options.autoSettings, autoCrop: options.autoCrop)
+                              autoSettings: options.autoSettings, autoCrop: options.autoCrop, fillEdges: options.fillEdges)
         if let adjustments = settings[key] { return adjustments }
         let adjustments = try await merger.startingAdjustments(options: options, directory: directory)
         settings[key] = adjustments
@@ -100,7 +103,7 @@ actor PanoramaMergePreviewer {
     }
 
     private func preview(options: PanoramaMergeOptions, maxPixels: CGFloat) throws -> (url: URL, result: PanoramaMergeResult) {
-        let key = Key(projection: options.projection, boundaryWarp: options.boundaryWarp, maxPixels: maxPixels)
+        let key = Key(projection: options.projection, boundaryWarp: options.boundaryWarp, fillEdges: options.fillEdges, maxPixels: maxPixels)
         if let cached, cached.key == key { return (cached.url, cached.result) }
         let size = try merger.size(for: options.projection)
         let scale = min(1, maxPixels / max(size.width, size.height, 1))

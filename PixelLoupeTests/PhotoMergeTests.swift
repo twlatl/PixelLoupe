@@ -124,9 +124,12 @@ struct PhotoMergeTests {
     @Test func menusOfferHDRAndPanoramaWithLightroomsShortcuts() async throws {
         let photoMenu = try #require(MainMenu.make().items.first { $0.title == "Photo" }?.submenu)
         let merge = try #require(photoMenu.items.first { $0.title == "Photo Merge" }?.submenu)
-        let titles = ["HDR…", "HDR with Previous Settings", "Panorama…", "Panorama with Previous Settings"]
+        let titles = ["HDR…", "HDR with Previous Settings", "Panorama…", "Panorama with Previous Settings", "HDR Panorama…"]
         #expect(merge.items.map(\.title) == titles)
         let hdr = merge.items[0], headlessHDR = merge.items[1], panorama = merge.items[2], headless = merge.items[3]
+        let hdrPanorama = merge.items[4]
+        // No shortcuts for HDR Panorama, and no headless alternate, as in Lightroom.
+        #expect(hdrPanorama.keyEquivalent.isEmpty && !hdrPanorama.isAlternate)
         #expect(hdr.keyEquivalent == "h" && hdr.keyEquivalentModifierMask == .control)
         #expect(panorama.keyEquivalent == "m" && panorama.keyEquivalentModifierMask == .control)
         // Holding Shift turns HDR… and Panorama… into the headless merges (⌃⇧H, ⌃⇧M).
@@ -135,7 +138,7 @@ struct PhotoMergeTests {
 
         let setup = try await Setup()
         let controller = CatalogWindowController(store: setup.store)
-        for item in [hdr, headlessHDR, panorama, headless] {
+        for item in [hdr, headlessHDR, panorama, headless, hdrPanorama] {
             controller.state.selectedPhotoIDs = [setup.ids[0]]
             #expect(!controller.validateUserInterfaceItem(item), "\(item.title) needs two photos")
             controller.state.selectedPhotoIDs = setup.ids

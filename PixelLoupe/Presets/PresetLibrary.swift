@@ -1,11 +1,20 @@
 import Foundation
 
-/// PixelLoupe's presets: the `.xmp` files in its own folder (one subfolder per group), loaded off the
-/// main thread. Importing copies preset files (or every preset in a folder, such as Lightroom's own)
-/// into it.
+/// PixelLoupe's presets: the `.xmp` files in its own folder (one subfolder per group), and the ones it
+/// ships with, loaded off the main thread. Importing copies preset files (or every preset in a folder,
+/// such as Lightroom's own) into its folder.
 @MainActor
 final class PresetLibrary {
-    static let shared = PresetLibrary(directory: defaultDirectory)
+    static let shared = PresetLibrary(directory: defaultDirectory, builtInFiles: bundledPresetFiles)
+
+    /// The group PixelLoupe's own presets are listed under.
+    nonisolated static let builtInGroup = "PixelLoupe Presets"
+
+    /// The presets that ship in the app (`Resources/Presets`, copied flat into the bundle's resources).
+    /// Read from the bundle, so an update brings new versions and they can't be changed or deleted.
+    nonisolated static var bundledPresetFiles: [URL] {
+        Bundle.main.urls(forResourcesWithExtension: "xmp", subdirectory: nil) ?? []
+    }
 
     /// `~/Library/Application Support/Pixegen/PixelLoupe/Settings`. (Per user: `/Library` would need an
     /// administrator to write to it.)
@@ -27,6 +36,8 @@ final class PresetLibrary {
     static let didChangeNotification = Notification.Name("PresetLibraryDidChange")
 
     let directory: URL
+    /// Presets read from elsewhere (the app bundle) that are listed but can't be edited.
+    let builtInFiles: [URL]
     /// Where imported profiles go: the shared library, or (for a library elsewhere, as in tests) a
     /// Profiles folder beside it.
     let profiles: AdobeProfileLibrary
@@ -34,8 +45,9 @@ final class PresetLibrary {
     private(set) var isLoaded = false
     private var loadTask: Task<Void, Never>?
 
-    init(directory: URL) {
+    init(directory: URL, builtInFiles: [URL] = []) {
         self.directory = directory
+        self.builtInFiles = builtInFiles
         profiles = directory.standardizedFileURL == Self.defaultDirectory.standardizedFileURL
             ? .shared
             : AdobeProfileLibrary(directory: directory.deletingLastPathComponent().appending(path: "Profiles", directoryHint: .isDirectory))
@@ -53,8 +65,9 @@ final class PresetLibrary {
         if isLoaded, !force { return }
         if let loadTask, !force { await loadTask.value; return }
         let directory = directory
+        let builtInFiles = builtInFiles
         let task = Task {
-            let loaded = await Self.read(directory)
+            let loaded = await Self.read(directory, builtIn: builtInFiles)
             presets = loaded
             isLoaded = true
             NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
@@ -65,8 +78,14 @@ final class PresetLibrary {
     }
 
     @concurrent
-    private nonisolated static func read(_ directory: URL) async -> [DevelopPreset] {
-        presetFiles(in: directory).compactMap { url, group in DevelopPreset.load(url, defaultGroup: group) }
+    private nonisolated static func read(_ directory: URL, builtIn: [URL]) async -> [DevelopPreset] {
+        builtIn.compactMap { DevelopPreset.load($0, defaultGroup: builtInGroup) }
+            + presetFiles(in: directory).compactMap { url, group in DevelopPreset.load(url, defaultGroup: group) }
+    }
+
+    /// Whether `preset` is one PixelLoupe ships with, which can't be changed.
+    func isBuiltIn(_ preset: DevelopPreset) -> Bool {
+        builtInFiles.contains { $0.standardizedFileURL == preset.url.standardizedFileURL }
     }
 
     /// Every `.xmp` file (or file of `extensions`) in `directory` and below, with the folder it's in as
@@ -147,12 +166,14 @@ final class PresetLibrary {
         case nameTaken(String)
         case emptyName
         case notInLibrary
+        case builtIn
 
         var errorDescription: String? {
             switch self {
             case .nameTaken(let name): "A preset named “\(name)” is already in that group."
             case .emptyName: "A preset needs a name."
             case .notInLibrary: "That preset isn’t in PixelLoupe’s presets folder."
+            case .builtIn: "PixelLoupe’s own presets can’t be changed. Create a preset from it to make your own version."
             }
         }
     }
@@ -223,6 +244,7 @@ final class PresetLibrary {
     }
 
     private func requireInLibrary(_ preset: DevelopPreset) throws {
+        if isBuiltIn(preset) { throw PresetError.builtIn }
         let folder = directory.standardizedFileURL.path(percentEncoded: false)
         guard preset.url.standardizedFileURL.path(percentEncoded: false).hasPrefix(folder) else { throw PresetError.notInLibrary }
     }

@@ -34,6 +34,7 @@ nonisolated enum AutoDevelop {
         result.light.isEnabled = true
         result.light.exposure = auto.exposure
         result.light.shadows = auto.shadows
+        result.light.shadowsProcess = auto.shadowsProcess
         result.light.whites = 0
         result.light.blackPoint = 0
         result.presence.vibrance = 0

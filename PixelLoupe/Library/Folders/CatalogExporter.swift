@@ -9,8 +9,8 @@ enum CatalogExporter {
         /// Lightroom's "Export negative files": copies the photos' files next to the new catalog,
         /// which then refers to the copies. Otherwise it refers to the files where they are.
         var copiesFiles = true
-        /// "Include available previews": copies the thumbnails, so the catalog opens without
-        /// redrawing them.
+        /// "Include available previews": copies the thumbnails and Standard previews, so the catalog
+        /// opens without redrawing them.
         var includesPreviews = true
         /// "Build / Include Smart Previews": copies the photos' Smart Previews, building those that
         /// are missing or out of date, so the catalog can be edited without the originals.
@@ -57,6 +57,7 @@ enum CatalogExporter {
         }
         if options.includesPreviews {
             await copyPreviews(manifest.photoIDs, from: store.thumbnails.directory, to: target.thumbnails.directory)
+            await copyStandardPreviews(manifest.photoIDs, from: store.standardPreviews.directory, to: target.standardPreviews.directory)
         }
         if options.includesSmartPreviews {
             await store.smartPreviews.load()
@@ -228,6 +229,25 @@ enum CatalogExporter {
             let from = ThumbnailStore.url(for: id, in: source)
             guard fileManager.fileExists(atPath: from.path(percentEncoded: false)) else { continue }
             try? fileManager.copyItem(at: from, to: ThumbnailStore.url(for: id, in: destination))
+        }
+    }
+
+    /// Copies Standard previews, current or stale (the new catalog redraws a stale one when it opens).
+    @concurrent
+    private static func copyStandardPreviews(_ ids: [UUID], from source: URL, to destination: URL) async {
+        let fileManager = FileManager.default
+        var madeDirectory = false
+        for id in ids {
+            for (from, to) in [
+                (StandardPreviewStore.url(for: id, in: source), StandardPreviewStore.url(for: id, in: destination)),
+                (StandardPreviewStore.staleURL(for: id, in: source), StandardPreviewStore.staleURL(for: id, in: destination)),
+            ] where fileManager.fileExists(atPath: from.path(percentEncoded: false)) {
+                if !madeDirectory {
+                    try? fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+                    madeDirectory = true
+                }
+                try? fileManager.copyItem(at: from, to: to)
+            }
         }
     }
 }

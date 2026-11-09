@@ -27,6 +27,7 @@ extension CatalogWindowController {
         switch state.filter.scope {
         case .allPhotos: "All Photographs"
         case .previousImport: "Previous Import"
+        case .duplicates: "Duplicates"
         case .folder(let path): (path as NSString).lastPathComponent
         case .collection(let id, _): PhotoCollection.with(id: id, in: store.viewContext)?.name ?? "Collection"
         case .importDifference(let reason): LightroomImportReport.title(forReason: reason)

@@ -89,7 +89,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
   3D color lookup table, which also carries Whites, Vibrance and Saturation. Texture, Clarity and Dehaze (the
   Adjust panel's Presence section) are Core Image filters on the GPU. The preview renders at display resolution on an `MTKView`.
 - **Catalogs:** each catalog is a `.pixelloupe` package containing its own Core Data (SQLite) store,
-  `Catalog.plist` settings and a `Thumbnails` cache. Catalogs either copy imported photos into a storage
+  `Catalog.plist` settings, a `Settings.plist` of Catalog Settings (`⌥⌘,`) and a `Thumbnails` cache. Catalogs either copy imported photos into a storage
   folder organized as `YYYY/MM-DD`, or reference photos where they already are. Catalogs made before the app
   was renamed (`.lightloupe` from LightLoupe, `.rawloupe` from RawLoupe) still open; they aren't renamed.
 - **Earlier names:** PixelLoupe was LightLoupe, and RawLoupe before that. On first launch it copies the old
@@ -153,13 +153,14 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `⌘F` | Show the Library Filter bar's Text mode (alongside any other active modes) and put the cursor in its search field |
 | `` ` `` | Show or hide the Develop loupe (hold and click to place it) |
 | `⌘,` | Settings (General: confirm when quitting; Appearance: appearance, matte color and Monochrome Mode; Import: JPEG sidecars and opening the import window when a card is inserted; Displays: the secondary window's display; External Editing) |
+| `⌥⌘,` | Catalog Settings (the open catalog's own settings, in a sheet on its window; General: where the catalog is, its file name, when it was made and the size of its database; Previews: Standard preview size and quality, a limit on the preview cache, and how much space previews take; Metadata: whether exported, published and Edit In files carry the photo's develop settings, and Duplicate Detection; Backups: where and how often the catalog is backed up, how many backups are kept, and the backups made) |
 | `⌘Q` | Quit, after asking "Are you sure you want to quit?" (Return quits; turn the question off in Settings ▸ General or with its Don't ask again box) |
 | `⌃⌘F` | Enter or exit full screen for the app window |
 | `F6` | Show or hide the filmstrip |
 | `⌘F11` / `⇧⌘F11` | Show or hide the secondary window / make it full screen, on the display chosen in Settings ▸ Displays (also the toolbar's display button and Window ▸ Secondary Display; the button shows when more than one display is connected) |
 | `⇧G` / `⇧E` / `⇧C` / `⇧N` | Secondary window: Grid / Loupe – Normal / Compare / Survey (opens it if it's hidden). Window ▸ Secondary Display also has Loupe – Live (the photo under the pointer in the main window) and Show Second Monitor Preview (while it's full screen). In the secondary window `=` / `-` size its own thumbnails, `E` or `Return` switches views, `←` / `→` step through photos (or candidates in Compare) and `Esc` returns to the grid |
 | `⇧⌘Return` | Secondary window: Loupe – Locked (keeps the photo on show until you choose another view; again to unlock) |
-| `R` | Crop & Straighten (Develop); in the crop tool `Return` applies, `Esc` cancels, `X` flips the orientation |
+| `R` | Crop & Straighten (Develop); in the crop tool `Return` applies, `Esc` cancels, `X` flips the orientation, `O` cycles the guide overlay, `⇧O` turns it, `⌥`-scroll sizes the Grid guide |
 | `J` | Show or hide shadow and highlight clipping on the Develop preview |
 | `Y` / `⌥Y` / `⇧Y` | Develop's Before/After (View ▸ Before/After): the photo before its edits left of / above the edited photo, or Split Screen (one photo, before left of a line down the middle and after right of it); the same key again goes back to the edited photo |
 | `\` | Library: show or hide the Library Filter bar (View ▸ Hide Filter Bar; hiding it keeps its filters, and the filmstrip shows "42 of 310 photos" while they leave photos out). Develop: Before Only, the photo before its edits; `\` again shows it edited |
@@ -187,6 +188,10 @@ In the Develop Adjust panel, double-click a slider's label, a color wheel or the
 
 The side panels' sliders (Develop, Crop, Lens, Masking, Retouch and the preset Amount) also reset when you double-click
 the knob.
+
+Click a slider's value (the number at the right of its label, including Crop's Angle) to type a new one, in the units it
+shows (50 for 50%), and press Return or Tab, or click elsewhere, to enter it; Escape leaves the value as it was. A value
+outside the slider's range is set to the nearest end.
 
 Sliders that set a value have tick marks under the track at every tenth of the range (5 on each side of the middle, the
 middle one longer when it's 0); hold Option while dragging to snap to them (so a −5…+5 slider such as Exposure stops at
@@ -314,6 +319,9 @@ are fixed when the window opens, and you can open several contact sheets at once
 The middle of the window shows the pages as they'll print, with the photos' Develop edits; the sidebar on the right
 sets them up, and the pages follow as you change it:
 
+- **Logo**: a PNG or JPG image above the headline, at the top-left of every page, up to ¾ inch tall (a wide logo is
+  narrowed to fit between the margins). **Choose…** copies the image into PixelLoupe's Application Support folder, so
+  moving or deleting the original doesn't take it off the sheet; **Remove** takes it off.
 - **Headline** and **Description**, at the top of every page (they start empty for each sheet).
 - **Text Color** and **Background Color**: black on white unless you choose others.
 - **Page Size** (US Letter, A4, Tabloid or A3; Letter or A4 to begin with, by region), **Orientation** and **Page
@@ -337,6 +345,8 @@ window opens, and you can open several galleries at once.
 The middle of the window shows the gallery as a browser shows it, with the photos' Develop edits; its page links work.
 The sidebar on the right sets it up, and the preview follows as you change it, staying on the page you're viewing:
 
+- **Logo**: a PNG or JPG image above the headline on every page, up to 96 pixels tall (narrower on a small screen
+  when it's wide), shared with contact sheets' Choose… and Remove.
 - **Headline** and **Description**, at the top of every page (they start empty for each gallery).
 - **Email**: a link under them that opens the viewer's mail app. Every character of it is written as an HTML character
   reference, so the address isn't in the page as plain text for address harvesters to find.
@@ -362,12 +372,13 @@ or a click beside the photo closes it, on the page of the photo it was showing. 
 
 The choices other than the headline and description are remembered for the next gallery. **Generate…** asks for a
 folder and writes the gallery into it in the background: `index.html` (then `page-2.html`, …), `gallery.css`,
-`gallery.js` (the lightbox, with no libraries, so it works offline and opened from the disk), `photos.js`, and each
+`gallery.js` (the lightbox, with no libraries, so it works offline and opened from the disk), `photos.js`, the logo
+(`images/logo.png` or `images/logo.jpg`, as chosen), and each
 photo twice, numbered in order (`images/thumbs/001.jpg`, about 800 pixels on the long edge, and `images/large/001.jpg`,
 2048), as sRGB JPEGs with their Develop edits, screen sharpening, and only the copyright and creator from their metadata.
 A photo that can't be read uses its thumbnail, or has no image (you're told which). If the folder already has an
 `index.html` you're asked before it's replaced; only the gallery's own files are replaced, and pages and images left
-from a larger gallery are removed. Cancel stops it without changing the folder. The folder is shown in the Finder when
+from a larger gallery (or a logo this one doesn't have) are removed. Cancel stops it without changing the folder. The folder is shown in the Finder when
 it's done.
 
 ## Library views
@@ -499,8 +510,24 @@ The Catalog section of the left sidebar (below the Navigator) has, as in Lightro
   place as the photos come in; if every photo of the last import is removed, it shows the one before. It's dimmed
   until something is imported, which includes catalogs made before PixelLoupe kept track of imports (until their next
   import). A catalog imported from Lightroom Classic starts with Lightroom's own previous import.
+- **Duplicates:** with Catalog Settings ▸ Metadata ▸ Automatically detect duplicates on (it's off at first), the photos
+  whose original file is identical to another photo's. Originals are read in the background ("Checking for
+  Duplicates" under the grid), new photos as they're added; offline originals are tried again the next time the
+  catalog opens. Virtual copies and a RAW file's JPEG never count, and nothing is removed.
 
 The grid's source (a Catalog item, folder or collection) is restored when the catalog is opened again.
+
+## Catalog backups
+
+Catalog Settings ▸ Backups chooses when PixelLoupe offers to back the catalog up as it quits: never, once a month, once
+a week (the default), once a day, every time, or only the next time (then the earlier choice comes back). When one is
+due, a sheet asks to **Back Up** or **Skip This Time** (asked again at the next quit), with **Test integrity before
+backing up** (SQLite's `integrity_check` on the copy; a copy that fails is reported and not kept). A backup is the
+catalog database (copied with `VACUUM INTO`, so it's consistent and compacted) and its settings files, zipped as
+`<backup folder>/YYYY-MM-DD HHMM/<catalog>.zip`; unzipped, it opens with File ▸ Open Catalog. Previews, thumbnails and
+Smart Previews aren't included. The backup folder is a Backups folder next to the catalog unless another is chosen;
+only the newest backups are kept (10 unless changed). The pane lists the backups found in the folder, with Show in
+Finder and Delete.
 
 ## Folders
 
@@ -576,12 +603,22 @@ The `sidebar.right` toolbar button shows or hides the Library's right sidebar, f
   on every selected photo (not just the target photo, whatever Metadata's Target Photo / Selected Photos says), are
   saved in the catalog only (the original files keep theirs, and exports use the catalog's) and are undoable.
 
-## Curves (Develop)
+## Tone Curve (Develop)
 
-The Curves section has **Parametric**, **Point** and **R / G / B** modes. In a point mode, click the graph to add a point
+The Tone Curve section (named as in Lightroom) has **Parametric**, **Point** and **R / G / B** modes, picked with the
+**Adjust** buttons (a dot under a button means that curve has been changed). Its graph is square
+and as wide as the panel, with the photo's histogram behind the curve (that channel's in R / G / B, all three added
+together otherwise); the curve is drawn in white over the unchanged diagonal, and the R / G / B graphs are tinted
+from the channel's color to its complement, as in Lightroom. In a point mode, click the graph to add a point
 (up to 16), drag a point to move it, drag it off the graph or double-click it to delete it, and double-click empty space to
-reset the curve. Parametric mode shows the four regions (Shadows, Darks, Lights, Highlights) as sliders and lets you drag
-the dividers between them. The parametric curve is applied before the point curve; both are baked into the color table.
+reset the curve. **Input** and **Output** under the graph show the selected point (the last one clicked or dragged) in
+0–255; type in either to move it. Hovering over the graph shows the input and the curve's output there in its corner.
+The **Point Curve** menu under the graph has Lightroom's Linear, Medium Contrast and Strong Contrast
+curves: choosing one replaces the point curve and resets the red, green and blue curves; it shows Custom once the curves
+are edited. Parametric mode shows the four regions (Shadows, Darks, Lights, Highlights) as sliders; drag up or down in the graph
+to change the region under the pointer, which is named in the graph (with its amount and a shaded band showing how far
+it can move the curve) and bolded among the sliders. Drag the triangles under the graph to move the splits between
+regions, and double-click one to put it back. The parametric curve is applied before the point curve; both are baked into the color table.
 
 ## Color (Develop)
 
@@ -596,12 +633,25 @@ have it.
 It works the same on RAW and other files (an active sharpen replaces the RAW engine's default). **Noise Reduction** has
 Amount, Color and Detail (Detail applies to non-RAW files). **Post-Crop Vignette** has Amount, Midpoint, Roundness,
 Feather and Highlights, and Highlight Priority, Color Priority and Paint Overlay styles. **Effects** has Grain with
-Amount, Size and Roughness; each photo has its own grain pattern, and the size is in full-size pixels, so it looks the same
-fitted or at 100%.
+Amount, Size and Roughness, fitted to Lightroom Classic's (RAW-284): monochrome, the same strength in every tone, and
+belonging to the photo's full-size pixels, so a fitted preview or a smaller export shows it averaged down as Lightroom's
+exports do. Each photo has its own grain pattern. Grain added before the fit keeps its original look.
+
+## Portrait Lighting (Develop)
+
+The **Lighting** tool's top section is **Portrait Lighting**: switch it on and pick an effect, with **Intensity** for
+how strong it is. **Studio** puts a soft key light on each face from above the camera, and **Contour** lights each
+face from one side and shadows the other: the side it's turned toward, or the camera's left for a face looking straight
+at it. They follow how each face is turned and tilted; someone whose face can't be found is lit from the top of them.
+**Stage** puts the people in the photo on black (Intensity takes the background from the photo to
+black) and **Stage Mono** does the same with them in black and white. It works on the people Vision finds (not pets or
+things, as Subject masks do), pulled onto the photo's own edges; until they're found the panel says so, and a photo with
+no one in it is left alone. Portrait Lighting is applied before Rim Light, so a rim can light someone on a Stage. It's
+copied by Copy and Sync Settings and saved in presets (as PixelLoupe's own setting, which Lightroom ignores).
 
 ## Rim Light (Develop)
 
-The softbox beside Adjust opens **Rim Light**: up to three colored lights behind the subject that catch its edges, from
+The softbox beside Adjust opens **Lighting**, whose **Rim Light** section has up to three colored lights behind the subject that catch its edges, from
 Pixegen's Filter ▸ Rim Light. Switch it on to get a warm light from the upper left; each light has a color, Angle (where
 it comes from, 90° is from above), Strength, Width (how far in from the edges it reaches) and Choke (how hard its inner
 edge is), and **Add Light** puts the next one across from the last. Glow spreads some of the light into the air around
@@ -664,7 +714,7 @@ edge), Feather, Flow (how much each pass adds) and Density (the most a stroke re
 `⇧[` `⇧]` change its size and feather, as does swiping up or down with two fingers over the photo (with `⇧` for the feather);
 holding Space turns the pointer into a hand to move a zoomed photo around. Each mask has its type and an Invert switch at the top, then Amount, then the Develop
 panel's own sections for the masked area: White Balance (Temp and Tint, warmer or cooler than the photo), Light, Presence,
-Color Grading, Black & White, Curves, Levels, Definition, Color Mixer, Noise Reduction, Sharpen and Effects (grain), each with its switch
+Color Grading, Black & White, Tone Curve, Levels, Definition, Color Mixer, Noise Reduction, Sharpen and Effects (grain), each with its switch
 and reset as in the Adjust panel; they render just as the photo's do. Light starts open, and which sections are open is
 remembered for masks apart from the Adjust panel. Masks from before these sections open with their sliders in Light and
 Presence. the red ⊗ button
@@ -823,8 +873,14 @@ The icons at the top of Develop's right sidebar switch between the Adjust tools 
   along something that should be level. Dragging outside the crop also rotates.
 - **Photo menu:** Rotate Left / Right (`⌘[` / `⌘]`), Flip Horizontal / Vertical, Reset to Camera Orientation and
   Restore Orientation from Metadata. The crop turns with the photo.
-- **Constrain to Image** keeps the crop inside the photo (no empty corners). **Tool Overlay** shows the
-  rule-of-thirds grid while dragging (Auto), always or never.
+- **Constrain to Image** keeps the crop inside the photo (no empty corners). **Tool Overlay** shows the guide
+  overlay while dragging (Auto), always or never.
+- **Guide overlay:** `O` cycles Thirds, Fifths, Diagonal, Halves, Triangle, Golden Ratio, Golden Spiral, Aspect Ratios
+  and Grid (as in Lightroom), flashing the name; View ▸ Crop Guide Overlay picks one directly. `⇧O` turns Triangle (either
+  diagonal) and the Golden Spiral (its eye in any quarter, winding either way). **Aspect Ratios** outlines 1 x 1,
+  4 x 5, 8.5 x 11, 5 x 7, 2 x 3 and 16 x 9 boxes inside the crop. **Choose Overlays to Cycle…** in the same menu sets
+  which overlays `O` visits and which ratios show. With Grid showing, `⌥`-scroll makes it finer or coarser (4 to 40
+  cells across). The choice is remembered. With Tool Overlay on Never, `O` switches it to Always.
 - Drag the corners or edges to resize and inside to move. `Return`, `R`, **Close** or switching tools applies the crop
   (one undoable edit); `Esc` cancels. Like every edit it's non-destructive, and it shows everywhere: grid,
   filmstrip, enlarged view, Compare and the loupe.
@@ -887,7 +943,8 @@ same scene into one high-dynamic-range photo, as Lightroom does. The HDR Merge P
 left, updating as the options on the right change. Click the photo to zoom to 100% (the part shown is merged at full
 resolution), drag to look around, and click again to fit it:
 
-- **Auto Align** lines the photos up (for brackets shot without a tripod). It corrects shifts, not rotation.
+- **Auto Align** lines the photos up (for brackets shot without a tripod). It corrects shifts, not rotation. Each
+  exposure is matched to the next one toward the middle exposure, so wide brackets (±6 EV) line up too.
 - **Auto Settings** tone maps the merge so the highlights and the shadows both show, matched to Lightroom's HDR
   merges: the scene's brightness is split into an edge-aware base layer and local detail, the base layer's range is
   compressed (more for scenes with more range) with the midtones at middle gray and the highlights rolling off, and
@@ -925,13 +982,16 @@ the others are left out ("10 of 12 photos merged").
   spanning more than 150°, so it's unavailable for those.
 - **Boundary Warp** (0–100) bends the panorama's ragged edge out toward its rectangle, keeping the shapes of what's in
   it as much as it can, so less is lost to cropping. At 100 the panorama fills (nearly) the whole rectangle.
+- **Fill Edges** fills the edges the photos don't reach with what's around them (a content-aware fill, made of patches
+  of the photos), so the panorama keeps its whole rectangle. While it's on, Auto Crop shows off and is unavailable;
+  turning Fill Edges off brings back the Auto Crop choice. It works with Boundary Warp: warp less, fill more.
 - **Auto Crop** crops away the edges the photos don't reach, to the largest rectangle they cover entirely. It's a
   Develop crop on the whole panorama, so it can be widened again in Crop & Straighten.
 - **Auto Settings** starts the panorama with Develop's Auto Settings (tone), measured inside that rectangle.
 - **Create Stack** stacks the panorama on top of its sources, in the order they were taken, collapsed (or adds it to
   the top of the stack the sources already share).
 
-Where the photos don't reach, the sheet shows a checkerboard and the merged photo is white (in Develop, thumbnails and
+Without Fill Edges, where the photos don't reach, the sheet shows a checkerboard and the merged photo is white (in Develop, thumbnails and
 exports). When a photo has no lens profile to apply, the sheet shows Lightroom's notice: for the best results, apply the
 lens's profile in Develop's Lens Corrections before merging. Photo ▸ Photo Merge ▸ Panorama with Previous Settings
 (`⌃⇧M`, or hold Shift in the menu) merges straight away with the last options used, without the sheet; Perspective
@@ -950,7 +1010,24 @@ selects the result when it's done. The panorama is a Linear DNG (16-bit floating
 up to Lightroom's limits (65,000 pixels on a side, 512 megapixels), saved beside the earliest photo as `<name>-Pano.dng`
 (`-Pano-2`, `-Pano-3`… when that name is taken). It takes the earliest photo's capture date, camera and shooting
 details, and every source's keywords; its rating, flag and label start empty. Only RAW photos from one camera, all the
-same size, can be merged. Lightroom's Fill Edges and HDR Panorama aren't available yet.
+same size, can be merged.
+
+### HDR Panorama
+
+Photo ▸ Photo Merge ▸ HDR Panorama… (no shortcut, as in Lightroom) merges a panorama shot as exposure brackets, one
+bracket at each position, in one step. Select every photo (say 9 positions × 5 exposures). The photos are sorted by
+capture time and split into sets: the first set size (2 to 9) where every set has the same exposure compensation
+pattern (−2, 0, +2…) with no step repeated. Compensation is read from each file's EXIF, since each position can meter
+its own base exposure and the darkest frames can all hit the fastest shutter speed; photos that don't record it are
+matched by exposure (shutter speed, aperture and ISO) instead. When the photos aren't sets of one bracket, Lightroom's
+alert asks "Unable To Detect HDR Exposure Bracket Size. Merge To Non-HDR Panorama Instead?": Yes opens the Panorama
+sheet for all of them.
+
+The HDR Panorama Merge Preview sheet has the Panorama options and says how many bracket sets merged. Each set is merged
+as HDR does (Auto Align on, no deghosting, no tone mapping: the panorama's Auto Settings tones the result), as Core Image
+needs it at each size rather than written out first, and the sets are placed, blended and stored as one panorama, so
+positions metered differently match. The merged photo is `<name>-HDR-Pano.dng`, beside the earliest photo; Create Stack
+stacks every photo under it in the order they were taken.
 
 ## Edit In (external editors)
 
@@ -1077,6 +1154,12 @@ the repository (about 40 photos); `Scripts/fetch-fidelity-fixtures.sh` unpacks a
 tuning `LightroomScales`: `SliderSweepFit` turns a slider sweep (−100…+100 against the PixelLoupe value that matched best) into a
 monotone table to paste in. The tests that check this tooling (published ΔE2000 data, SSIM, the report, the sweep fit) run with
 the normal suite; the comparison against real exports runs only when `PIXELLOUPE_FIDELITY_DIR` is set.
+
+Grain is random, so its cases (`Scripts/grain-sweep.swift`, family `effects-grain`) aren't compared pixel by pixel. Each names
+a base case without grain (`base.txt`), and `GrainStatistics` compares the grain alone, each app's export minus its base:
+its strength in four spatial bands, its mean and its color, per tone. Band strength has to be within 15% of Lightroom's, the
+mean within half a level, and the grain no more colored than Lightroom's. A case's `export-size.txt` tells the Lightroom
+plugin to export at full size (`full`) or another long edge instead of 2048 px.
 
 ## Panorama tests
 

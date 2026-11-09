@@ -55,6 +55,8 @@ import AppKit
     @objc optional func showLightroomImportReport(_ sender: Any?)
     @objc optional func buildSmartPreviews(_ sender: Any?)
     @objc optional func discardSmartPreviews(_ sender: Any?)
+    @objc optional func buildStandardPreviews(_ sender: Any?)
+    @objc optional func discardStandardPreviews(_ sender: Any?)
     @objc optional func showLibrary(_ sender: Any?)
     @objc optional func showDevelop(_ sender: Any?)
     @objc optional func showMap(_ sender: Any?)
@@ -78,6 +80,7 @@ import AppKit
     @objc optional func photoMergeHDRWithPreviousSettings(_ sender: Any?)
     @objc optional func photoMergePanorama(_ sender: Any?)
     @objc optional func photoMergePanoramaWithPreviousSettings(_ sender: Any?)
+    @objc optional func photoMergeHDRPanorama(_ sender: Any?)
     @objc optional func cancelPhotoMerge(_ sender: Any?)
     @objc optional func editInPrimary(_ sender: Any?)
     @objc optional func editInAdditional(_ sender: Any?)
@@ -99,6 +102,7 @@ import AppKit
     @objc optional func revealInFinder(_ sender: Any?)
     @objc optional func showSettings(_ sender: Any?)
     @objc optional func showWatermarkEditor(_ sender: Any?)
+    @objc optional func showCatalogSettings(_ sender: Any?)
     @objc optional func exportPhotos(_ sender: Any?)
     @objc optional func exportWithPrevious(_ sender: Any?)
     @objc optional func exportWithPreset(_ sender: NSMenuItem)
@@ -132,6 +136,10 @@ import AppKit
     @objc optional func addSubjectMask(_ sender: Any?)
     @objc optional func addBackgroundMask(_ sender: Any?)
     @objc optional func showMaskOverlay(_ sender: Any?)
+    @objc optional func cycleCropGuideOverlay(_ sender: Any?)
+    @objc optional func cycleCropGuideOrientation(_ sender: Any?)
+    @objc optional func chooseCropGuideOverlays(_ sender: Any?)
+    @objc optional func chooseCropGuideOverlay(_ sender: NSMenuItem)
     @objc optional func showBeforeAfter(_ sender: NSMenuItem)
     @objc optional func removePhoto(_ sender: Any?)
     @objc optional func removeSelectedPhotos(_ sender: Any?)
@@ -167,7 +175,7 @@ enum MainMenu {
 
     /// Photo ▸ Photo Merge, also in the grid's context menu, with Lightroom's shortcuts: ⌃H for HDR and
     /// ⌃M for Panorama, and ⌃⇧H and ⌃⇧M (their alternates, shown while Shift is held) to merge straight
-    /// away with the last settings, without the preview.
+    /// away with the last settings, without the preview. HDR Panorama… has no shortcuts, as in Lightroom.
     static func photoMergeItem() -> NSMenuItem {
         let menu = NSMenu(title: "Photo Merge")
         menu.addItem(item("HDR…", #selector(PixelLoupeActions.photoMergeHDR(_:)), "h", modifiers: .control))
@@ -180,6 +188,7 @@ enum MainMenu {
                                     "m", modifiers: [.control, .shift])
         headlessPanorama.isAlternate = true
         menu.addItem(headlessPanorama)
+        menu.addItem(item("HDR Panorama…", #selector(PixelLoupeActions.photoMergeHDRPanorama(_:))))
         return submenuItem(menu)
     }
 
@@ -220,6 +229,7 @@ enum MainMenu {
         menu.addItem(item("Check for Updates…", #selector(PixelLoupeActions.checkForUpdates(_:))))
         menu.addItem(.separator())
         menu.addItem(item("Settings…", #selector(PixelLoupeActions.showSettings(_:)), ","))
+        menu.addItem(item("Catalog Settings…", #selector(PixelLoupeActions.showCatalogSettings(_:)), ",", modifiers: [.command, .option]))
         menu.addItem(item("Edit Watermarks…", #selector(PixelLoupeActions.showWatermarkEditor(_:))))
         menu.addItem(.separator())
         let services = NSMenu(title: "Services")
@@ -287,6 +297,9 @@ enum MainMenu {
         menu.addItem(.separator())
         // Lightroom's Library ▸ Previews, without shortcuts.
         let previews = NSMenu(title: "Previews")
+        previews.addItem(item("Build Standard Previews", #selector(PixelLoupeActions.buildStandardPreviews(_:))))
+        previews.addItem(item("Discard Standard Previews…", #selector(PixelLoupeActions.discardStandardPreviews(_:))))
+        previews.addItem(.separator())
         previews.addItem(item("Build Smart Previews", #selector(PixelLoupeActions.buildSmartPreviews(_:))))
         previews.addItem(item("Discard Smart Previews…", #selector(PixelLoupeActions.discardSmartPreviews(_:))))
         menu.addItem(submenuItem(previews))
@@ -375,6 +388,7 @@ enum MainMenu {
         // N, as in Lightroom; handled as a key by the window like C.
         menu.addItem(item("Survey", #selector(PixelLoupeActions.survey(_:)), "n", modifiers: []))
         menu.addItem(item("Crop & Straighten", #selector(PixelLoupeActions.cropTool(_:)), "r", modifiers: []))
+        menu.addItem(submenuItem(cropGuideOverlayMenu()))
         menu.addItem(item("Enlarge Photo", #selector(PixelLoupeActions.enlargePhoto(_:))))
         menu.addItem(item("View Photo Full Screen", #selector(PixelLoupeActions.viewPhotoFullScreen(_:))))
         menu.addItem(item("Show Loupe", #selector(PixelLoupeActions.toggleLoupe(_:))))
@@ -409,6 +423,21 @@ enum MainMenu {
                           String(Character(UnicodeScalar(NSF6FunctionKey)!)), modifiers: []))
         // AppKit retitles this Enter/Exit Full Screen and won't add its own duplicate.
         menu.addItem(item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", modifiers: [.command, .control]))
+        return menu
+    }
+
+    /// Lightroom's Tools ▸ Crop Guide Overlay: the guides (each item's tag is its index in
+    /// ``CropGuideOverlay/allCases``) O to cycle them and ⇧O to turn them, handled as a key by the window like C.
+    private static func cropGuideOverlayMenu() -> NSMenu {
+        let menu = NSMenu(title: "Crop Guide Overlay")
+        for (index, overlay) in CropGuideOverlay.allCases.enumerated() {
+            menu.addItem(item(overlay.title, #selector(PixelLoupeActions.chooseCropGuideOverlay(_:)), tag: index))
+        }
+        menu.addItem(.separator())
+        menu.addItem(item("Cycle Overlay", #selector(PixelLoupeActions.cycleCropGuideOverlay(_:)), "o", modifiers: []))
+        menu.addItem(item("Cycle Orientation", #selector(PixelLoupeActions.cycleCropGuideOrientation(_:)), "o", modifiers: [.shift]))
+        menu.addItem(.separator())
+        menu.addItem(item("Choose Overlays to Cycle…", #selector(PixelLoupeActions.chooseCropGuideOverlays(_:))))
         return menu
     }
 

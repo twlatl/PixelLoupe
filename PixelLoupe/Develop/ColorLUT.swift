@@ -1,7 +1,7 @@
 import Foundation
 import os
 
-/// Folds every per-pixel tone and color adjustment (Light tone curve, Levels, Curves, color grading
+/// Folds every per-pixel tone and color adjustment (Light tone curve and Shadows, Levels, Curves, color grading
 /// wheels, Selective Color and Black & White) into one 3D lookup table, applied on the GPU with
 /// `CIColorCubeWithColorSpace`. One table lookup per pixel keeps slider drags fluid no matter how
 /// many of these sections are in use.
@@ -22,6 +22,8 @@ nonisolated enum ColorLUT {
         /// The base look and the camera calibration, which run first.
         var profile: PhotoAdjustments.Profile?
         var calibration: PhotoAdjustments.Calibration?
+        /// The photo's bright end, which per-pixel Shadows measures against: set only while it's in use.
+        var shadowsReference: Double?
     }
 
     struct Boost: Equatable, Sendable {
@@ -29,11 +31,12 @@ nonisolated enum ColorLUT {
         var saturation = 0.0
     }
 
-    /// `nil` when no table-based adjustment is active.
-    static func key(for adjustments: PhotoAdjustments) -> Key? {
+    /// `nil` when no table-based adjustment is active. `shadowsReference` is the photo's
+    /// (``DevelopSource/shadowsReference(exposure:)``), rounded so nearby measurements share a table.
+    static func key(for adjustments: PhotoAdjustments, shadowsReference: Double = Transform.defaultShadowsReference) -> Key? {
         let light = adjustments.light
-        let lightUsesTable = light.isEnabled
-            && (light.brightness != 0 || light.contrast != 0 || light.blackPoint != 0 || light.whites != 0 || light.highlights > 0)
+        let gainShadows = light.isEnabled && Transform.hasGainShadows(light)
+        let lightUsesTable = light.isEnabled && (Transform.hasToneCurve(light) || gainShadows)
         let key = Key(
             light: lightUsesTable ? light : nil,
             levels: adjustments.levels.isActive ? adjustments.levels : nil,
@@ -45,7 +48,8 @@ nonisolated enum ColorLUT {
             boost: adjustments.presence.hasColorEffect
                 ? Boost(vibrance: adjustments.presence.vibrance, saturation: adjustments.presence.saturation) : nil,
             profile: adjustments.profile.isActive ? adjustments.profile : nil,
-            calibration: adjustments.calibration.isActive ? adjustments.calibration : nil
+            calibration: adjustments.calibration.isActive ? adjustments.calibration : nil,
+            shadowsReference: gainShadows ? (shadowsReference * 100).rounded() / 100 : nil
         )
         return key == Key() ? nil : key
     }
@@ -99,6 +103,9 @@ nonisolated enum ColorLUT {
     struct Transform {
         private let key: Key
         private let tone: [Double]?
+        /// Shadows under the per-pixel process, -1…1, and the photo's bright end it's measured against.
+        private let shadows: Double?
+        private let shadowsReference: Double
         private let red: [Double]?
         private let green: [Double]?
         private let blue: [Double]?
@@ -108,8 +115,10 @@ nonisolated enum ColorLUT {
         init(key: Key) {
             self.key = key
             primaries = key.calibration.map(Self.primariesMatrix)
+            shadows = key.light.flatMap { Self.hasGainShadows($0) ? $0.shadows : nil }
+            shadowsReference = key.shadowsReference ?? Self.defaultShadowsReference
             var base: [Double]?
-            if let light = key.light {
+            if let light = key.light, Self.hasToneCurve(light) {
                 base = (0..<ColorLUT.tableSize).map {
                     Self.lightTone(Double($0) / Double(ColorLUT.tableSize - 1), light)
                 }
@@ -138,6 +147,7 @@ nonisolated enum ColorLUT {
             var (r, g, b) = (r, g, b)
             if let profile = key.profile { (r, g, b) = Self.look(r, g, b, profile) }
             if let primaries, let calibration = key.calibration { (r, g, b) = Self.calibrate(r, g, b, primaries, calibration) }
+            if let shadows { (r, g, b) = Self.shadows(r, g, b, shadows, reference: shadowsReference) }
             if let tone { (r, g, b) = (Self.lookup(tone, r), Self.lookup(tone, g), Self.lookup(tone, b)) }
             if let red { r = Self.lookup(red, r) }
             if let green { g = Self.lookup(green, g) }
@@ -162,6 +172,56 @@ nonisolated enum ColorLUT {
             let upper = min(lower + 1, table.count - 1)
             let t = position - Double(lower)
             return table[lower] * (1 - t) + table[upper] * t
+        }
+
+        /// Whether Light needs ``lightTone``.
+        static func hasToneCurve(_ light: PhotoAdjustments.Light) -> Bool {
+            light.brightness != 0 || light.contrast != 0 || light.blackPoint != 0 || light.whites != 0 || light.highlights > 0
+        }
+
+        /// Whether Light's Shadows renders here (the per-pixel process) rather than with Core Image's filter.
+        static func hasGainShadows(_ light: PhotoAdjustments.Light) -> Bool {
+            light.shadows != 0 && light.shadowsProcess == .perPixelGain
+        }
+
+        /// Lightroom's Shadows adapts to the photo: what counts as a shadow is relative to the photo's
+        /// bright end (the 95th percentile of its encoded luminance), and the strength grows with it,
+        /// `exp(intercept + slope × reference)` stops at full Shadows, up to `cap`. Fitted to Lightroom's
+        /// Shadows sweeps of ten photos (RAW-231).
+        struct ShadowsStrength {
+            var intercept: Double
+            var slope: Double
+            var cap: Double
+
+            func stops(reference: Double) -> Double { min(exp(intercept + slope * reference), cap) }
+        }
+
+        static let shadowsLift = ShadowsStrength(intercept: -1.682, slope: 3.271, cap: 4)
+        static let shadowsDeepen = ShadowsStrength(intercept: -1.888, slope: 3.585, cap: 5)
+        static let shadowsFalloff = 1.75
+        /// For an image with no photo to measure (and a typical one's).
+        static let defaultShadowsReference = 0.8
+        static let shadowsReferenceRange = 0.1...1.0
+
+        /// Shadows' per-pixel process on sRGB-encoded color: a gain in stops of
+        /// `amount × strength × (1 − min(v / reference, 1))^falloff`, where `v` is the pixel's encoded luminance
+        /// and `reference` the photo's bright end. A gain keeps the color's ratios, and the photo's
+        /// brightest tones are left alone.
+        static func shadows(_ r: Double, _ g: Double, _ b: Double, _ amount: Double, reference: Double = defaultShadowsReference) -> (Double, Double, Double) {
+            let (lr, lg, lb) = (decodeSRGB(r), decodeSRGB(g), decodeSRGB(b))
+            let reference = reference.clamped(to: shadowsReferenceRange)
+            let v = min(encodeSRGB(luminance(lr, lg, lb).clamped(to: 0...1)) / reference, 1)
+            let strength = (amount > 0 ? shadowsLift : shadowsDeepen).stops(reference: reference)
+            let gain = pow(2, amount * strength * pow(1 - v, shadowsFalloff))
+            return (encodeSRGB(lr * gain), encodeSRGB(lg * gain), encodeSRGB(lb * gain))
+        }
+
+        static func decodeSRGB(_ x: Double) -> Double {
+            x <= 0.04045 ? x / 12.92 : pow((x + 0.055) / 1.055, 2.4)
+        }
+
+        static func encodeSRGB(_ x: Double) -> Double {
+            x <= 0.0031308 ? 12.92 * x : 1.055 * pow(x, 1 / 2.4) - 0.055
         }
 
         static func lightTone(_ x: Double, _ light: PhotoAdjustments.Light) -> Double {
@@ -206,7 +266,7 @@ nonisolated enum ColorLUT {
 
         // MARK: Color
 
-        private static func luminance(_ r: Double, _ g: Double, _ b: Double) -> Double {
+        static func luminance(_ r: Double, _ g: Double, _ b: Double) -> Double {
             0.2126 * r + 0.7152 * g + 0.0722 * b
         }
 
@@ -215,15 +275,139 @@ nonisolated enum ColorLUT {
             return t * t * (3 - 2 * t)
         }
 
+        // MARK: Color Grading
+
+        // Fitted to Lightroom Classic's exports of a step wedge (RAW-242, Scripts/color-grading-sweep.swift). Lightroom
+        // grades linear ProPhoto RGB with per-channel gains: a wheel's hue raises the channels on its side of the HSV
+        // wheel and lowers the others by the same log amount, and each channel's change fades as it nears white.
+
+        /// Linear sRGB to linear ProPhoto RGB (D65 to D50 by Bradford), and back.
+        private static let sRGBToProPhoto = [0.5293, 0.3300, 0.1407, 0.0983, 0.8734, 0.0283, 0.0169, 0.1177, 0.8654]
+        private static let proPhotoToSRGB = [2.0341, -0.7272, -0.3069, -0.2287, 1.2318, -0.0031, -0.0086, -0.1533, 1.1620]
+        /// ProPhoto RGB's luminance weights.
+        private static let proPhotoLuminance = (r: 0.2880, g: 0.7118, b: 0.0002)
+
+        private static func multiply(_ m: [Double], _ r: Double, _ g: Double, _ b: Double) -> (Double, Double, Double) {
+            (m[0] * r + m[1] * g + m[2] * b, m[3] * r + m[4] * g + m[5] * b, m[6] * r + m[7] * g + m[8] * b)
+        }
+
+        private static func lightness(_ y: Double) -> Double {
+            y > 216.0 / 24389 ? 116 * cbrt(y) - 16 : 24389.0 / 27 * y
+        }
+
+        private static func logistic(_ x: Double) -> Double { 1 / (1 + exp(-x)) }
+
+        /// Where a color sits for the tonal wheels, 0…1: the lightness of its luminance, pulled a little towards its
+        /// brightest and darkest channels (linear ProPhoto RGB).
+        private static func tone(_ r: Double, _ g: Double, _ b: Double) -> Double {
+            let y = proPhotoLuminance.r * r + proPhotoLuminance.g * g + proPhotoLuminance.b * b
+            let tone = y + 0.1355 * (max(r, g, b) - y) + 0.2855 * (min(r, g, b) - y)
+            return lightness(max(tone, 0)) / 100
+        }
+
+        /// How much each tonal wheel acts at `tone` (0…1), each at most 1, given Blending and Balance. Shadows and
+        /// Highlights each mix a hard split (Blending 0) with a soft one (Blending 100); Balance moves both splits and
+        /// narrows them.
+        static func toneWeights(tone t: Double, _ color: PhotoAdjustments.ColorGrading) -> (shadows: Double, midtones: Double, highlights: Double) {
+            let soft = pow(color.blending.clamped(to: 0...1), 1.989)
+            let balance = color.balance.clamped(to: -1...1)
+            let shadowShift = balance * (balance > 0 ? -0.4359 : -0.4634)
+            let highlightShift = balance * (balance > 0 ? -0.5446 : -0.3914)
+            let narrowing = exp(-0.2793 * abs(balance))
+            let shadows = (1 - soft) * logistic((0.2981 + shadowShift - t) / (0.0680 * narrowing))
+                + soft * logistic((0.5980 + shadowShift - t) / (0.1584 * narrowing))
+            let highlights = (1 - soft) * logistic((t - 0.7836 - highlightShift) / (0.0712 * narrowing))
+                + soft * logistic((t - 0.4754 - highlightShift) / (0.1467 * narrowing))
+            let midtones = exp(-pow((t - 0.5361 - (shadowShift + highlightShift) / 2) / 0.2753, 2))
+            return (shadows, midtones, highlights)
+        }
+
+        /// The tonal weights of an sRGB color (0…1, gamma-encoded) under the grade's process.
+        static func toneWeights(_ r: Double, _ g: Double, _ b: Double, _ color: PhotoAdjustments.ColorGrading) -> (shadows: Double, midtones: Double, highlights: Double) {
+            switch color.process {
+            case .additiveTint:
+                return additiveToneWeights(luminance: luminance(r, g, b), color)
+            case .proPhotoGain:
+                let (pr, pg, pb) = multiply(sRGBToProPhoto, decodeSRGB(r), decodeSRGB(g), decodeSRGB(b))
+                return toneWeights(tone: tone(pr, pg, pb), color)
+            }
+        }
+
+        /// −1 or 1 per channel: which channels `hue` (0…1) raises, blending between them between the primaries.
+        static func hueDirection(_ hue: Double) -> (r: Double, g: Double, b: Double) {
+            let (r, g, b) = hsvToRGB(h: hue * 360, s: 1, v: 1)
+            return (2 * r - 1, 2 * g - 1, 2 * b - 1)
+        }
+
+        static func grade(_ r: Double, _ g: Double, _ b: Double, _ color: PhotoAdjustments.ColorGrading) -> (Double, Double, Double) {
+            switch color.process {
+            case .additiveTint: additiveTint(r, g, b, color)
+            case .proPhotoGain: proPhotoGain(r, g, b, color)
+            }
+        }
+
+        private static func proPhotoGain(_ r: Double, _ g: Double, _ b: Double, _ color: PhotoAdjustments.ColorGrading) -> (Double, Double, Double) {
+            let (pr, pg, pb) = multiply(sRGBToProPhoto, decodeSRGB(r), decodeSRGB(g), decodeSRGB(b))
+            let y = max(proPhotoLuminance.r * pr + proPhotoLuminance.g * pg + proPhotoLuminance.b * pb, 0)
+            let weights = toneWeights(tone: tone(pr, pg, pb), color)
+
+            // Log gains per channel. Shadows and Highlights shift all three to keep the color's luminance, by at most
+            // `low…high` times the tint's strength, limits that tighten as their saturation rises; Midtones and Global
+            // don't.
+            var gain = (r: 0.0, g: 0.0, b: 0.0)
+            func add(_ wheel: PhotoAdjustments.ColorWheel, _ weight: Double, keeping luminance: (low: Double, high: Double)?) {
+                guard wheel.amount > 0, weight > 0 else { return }
+                let a = 0.5631 * wheel.amount * weight
+                let d = hueDirection(wheel.hue)
+                var shift = 0.0
+                if let luminance {
+                    let l = proPhotoLuminance
+                    shift = -log(l.r * exp(a * d.r) + l.g * exp(a * d.g) + l.b * exp(a * d.b))
+                    shift = min(max(shift, luminance.low * a), luminance.high * a)
+                }
+                gain.r += a * d.r + shift
+                gain.g += a * d.g + shift
+                gain.b += a * d.b + shift
+            }
+            let shadowSat = color.shadows.amount, highlightSat = color.highlights.amount
+            add(color.global, 1, keeping: nil)
+            add(color.shadows, 1.7973 * weights.shadows,
+                keeping: (-1 + 0.9677 * pow(shadowSat, 0.6237), 1 - 0.8257 * pow(shadowSat, 2.288)))
+            add(color.midtones, 0.9863 * weights.midtones, keeping: nil)
+            add(color.highlights, 1.7889 * weights.highlights,
+                keeping: (-1 + 0.5702 * pow(highlightSat, 8.244), 1 - 1.3295 * pow(highlightSat, 1.4836)))
+            func fade(_ c: Double) -> Double { pow(max(1 - c, 0), 0.9965) }
+            var (or, og, ob) = (pr * exp(gain.r * fade(pr)), pg * exp(gain.g * fade(pg)), pb * exp(gain.b * fade(pb)))
+
+            // Luminance moves the color's lightness; brightening also adds a little to every channel alike, which
+            // mutes saturated colors as Lightroom does.
+            let lift = color.global.luminance + 1.9237 * color.shadows.luminance * weights.shadows
+                + color.midtones.luminance * weights.midtones + 1.7661 * color.highlights.luminance * weights.highlights
+            if lift != 0, y > 0 {
+                let l = lightness(y), t = l / 100
+                let l2 = max(l + 14.79 * lift * pow(max(t, 0.001), 0.4596) * pow(max(1 - t, 0), 0.3637), 0)
+                let y2 = l2 > 8 ? pow((l2 + 16) / 116, 3) : l2 * 27 / 24389
+                let added = lift > 0 ? 0.5231 : 0.1787, scale = y2 / y, offset = y2 - y
+                func lifted(_ c: Double) -> Double { (1 - added) * c * scale + added * (c + offset) }
+                (or, og, ob) = (lifted(or), lifted(og), lifted(ob))
+            }
+            let (sr, sg, sb) = multiply(proPhotoToSRGB, or, og, ob)
+            return (encodeSRGB(max(sr, 0)), encodeSRGB(max(sg, 0)), encodeSRGB(max(sb, 0)))
+        }
+
+        // MARK: Color Grading before RAW-242
+
         /// Fully saturated color for `hue` (0…1), offset so its components average zero.
-        static func tint(hue: Double) -> (r: Double, g: Double, b: Double) {
+        private static func tint(hue: Double) -> (r: Double, g: Double, b: Double) {
             let (r, g, b) = hsvToRGB(h: hue * 360, s: 1, v: 1)
             let mean = (r + g + b) / 3
             return (r - mean, g - mean, b - mean)
         }
 
-        static func grade(_ r: Double, _ g: Double, _ b: Double, _ color: PhotoAdjustments.ColorGrading) -> (Double, Double, Double) {
-            let y = luminance(r, g, b)
+        /// How much each tonal wheel acts on a color of luminance `y` (0…1), given Balance and Blending.
+        static func additiveToneWeights(
+            luminance y: Double, _ color: PhotoAdjustments.ColorGrading
+        ) -> (shadows: Double, midtones: Double, highlights: Double) {
             let pivot = 0.5 + 0.25 * color.balance
             // Each end's weight falls off over a span around the middle of its half; blending 0.5
             // is the original span (the half itself), 0 a hard split and 1 twice as wide.
@@ -231,7 +415,12 @@ nonisolated enum ColorLUT {
             let shadowCenter = pivot / 2, highlightCenter = (1 + pivot) / 2
             let shadowWeight = 1 - smoothstep(shadowCenter - reach * pivot / 2, shadowCenter + reach * pivot / 2, y)
             let highlightWeight = smoothstep(highlightCenter - reach * (1 - pivot) / 2, highlightCenter + reach * (1 - pivot) / 2, y)
-            let midtoneWeight = max(0, 1 - shadowWeight - highlightWeight)
+            return (shadowWeight, max(0, 1 - shadowWeight - highlightWeight), highlightWeight)
+        }
+
+        /// The original process: a zero-mean tint and a luminance lift added in gamma-encoded RGB.
+        private static func additiveTint(_ r: Double, _ g: Double, _ b: Double, _ color: PhotoAdjustments.ColorGrading) -> (Double, Double, Double) {
+            let (shadowWeight, midtoneWeight, highlightWeight) = additiveToneWeights(luminance: luminance(r, g, b), color)
 
             var (r, g, b) = (r, g, b)
             for (wheel, weight) in [(color.global, 1.0), (color.shadows, shadowWeight), (color.midtones, midtoneWeight), (color.highlights, highlightWeight)] {

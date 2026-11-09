@@ -109,7 +109,11 @@ final class BottomBarViewController: NSViewController {
         let merging = state.mergeStatus
         let editingIn = state.editInStatus
         let importing = state.importStatus
-        if let status = exporting ?? publishing ?? merging ?? editingIn ?? importing ?? state.smartPreviewStatus {
+        let smartPreviews = state.smartPreviewStatus
+        let standardPreviews = state.standardPreviewStatus
+        let duplicates = state.duplicateStatus
+        if let status = exporting ?? publishing ?? merging ?? editingIn ?? importing ?? smartPreviews ?? standardPreviews
+            ?? duplicates ?? state.thumbnailStatus {
             progressIndicator.isHidden = false
             progressLabel.isHidden = false
             progressIndicator.maxValue = Double(max(status.total, 1))
@@ -124,8 +128,14 @@ final class BottomBarViewController: NSViewController {
                 "Preparing \(status.total.formatted()) photo\(status.total == 1 ? "" : "s") for \(state.editInApplicationName)"
             } else if importing != nil {
                 "Importing \(status.completed.formatted()) of \(status.total.formatted())"
-            } else {
+            } else if smartPreviews != nil {
                 "Building Smart Previews \(status.completed.formatted()) of \(status.total.formatted())"
+            } else if standardPreviews != nil {
+                "Building Previews \(status.completed.formatted()) of \(status.total.formatted())"
+            } else if duplicates != nil {
+                "Checking for Duplicates \(status.completed.formatted()) of \(status.total.formatted())"
+            } else {
+                "Drawing Thumbnails \(status.completed.formatted()) of \(status.total.formatted())"
             }
         } else if let message = state.mergeMessage {
             progressIndicator.isHidden = true

@@ -47,6 +47,8 @@ nonisolated final class DevelopSource {
     var subjectMattes = SubjectMatteStore.shared
     /// Where Remove spots' fills are made and kept (RAW-260).
     var removeFills = RemoveFillStore.shared
+    /// Where Portrait Lighting's Studio and Contour find the photo's faces.
+    var faces = FaceStore.shared
 
     private struct RawDefaults {
         var neutralTemperature: Float
@@ -195,7 +197,12 @@ nonisolated final class DevelopSource {
 
     /// Renders the photo at `scale` (1 = full resolution) with `adjustments` applied.
     func image(with adjustments: PhotoAdjustments, scale: CGFloat, geometry: CropRendering = .cropped) -> CIImage {
-        AdjustmentPipeline.apply(adjustments, to: frameImage(with: adjustments, scale: scale), source: self, scale: scale, geometry: geometry)
+        // Measured before decoding for the render, which it shares the RAW engine with.
+        let shadowsReference = adjustments.usesGainShadows
+            ? self.shadowsReference(exposure: adjustments.light.isEnabled ? adjustments.light.exposure : 0)
+            : ColorLUT.Transform.defaultShadowsReference
+        return AdjustmentPipeline.apply(adjustments, to: frameImage(with: adjustments, scale: scale), source: self, scale: scale,
+                                        geometry: geometry, shadowsReference: shadowsReference)
     }
 
     /// The whole frame spots and masks are placed on: decoded with `adjustments`' RAW settings, then Lens
@@ -209,6 +216,31 @@ nonisolated final class DevelopSource {
         // Perspective correction works on the photo as shown, so after orientation and before the crop.
         return TransformRenderer.apply(adjustments.transform, to: oriented)
     }
+
+    /// The photo's bright end at `exposure` (stops), for per-pixel Shadows (RAW-231): the 95th
+    /// percentile of its encoded luminance, measured once on the photo as decoded and moved by the
+    /// exposure, so it's the same at every zoom and for every mask.
+    func shadowsReference(exposure: Double) -> Double {
+        let linear = ColorLUT.Transform.decodeSRGB(decodedBrightEnd) * pow(2, exposure)
+        return ColorLUT.Transform.encodeSRGB(min(linear, 1)).clamped(to: ColorLUT.Transform.shadowsReferenceRange)
+    }
+
+    private lazy var decodedBrightEnd: Double = {
+        let image = baseImage(with: PhotoAdjustments(), scale: scale(toFit: 256))
+        let extent = image.extent.integral
+        guard !extent.isEmpty, !extent.isInfinite, extent.width * extent.height < 1_000_000 else { return ColorLUT.Transform.defaultShadowsReference }
+        let width = Int(extent.width), height = Int(extent.height)
+        var pixels = [Float](repeating: 0, count: width * height * 4)
+        Self.measuringContext.render(image, toBitmap: &pixels, rowBytes: width * 16, bounds: extent, format: .RGBAf,
+                                     colorSpace: CGColorSpace(name: CGColorSpace.linearSRGB))
+        var brightness = (0..<(width * height)).map { i in
+            ColorLUT.Transform.encodeSRGB(Double(0.2126 * pixels[i * 4] + 0.7152 * pixels[i * 4 + 1] + 0.0722 * pixels[i * 4 + 2]).clamped(to: 0...1))
+        }
+        brightness.sort()
+        return brightness.isEmpty ? ColorLUT.Transform.defaultShadowsReference : brightness[min(brightness.count - 1, brightness.count * 95 / 100)]
+    }()
+
+    private static let measuringContext = CIContext(options: [.cacheIntermediates: false])
 
     /// The decoded image before Lens Corrections and the shared pipeline: RAW decoding settings
     /// applied for RAW files, a downscaled original otherwise.
@@ -300,7 +332,7 @@ nonisolated final class DevelopSource {
 nonisolated enum AdjustmentPipeline {
     static func apply(
         _ adjustments: PhotoAdjustments, to base: CIImage, source: DevelopSource, scale: CGFloat,
-        geometry: CropRendering = .cropped
+        geometry: CropRendering = .cropped, shadowsReference: Double = ColorLUT.Transform.defaultShadowsReference
     ) -> CIImage {
         var extent = base.extent
         guard !extent.isEmpty, !extent.isInfinite else { return base }
@@ -340,7 +372,8 @@ nonisolated enum AdjustmentPipeline {
         }
         // Noise reduction where the RAW engine doesn't do it (on a Smart Preview of a RAW file the camera's
         // default is already in the pixels; this approximates the original's more), then tone and color.
-        image = applyTone(adjustments, to: image, longEdge: max(extent.width, extent.height), reducesNoise: source.reducesNoiseInPipeline)
+        image = applyTone(adjustments, to: image, longEdge: max(extent.width, extent.height), reducesNoise: source.reducesNoiseInPipeline,
+                          shadowsReference: shadowsReference)
 
         image = SharpenRenderer.apply(adjustments.sharpen, to: image, scale: scale)
 
@@ -350,7 +383,23 @@ nonisolated enum AdjustmentPipeline {
         let subject = adjustments.masks.contains(where: \.usesSubject)
             ? source.subjectMattes.matte(for: source, adjustments: adjustments, waiting: !Thread.isMainThread)?.image
             : nil
-        image = LocalAdjustmentRenderer.apply(adjustments.masks, to: image, subject: subject, scale: scale)
+        image = LocalAdjustmentRenderer.apply(adjustments.masks, to: image, subject: subject, scale: scale, shadowsReference: shadowsReference)
+
+        // Portrait Lighting needs the people (refined onto the photo's edges), found and waited for the same way; before
+        // Rim Light, so a rim lights the people after Stage has darkened what's behind them.
+        // Studio and Contour light the faces, found the same way; someone with no face found is lit from the top of them.
+        let portraitLighting = adjustments.portraitLighting
+        if portraitLighting.isActive {
+            let waiting = !Thread.isMainThread
+            let people = source.subjectMattes.refinedMatte(for: source, adjustments: adjustments, kind: .person, waiting: waiting)
+            var faces: [FaceStore.Face] = []
+            // Until the faces are found (the preview doesn't wait) nothing is lit, rather than the stand-in first.
+            if portraitLighting.effect.usesFaces, let people,
+               let found = source.faces.faces(for: source, adjustments: adjustments, waiting: waiting) {
+                faces = found.isEmpty ? PortraitLightingRenderer.standIn(for: people).map { [$0] } ?? [] : found
+            }
+            image = PortraitLightingRenderer.apply(portraitLighting, to: image, people: people?.image, faces: faces)
+        }
 
         // Rim Light lights the subject's edges, so it needs the subject too (refined onto the photo's edges), found and
         // waited for the same way; on the whole frame, before the crop.
@@ -366,10 +415,7 @@ nonisolated enum AdjustmentPipeline {
 
         image = VignetteRenderer.apply(adjustments.vignette, to: image)
 
-        let effects = adjustments.effects
-        if effects.isActive, effects.grain > 0, let grain = grainLayer(effects, extent: extent, scale: scale) {
-            image = grain.applyingFilter("CIOverlayBlendMode", parameters: [kCIInputBackgroundImageKey: image])
-        }
+        image = applyGrain(adjustments.effects, to: image, extent: extent, scale: scale)
 
         return image.cropped(to: extent)
     }
@@ -377,7 +423,9 @@ nonisolated enum AdjustmentPipeline {
     /// The tone and color sections, from noise reduction through Definition, in the pipeline's order: for the
     /// photo, and for a mask's own sections (``LocalAdjustmentRenderer``). Noise reduction runs here only when
     /// the RAW engine hasn't done it (`reducesNoise`).
-    static func applyTone(_ adjustments: PhotoAdjustments, to input: CIImage, longEdge: CGFloat, reducesNoise: Bool) -> CIImage {
+    /// `shadowsReference` is the photo's bright end, for per-pixel Shadows (``DevelopSource/shadowsReference(exposure:)``).
+    static func applyTone(_ adjustments: PhotoAdjustments, to input: CIImage, longEdge: CGFloat, reducesNoise: Bool,
+                          shadowsReference: Double = ColorLUT.Transform.defaultShadowsReference) -> CIImage {
         var image = input
         let noise = adjustments.noiseReduction
         if reducesNoise, noise.isActive {
@@ -389,10 +437,12 @@ nonisolated enum AdjustmentPipeline {
         }
 
         let light = adjustments.light
-        if light.isEnabled, light.brilliance != 0 || light.highlights < 0 || light.shadows != 0 {
+        // Shadows under the per-pixel process renders in the color table instead (RAW-230).
+        let filterShadows = light.shadowsProcess == .highlightShadowFilter ? light.shadows : 0
+        if light.isEnabled, light.brilliance != 0 || light.highlights < 0 || filterShadows != 0 {
             let filter = CIFilter.highlightShadowAdjust()
             filter.inputImage = image
-            filter.shadowAmount = Float((light.shadows + 0.5 * light.brilliance).clamped(to: -1...1))
+            filter.shadowAmount = Float((filterShadows + 0.5 * light.brilliance).clamped(to: -1...1))
             filter.highlightAmount = Float((1 + min(light.highlights, 0) - 0.3 * max(light.brilliance, 0)).clamped(to: 0...1))
             image = filter.outputImage ?? image
         }
@@ -410,7 +460,7 @@ nonisolated enum AdjustmentPipeline {
             }
         }
 
-        if let key = ColorLUT.key(for: adjustments) {
+        if let key = ColorLUT.key(for: adjustments, shadowsReference: shadowsReference) {
             let filter = CIFilter.colorCubeWithColorSpace()
             filter.inputImage = image
             filter.cubeDimension = Float(ColorLUT.dimension)
@@ -432,7 +482,19 @@ nonisolated enum AdjustmentPipeline {
         return image
     }
 
-    /// Film grain: neutral gray noise centered on 50% gray, for an Overlay blend (which leaves the
+    /// `image` with the effects' grain, under its process: the photo's, or a mask's (``LocalAdjustmentRenderer``).
+    static func applyGrain(_ effects: PhotoAdjustments.Effects, to image: CIImage, extent: CGRect, scale: CGFloat) -> CIImage {
+        guard effects.isActive, effects.grain > 0, !extent.isInfinite else { return image }
+        switch effects.grainProcess {
+        case .fitted:
+            return FittedGrainRenderer.apply(effects, to: image, extent: extent, scale: scale)
+        case .overlay:
+            guard let grain = grainLayer(effects, extent: extent, scale: scale) else { return image }
+            return grain.applyingFilter("CIOverlayBlendMode", parameters: [kCIInputBackgroundImageKey: image]).cropped(to: extent)
+        }
+    }
+
+    /// The original grain (before RAW-284). Film grain: neutral gray noise centered on 50% gray, for an Overlay blend (which leaves the
     /// image unchanged where the layer is 50% gray). Size is in pixels of the full-resolution
     /// photo, so the grain looks the same in a fitted preview and at 100%; roughness softens it;
     /// the seed moves the noise so each photo has its own pattern, the same every time.
@@ -496,7 +558,9 @@ nonisolated enum AdjustmentPipeline {
         for filter in image.autoAdjustmentFilters(options: [.enhance: true, .redEye: false])
         where filter.name == "CIHighlightShadowAdjust" {
             if let shadows = filter.value(forKey: "inputShadowAmount") as? Double {
-                light.shadows = (shadows * 100).rounded() / 100
+                // The filter's amount, as the current process's.
+                let amount = PhotoAdjustments.Light.shadows(shadows, from: .highlightShadowFilter, to: light.shadowsProcess)
+                light.shadows = (amount * 100).rounded() / 100
             }
             if let highlights = filter.value(forKey: "inputHighlightAmount") as? Double {
                 light.highlights = ((highlights - 1) * 100).rounded() / 100
@@ -519,7 +583,7 @@ nonisolated enum AdobeProfileLook {
         result.light.exposure += hidden.light.exposure * k
         result.light.contrast += hidden.light.contrast * k
         result.light.highlights += hidden.light.highlights * k
-        result.light.shadows += hidden.light.shadows * k
+        result.light.shadows += PhotoAdjustments.Light.shadows(hidden.light.shadows, from: hidden.light.shadowsProcess, to: result.light.shadowsProcess) * k
         result.light.whites += hidden.light.whites * k
         result.light.blackPoint += hidden.light.blackPoint * k
         result.presence.texture += hidden.presence.texture * k

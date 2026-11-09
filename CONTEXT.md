@@ -29,3 +29,21 @@ tickets use. Where Lightroom has a name for something, PixelLoupe uses it.
   and favourites survive.
 - **Publisher**: the code that sends photos to one kind of service (`Publisher`; `HardDrivePublisher`, and
   later a Flickr publisher).
+
+## Previews
+
+- **Thumbnail**: the 768 px sRGB JPEG of a photo in the package's `Thumbnails` folder that the grid,
+  filmstrip and every small view draw (`ThumbnailStore`). An unedited photo's comes from the file's embedded
+  preview, unless it has a Standard Preview; an edited one's is rendered through Develop.
+- **Build Previews**: Import ▸ File Handling's choice of how the imported photos' previews are made
+  (`ImportPreviewLevel`), with Lightroom's names:
+  - *Minimal*: the embedded preview as the thumbnail; nothing else. The default.
+  - *Standard*: for camera RAW files, a Standard Preview, and a thumbnail rendered from it, built in the
+    background after the import.
+- **Standard Preview**: a 2560 px Display P3 rendering of a RAW photo with its Develop settings, in the
+  package's `Previews` folder (`StandardPreviewStore`). The loupe, Develop, Compare and Survey show it while
+  the full render runs. An edit makes it *stale* (renamed `.stale`, never shown) until it's drawn again about
+  two seconds after the last change. *Not* a Smart Preview, which stands in for a missing original. *Not* a
+  1:1 preview, which PixelLoupe doesn't have yet.
+- **Smart Preview**: a 2560 px Linear DNG stand-in for an original that's offline, so the photo can still be
+  edited (`SmartPreviewStore`; see `docs/design/RAW-85-smart-previews.md`).

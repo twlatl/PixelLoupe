@@ -46,6 +46,8 @@ nonisolated struct CatalogViewState: Codable, Equatable, Sendable {
     var collectionID: UUID?
     /// Whether the grid shows Previous Import (instead of a folder or collection).
     var showsPreviousImport = false
+    /// Whether the grid shows Duplicates (RAW-292).
+    var showsDuplicates = false
     /// Lightroom's target collection: where B adds photos.
     var targetCollectionID: UUID?
     /// Whether the starter smart collections have been made (so deleting them sticks).
@@ -56,6 +58,8 @@ nonisolated struct CatalogViewState: Codable, Equatable, Sendable {
     var isFilterBarVisible = true
     /// The height of the Library Filter's Metadata columns; nil for the default.
     var metadataBrowserHeight: Double?
+    /// Each source's selection, the most recently selected in first (RAW-259).
+    var sourceSelections: [RememberedSelection] = []
 
     /// Selections larger than this (Select All in a big catalog) aren't worth restoring in full.
     static let maximumSavedSelection = 1000
@@ -73,12 +77,14 @@ nonisolated struct CatalogViewState: Codable, Equatable, Sendable {
         selectedPhotos = try container.decodeIfPresent([UUID].self, forKey: .selectedPhotos) ?? []
         collectionID = try container.decodeIfPresent(UUID.self, forKey: .collectionID)
         showsPreviousImport = try container.decodeIfPresent(Bool.self, forKey: .showsPreviousImport) ?? false
+        showsDuplicates = try container.decodeIfPresent(Bool.self, forKey: .showsDuplicates) ?? false
         targetCollectionID = try container.decodeIfPresent(UUID.self, forKey: .targetCollectionID)
         createdDefaultCollections = try container.decodeIfPresent(Bool.self, forKey: .createdDefaultCollections) ?? false
         // A filter saved by a later version that this one can't read is dropped rather than losing the rest.
         filterCriteria = try? container.decodeIfPresent(LibraryFilter.Criteria.self, forKey: .filterCriteria)
         isFilterBarVisible = try container.decodeIfPresent(Bool.self, forKey: .isFilterBarVisible) ?? true
         metadataBrowserHeight = try container.decodeIfPresent(Double.self, forKey: .metadataBrowserHeight)
+        sourceSelections = (try? container.decodeIfPresent([RememberedSelection].self, forKey: .sourceSelections)) ?? []
     }
 
     /// Reads the state saved in a catalog package; a missing or unreadable file means the defaults.
@@ -121,12 +127,16 @@ nonisolated enum CatalogPackage {
     static let databaseFileName = "Catalog.sqlite"
     static let thumbnailsDirectoryName = "Thumbnails"
     static let smartPreviewsDirectoryName = "Smart Previews"
+    static let standardPreviewsDirectoryName = "Previews"
     static let viewStateFileName = "ViewState.plist"
+    static let settingsFileName = "Settings.plist"
     static let lightroomImportReportFileName = "LightroomImport.json"
 
     static func infoURL(in package: URL) -> URL { package.appending(path: infoFileName) }
     static func databaseURL(in package: URL) -> URL { package.appending(path: databaseFileName) }
     static func viewStateURL(in package: URL) -> URL { package.appending(path: viewStateFileName) }
+    /// Made when a Catalog Settings value is first changed.
+    static func settingsURL(in package: URL) -> URL { package.appending(path: settingsFileName) }
     static func lightroomImportReportURL(in package: URL) -> URL { package.appending(path: lightroomImportReportFileName) }
     static func thumbnailsURL(in package: URL) -> URL {
         package.appending(path: thumbnailsDirectoryName, directoryHint: .isDirectory)
@@ -134,5 +144,9 @@ nonisolated enum CatalogPackage {
     /// Made when the first Smart Preview is written.
     static func smartPreviewsURL(in package: URL) -> URL {
         package.appending(path: smartPreviewsDirectoryName, directoryHint: .isDirectory)
+    }
+    /// Made when the first Standard preview is written.
+    static func standardPreviewsURL(in package: URL) -> URL {
+        package.appending(path: standardPreviewsDirectoryName, directoryHint: .isDirectory)
     }
 }

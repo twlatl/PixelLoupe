@@ -104,6 +104,14 @@ nonisolated enum VignetteRenderer {
     }
 
     static func apply(_ vignette: PhotoAdjustments.Vignette, to image: CIImage) -> CIImage {
+        switch vignette.process {
+        case .fitted: FittedVignetteRenderer.apply(vignette, to: image)
+        case .linearOverlay: applyLinearOverlay(vignette, to: image)
+        }
+    }
+
+    /// The original process: black or white over the photo with a radial gradient as the mask (before RAW-275).
+    static func applyLinearOverlay(_ vignette: PhotoAdjustments.Vignette, to image: CIImage) -> CIImage {
         guard vignette.isActive else { return image }
         let extent = image.extent
         var edge = mask(vignette, extent: extent)

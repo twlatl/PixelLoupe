@@ -185,6 +185,34 @@ nonisolated extension ToneCurve: Equatable {
     }
 }
 
+/// The curves Lightroom's Point Curve menu puts on the point (RGB) curve, named as in `ToneCurveName2012`.
+/// Its points are Lightroom's own (from its Develop templates), in 0…255.
+nonisolated enum PointCurvePreset: String, CaseIterable, Sendable {
+    case linear = "Linear"
+    case mediumContrast = "Medium Contrast"
+    case strongContrast = "Strong Contrast"
+
+    var curve: ToneCurve {
+        let points: [(Double, Double)] = switch self {
+        case .linear: [(0, 0), (255, 255)]
+        case .mediumContrast: [(0, 0), (32, 22), (64, 56), (128, 128), (192, 196), (255, 255)]
+        case .strongContrast: [(0, 0), (32, 16), (64, 50), (128, 128), (192, 202), (255, 255)]
+        }
+        return ToneCurve(points: points.map { ToneCurve.Point(x: $0 / 255, y: $1 / 255) })
+    }
+
+    /// The preset `curve` draws, if any. Points may be off by rounding (catalogs keep them in 0…255).
+    init?(matching curve: ToneCurve) {
+        if curve.isIdentity { self = .linear; return }
+        guard let preset = Self.allCases.first(where: { preset in
+            let points = preset.curve.points
+            return points.count == curve.points.count
+                && zip(points, curve.points).allSatisfy { abs($0.x - $1.x) < 0.002 && abs($0.y - $1.y) < 0.002 }
+        }) else { return nil }
+        self = preset
+    }
+}
+
 /// Lightroom's parametric curve: four region sliders (Shadows, Darks, Lights, Highlights) and the
 /// three splits between the regions. It is applied before the point curve.
 nonisolated struct ParametricCurve: Codable, Equatable, Sendable {
@@ -206,6 +234,32 @@ nonisolated struct ParametricCurve: Codable, Equatable, Sendable {
     var isIdentity: Bool { shadows == 0 && darks == 0 && lights == 0 && highlights == 0 }
 
     var amounts: [Double] { [shadows, darks, lights, highlights] }
+
+    /// The regions' names, in the order of ``amounts``.
+    static let regionNames = ["Shadows", "Darks", "Lights", "Highlights"]
+    /// Where the splits start, and where double-clicking one puts it back.
+    static let defaultSplits = [0.25, 0.5, 0.75]
+
+    var splits: [Double] { [shadowSplit, midtoneSplit, highlightSplit] }
+
+    /// The region (an index into ``amounts``) input `x` falls in.
+    func region(at x: Double) -> Int {
+        splits.firstIndex { x < $0 } ?? 3
+    }
+
+    /// A region's amount, by its index in ``amounts``; set values are clamped to -1…1.
+    subscript(region region: Int) -> Double {
+        get { amounts[region] }
+        set {
+            let value = newValue.clamped(to: -1...1)
+            switch region {
+            case 0: shadows = value
+            case 1: darks = value
+            case 2: lights = value
+            default: highlights = value
+            }
+        }
+    }
 
     /// Output for input `x` (0…1). Each region is a raised-cosine bump over its span, reaching into
     /// its neighbors; the outer regions hold full strength out to the ends. The shift fades to zero

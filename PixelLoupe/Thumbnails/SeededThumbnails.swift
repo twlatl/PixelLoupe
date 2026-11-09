@@ -10,6 +10,10 @@ nonisolated enum SeededThumbnails {
         case lightroom = ".seeded"
         /// Drawn from the photo's Smart Preview while the original was missing: redrawn once it's back.
         case smartPreview = ".smart-preview-seeded"
+        /// Copied from a Lightroom preview smaller than a thumbnail (Lightroom often keeps only a
+        /// 160 or 256 pixel one): a stand-in that's redrawn from the original whether edited or not.
+        /// These are listed under ``lightroom`` too.
+        case lowResolution = ".low-resolution-seeded"
     }
 
     static func url(in directory: URL, origin: Origin = .lightroom) -> URL {
@@ -21,9 +25,9 @@ nonisolated enum SeededThumbnails {
         return Set(text.split(separator: "\n").compactMap { UUID(uuidString: String($0)) })
     }
 
-    static func append(_ ids: [UUID], in directory: URL) {
+    static func append(_ ids: [UUID], in directory: URL, origin: Origin = .lightroom) {
         guard !ids.isEmpty else { return }
-        let url = url(in: directory)
+        let url = url(in: directory, origin: origin)
         let data = Data((ids.map(\.uuidString).joined(separator: "\n") + "\n").utf8)
         if let handle = try? FileHandle(forWritingTo: url) {
             defer { try? handle.close() }

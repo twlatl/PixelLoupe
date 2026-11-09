@@ -60,7 +60,7 @@ nonisolated struct ImageMetadata: Equatable, Sendable {
 
         cameraMake = Self.clean(tiff[kCGImagePropertyTIFFMake] as? String)
         cameraModel = Self.clean(tiff[kCGImagePropertyTIFFModel] as? String)
-        lensModel = Self.clean(exif[kCGImagePropertyExifLensModel] as? String)
+        lensModel = Self.lensModel(properties)
         let shooting = ShootingInfo(properties: properties)
         iso = shooting.iso ?? 0
         focalLength = shooting.focalLength ?? 0
@@ -122,6 +122,14 @@ nonisolated struct ImageMetadata: Equatable, Sendable {
         }
         let below = (gps[kCGImagePropertyGPSAltitudeRef] as? NSNumber)?.intValue == 1
         return (coordinate, number(kCGImagePropertyGPSAltitude).map { below ? -$0 : $0 })
+    }
+
+    /// The lens name. Standard EXIF has it in LensModel, but cameras that only record it in their
+    /// maker notes (Nikon NEFs, for one) have ImageIO put it under {ExifAux} instead.
+    static func lensModel(_ properties: [CFString: Any]) -> String? {
+        let exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any] ?? [:]
+        let aux = properties[kCGImagePropertyExifAuxDictionary] as? [CFString: Any] ?? [:]
+        return clean(exif[kCGImagePropertyExifLensModel] as? String) ?? clean(aux[kCGImagePropertyExifAuxLensModel] as? String)
     }
 
     private static func clean(_ value: String?) -> String? {

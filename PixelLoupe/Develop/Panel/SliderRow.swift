@@ -45,16 +45,23 @@ enum SliderScale {
     }
 }
 
-/// A labelled slider with its current value. Double-click the label or the knob to reset it.
+/// A labelled slider with its current value. Double-click the label or the knob to reset it, and
+/// click the value to type a new one (as in Lightroom).
 final class SliderRow: NSView {
     let slider: AdjustmentSlider
     private let titleLabel: NSTextField
-    private let valueLabel = NSTextField(labelWithString: "")
+    private let valueLabel = EditableValueLabel()
     private let format: (Double) -> String
+    private let range: ClosedRange<Double>
     let scale: SliderScale
+    /// Whether the value is being typed; Escape ends the edit without changing the value.
+    var isEditingValue: Bool { valueLabel.isEditingValue }
     var defaultValue: Double {
         get { scale.value(at: slider.defaultValue) }
-        set { slider.defaultValue = scale.position(for: newValue) }
+        set {
+            slider.defaultValue = scale.position(for: newValue)
+            showValue()
+        }
     }
 
     var onChange: ((Double, Bool) -> Void)?
@@ -63,12 +70,16 @@ final class SliderRow: NSView {
         get { scale.value(at: slider.doubleValue) }
         set {
             slider.doubleValue = scale.position(for: newValue)
-            valueLabel.stringValue = format(newValue)
+            showValue()
         }
     }
 
     /// The value as the label shows it.
     var displayedValue: String { valueLabel.stringValue }
+
+    /// Whether the value differs from the default, as the label shows it. As in Lightroom, a changed
+    /// value is drawn bright and a default one dimmed.
+    var isModified: Bool { format(value) != format(defaultValue) }
 
     /// `trackColors`: a gradient drawn as the track, low end first (white balance's Temp and Tint).
     init(
@@ -81,6 +92,7 @@ final class SliderRow: NSView {
     ) {
         titleLabel = NSTextField(labelWithString: title)
         self.format = format
+        self.range = range
         self.scale = scale
         slider = trackColors.map { GradientSlider(colors: $0) } ?? AdjustmentSlider()
         super.init(frame: .zero)
@@ -88,9 +100,6 @@ final class SliderRow: NSView {
 
         titleLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         titleLabel.textColor = .secondaryLabelColor
-        valueLabel.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
-        valueLabel.textColor = .secondaryLabelColor
-        valueLabel.alignment = .right
 
         let track = scale.trackRange(for: range)
         slider.minValue = track.lowerBound
@@ -107,6 +116,11 @@ final class SliderRow: NSView {
         reset.numberOfClicksRequired = 2
         titleLabel.addGestureRecognizer(reset)
         titleLabel.toolTip = "Double-click to reset"
+
+        valueLabel.editingWidth = { [unowned self] in editingFieldWidth }
+        valueLabel.focusAfterCancel = slider
+        valueLabel.onEndEditing = { [unowned self] typed in enter(typed) }
+        valueLabel.setAccessibilityLabel("\(title) value")
 
         for view in [titleLabel, valueLabel, slider] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
@@ -131,14 +145,68 @@ final class SliderRow: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    @objc private func sliderChanged(_ sender: NSSlider) {
+    /// Bold title, for the slider whose region is under the pointer in the parametric curve (as in Lightroom).
+    var isEmphasized = false {
+        didSet {
+            titleLabel.font = isEmphasized ? .boldSystemFont(ofSize: NSFont.smallSystemFontSize) : .systemFont(ofSize: NSFont.smallSystemFontSize)
+            titleLabel.textColor = isEmphasized ? .labelColor : .secondaryLabelColor
+        }
+    }
+
+    private func showValue() {
         valueLabel.stringValue = format(value)
+        valueLabel.textColor = isModified ? .labelColor : .secondaryLabelColor
+    }
+
+    @objc private func sliderChanged(_ sender: NSSlider) {
+        showValue()
         onChange?(value, isFinalControlEvent())
     }
 
     @objc private func resetToDefault(_ sender: Any?) {
         value = defaultValue
         onChange?(defaultValue, true)
+    }
+
+    /// Makes the value label a text field with its text selected, for typing a new value.
+    func beginEditingValue() { valueLabel.beginEditingValue() }
+
+    /// Wide enough for the longest text the row shows (its range's ends, "−180°", "50,000") plus the bezel's margins.
+    var editingFieldWidth: CGFloat {
+        let font = valueLabel.font ?? .systemFont(ofSize: NSFont.smallSystemFontSize)
+        let texts = [range.lowerBound, range.upperBound, value].map(format)
+        let widest = texts.map { ($0 as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
+        return ceil(widest) + 12
+    }
+
+    /// Return, Tab or clicking elsewhere enters the typed value; Escape (nil) or text that isn't a number keeps the old one.
+    private func enter(_ typed: String?) {
+        if let typed, let entered = value(forDisplayed: typed) {
+            value = entered
+            onChange?(value, true)
+        } else {
+            showValue()
+        }
+    }
+
+    /// The value a typed number stands for, in the units the label shows (so "50" on a ×100 percent row is 0.5),
+    /// clamped to the slider's range. The label's units are taken from how `format` shows the range's ends,
+    /// which works because every row's format is the value scaled and rounded.
+    func value(forDisplayed text: String) -> Double? {
+        guard let typed = Self.number(in: text),
+              let low = Self.number(in: format(range.lowerBound)),
+              let high = Self.number(in: format(range.upperBound)),
+              high != low
+        else { return nil }
+        let entered = range.lowerBound + (typed - low) / (high - low) * (range.upperBound - range.lowerBound)
+        return min(max(entered, range.lowerBound), range.upperBound)
+    }
+
+    /// The number in a label's text, ignoring units, thousands separators and a typographic minus ("−22", "5,500", "50%").
+    nonisolated static func number(in text: String) -> Double? {
+        let normalized = text.replacingOccurrences(of: "\u{2212}", with: "-")
+        let kept = normalized.filter { $0.isASCII && ($0.isNumber || "+-.".contains($0)) }
+        return Double(kept.hasPrefix("+") ? String(kept.dropFirst()) : kept)
     }
 
     nonisolated static func signed(_ value: Double) -> String {

@@ -203,3 +203,111 @@ struct PresetHoverTests {
         #expect(!develop.isPreviewingPreset && photo.adjustments != before)
     }
 }
+
+@Suite("Profile menu: hover preview")
+@MainActor
+struct ProfileHoverTests {
+    /// RAW-280: crop edits don't go through the Adjust panel, so its previews used to show the photo uncropped.
+    @Test func highlightingAProfileKeepsTheCrop() async throws {
+        let directory = try TemporaryDirectory()
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "C.pixelloupe"))
+        let photo = Photo(context: store.viewContext)
+        photo.id = UUID()
+        photo.fileName = "IMG.jpg"
+        let url = directory.url.appending(path: photo.fileName)
+        try Fixtures.writeJPEG(to: url, width: 400, height: 300)
+        photo.filePath = url.path(percentEncoded: false)
+        photo.fileType = "JPG"
+        photo.pixelWidth = 400
+        photo.pixelHeight = 300
+        photo.captureDate = Date()
+        photo.importDate = Date()
+        photo.editDate = Date()
+        try store.viewContext.save()
+        let controller = CatalogWindowController(store: store)
+        defer { controller.close() }
+        controller.showWindow(nil)
+        controller.state.selectedPhotoIDs = [photo.objectID]
+        controller.state.mode = .develop
+        let develop = controller.rootViewController.main.develop
+        let start = Date()
+        while !develop.canAutoLight, Date().timeIntervalSince(start) < 60 { try? await Task.sleep(for: .seconds(0.1)) }
+        try #require(develop.canAutoLight)
+        let panel = develop.adjustmentsPanelForTesting
+        let profile = AdjustmentsPanelViewController.ProfileChoice(kind: .vivid, adobe: nil)
+
+        // Crop, then close the Crop tool.
+        controller.state.developTool = .crop
+        var cropped = PhotoAdjustments.Crop()
+        cropped.rect = CGRect(x: 0.1, y: 0.1, width: 0.6, height: 0.6)
+        develop.cropPanelForTesting.onChange(cropped, true)
+        controller.state.developTool = .adjust
+        #expect(photo.adjustments.crop == cropped)
+
+        panel.previewProfile(profile)
+        let previewed = try #require(develop.previewedAdjustmentsForTesting)
+        #expect(previewed.crop == cropped, "the preview keeps the crop")
+        #expect(previewed.profile.kind == .vivid)
+        #expect(panel.adjustments.crop == cropped, "the panel's copy is brought up to date")
+        panel.previewProfile(nil)
+        #expect(develop.previewedAdjustmentsForTesting == nil)
+
+        // Esc in the Crop tool puts the crop back, in the panel's copy too.
+        controller.state.developTool = .crop
+        var other = cropped
+        other.rect = CGRect(x: 0.2, y: 0.2, width: 0.5, height: 0.5)
+        develop.cropPanelForTesting.onChange(other, false)
+        develop.cancelCrop()
+        panel.previewProfile(profile)
+        #expect(develop.previewedAdjustmentsForTesting?.crop == cropped)
+        #expect(panel.adjustments.crop == cropped)
+        panel.previewProfile(nil)
+    }
+}
+
+@Suite("Hover preview: muted Color Grading wheels")
+@MainActor
+struct HoverPreviewMutedWheelTests {
+    /// RAW-282: a hover preview showed Color Grading wheels the user had hidden with their eye buttons.
+    @Test func aPreviewKeepsMutedWheelsHidden() async throws {
+        let directory = try TemporaryDirectory()
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "C.pixelloupe"))
+        let photo = Photo(context: store.viewContext)
+        photo.id = UUID()
+        photo.fileName = "IMG.jpg"
+        let url = directory.url.appending(path: photo.fileName)
+        try Fixtures.writeJPEG(to: url, width: 400, height: 300)
+        photo.filePath = url.path(percentEncoded: false)
+        photo.fileType = "JPG"
+        photo.pixelWidth = 400
+        photo.pixelHeight = 300
+        photo.captureDate = Date()
+        photo.importDate = Date()
+        photo.editDate = Date()
+        try store.viewContext.save()
+        let controller = CatalogWindowController(store: store)
+        defer { controller.close() }
+        controller.showWindow(nil)
+        controller.state.selectedPhotoIDs = [photo.objectID]
+        controller.state.mode = .develop
+        let develop = controller.rootViewController.main.develop
+        let start = Date()
+        while !develop.canAutoLight, Date().timeIntervalSince(start) < 60 { try? await Task.sleep(for: .seconds(0.1)) }
+        try #require(develop.canAutoLight)
+
+        let graded = PhotoAdjustments.ColorWheel(hue: 0.6, amount: 0.5, luminance: 0)
+        var previewed = try #require(develop.currentAdjustments)
+        previewed.color.shadows = graded
+        previewed.color.highlights = graded
+        develop.adjustmentsPanelForTesting.onMuteWheels?([.shadows])
+
+        develop.previewSettings(previewed)
+        let shown = develop.shownAdjustmentsForTesting
+        #expect(shown.color.shadows == PhotoAdjustments.ColorWheel(), "the muted wheel stays hidden")
+        #expect(shown.color.highlights == graded, "other wheels are previewed")
+        #expect(develop.previewedAdjustmentsForTesting?.color.shadows == graded, "muting only changes what's drawn")
+
+        develop.previewSettings(nil)
+        develop.adjustmentsPanelForTesting.onMuteWheels?([])
+    }
+}

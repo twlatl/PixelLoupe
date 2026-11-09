@@ -16,12 +16,17 @@ struct SyntheticPanorama {
     /// Each photo's camera-to-world rotation.
     let rotations: [simd_double3x3]
     let stops: [Double]
+    /// Every photo, in capture order.
     var sources: [PhotoMergeSource] = []
+    /// The photos as bracket sets, one per position (each one photo without a `bracket`).
+    var sets: [[PhotoMergeSource]] = []
 
     /// Photos turned by `yaws` (degrees, right positive) at `pitch` (degrees, up positive), each
-    /// exposed `stops` from the first (recorded in its metadata), in capture order.
-    init(yaws: [Double] = [-36, -12, 12, 36], pitch: Double = 4, stops: [Double]? = nil,
-         width: Int = 360, height: Int = 240, focal: Double = 300, name: String = "PANO") throws {
+    /// exposed `stops` from the first (recorded in its metadata), in capture order. With a `bracket`
+    /// (EV, recorded as exposure compensation) each position is a bracket set around its stops; the
+    /// scene is `brightness` times as bright, and clips at 1.
+    init(yaws: [Double] = [-36, -12, 12, 36], pitch: Double = 4, stops: [Double]? = nil, bracket: [Double]? = nil,
+         brightness: Float = 1, width: Int = 360, height: Int = 240, focal: Double = 300, name: String = "PANO") throws {
         directory = try TemporaryDirectory()
         self.width = width
         self.height = height
@@ -32,26 +37,37 @@ struct SyntheticPanorama {
         // A focal length in millimeters that gives `focal` pixels on a full-frame camera.
         let millimeters = focal / hypot(Double(width), Double(height)) * hypot(36, 24)
         for (index, rotation) in rotations.enumerated() {
-            let gain = Float(pow(2, stops[index]))
-            let image = DNGFixtures.image(width: width, height: height) { x, y in
-                // 2 × 2 samples per pixel, so the photos agree where they overlap.
+            // The scene seen once, at 2 × 2 samples per pixel, so the photos agree where they overlap.
+            let seen = (0..<(width * height)).map { i in
+                let x = i % width, y = i / width
                 var total: Float = 0
                 for (dx, dy) in [(0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)] {
                     total += Self.scene(rotation * simd_normalize(SIMD3(Double(x) + dx - Double(width) / 2, Double(y) + dy - Double(height) / 2, focal)))
                 }
-                return SIMD3(repeating: min(total / 4 * gain, 1))
+                return total / 4 * brightness
             }
-            let url = directory.url.appending(path: "\(name)_\(index).dng")
-            var metadata = DNGMetadata(make: "Canon", model: "EOS R5", captureDate: Date(timeIntervalSince1970: 1_791_000_000 + Double(index)))
-            metadata.exposureTime = pow(2, stops[index]) / 100
-            metadata.aperture = 8
-            metadata.iso = 100
-            metadata.focalLength = millimeters
-            try LinearDNGWriter.write(image, metadata: metadata, to: url)
-            sources.append(PhotoMergeSource(
-                url: url, exposureTime: metadata.exposureTime, aperture: 8, iso: 100, make: "Canon", model: "EOS R5",
-                focalLength: millimeters, captureDate: metadata.captureDate
-            ))
+            var set: [PhotoMergeSource] = []
+            for (shot, step) in (bracket ?? [0]).enumerated() {
+                let exposure = stops[index] + step
+                let gain = Float(pow(2, exposure))
+                let image = DNGFixtures.image(width: width, height: height) { x, y in
+                    SIMD3(repeating: min(seen[y * width + x] * gain, 1))
+                }
+                let url = directory.url.appending(path: bracket == nil ? "\(name)_\(index).dng" : "\(name)_\(index)_\(shot).dng")
+                let time = 1_791_000_000 + Double(index) * 8 + Double(shot) * 0.2
+                var metadata = DNGMetadata(make: "Canon", model: "EOS R5", captureDate: Date(timeIntervalSince1970: time))
+                metadata.exposureTime = pow(2, exposure) / 100
+                metadata.aperture = 8
+                metadata.iso = 100
+                metadata.focalLength = millimeters
+                try LinearDNGWriter.write(image, metadata: metadata, to: url)
+                set.append(PhotoMergeSource(
+                    url: url, exposureTime: metadata.exposureTime, aperture: 8, iso: 100, make: "Canon", model: "EOS R5",
+                    focalLength: millimeters, captureDate: metadata.captureDate, exposureBias: bracket == nil ? nil : step
+                ))
+            }
+            sources += set
+            sets.append(set)
         }
     }
 
@@ -274,6 +290,150 @@ struct PanoramaMergeTests {
         #expect(difference / count < 0.02, "mean difference \(difference / count)")
     }
 
+    @Test func fillEdgesFillsWhereThePhotosDontReach() throws {
+        let panorama = try SyntheticPanorama()
+        let merger = try PanoramaMerger(sources: panorama.sources)
+        var options = PanoramaMergeOptions()
+        let plain = try merger.merge(options: options, scale: 0.5)
+        let coverage = try #require(plain.coverage)
+        options.fillEdges = true
+        options.autoCrop = true
+        let filled = try merger.merge(options: options, scale: 0.5)
+        // It covers the whole rectangle, so there's nothing to crop or show through.
+        #expect(filled.crop == nil && filled.coverage == nil)
+        #expect(filled.image.width == plain.image.width && filled.image.height == plain.image.height)
+        var holeSum: Float = 0, holeCount: Float = 0, coveredSum: Float = 0, coveredCount: Float = 0, white = 0
+        var coveredChange: Float = 0, worstChange: Float = 0
+        for (index, value) in coverage.values.enumerated() {
+            let green = Float(filled.image.pixels[index * 3 + 1])
+            if value >= 1 {
+                let change = abs(green - Float(plain.image.pixels[index * 3 + 1]))
+                coveredChange += change
+                worstChange = max(worstChange, change)
+                coveredSum += green
+                coveredCount += 1
+            } else if value < 0.01 {
+                holeSum += green
+                holeCount += 1
+                if green > 0.98 { white += 1 }
+            }
+        }
+        // The photos' pixels are kept (to a step or so of the half floats Core Image keeps its intermediates in).
+        #expect(worstChange < 1e-3, "mean \(coveredChange / coveredCount), worst \(worstChange)")
+        #expect(holeCount > 100)
+        #expect(Float(white) / holeCount < 0.05, "\(white) of \(holeCount) hole pixels are still white")
+        // The fill is made of the scene, so it's about as bright.
+        #expect(abs(holeSum / holeCount - coveredSum / coveredCount) < 0.15)
+    }
+
+    @Test func fillEdgesPreviewAndFullMergeMatch() throws {
+        // The full merge copies the preview-sized solve's matches up (a small solve forces that here).
+        let panorama = try SyntheticPanorama()
+        let merger = try PanoramaMerger(sources: panorama.sources)
+        let coverage = try #require(try merger.merge(options: PanoramaMergeOptions(), scale: 0.5).coverage)
+        var options = PanoramaMergeOptions()
+        options.fillEdges = true
+        let preview = try merger.merge(options: options, scale: 0.5).image
+        merger.fillPixels = preview.width * preview.height
+        let full = try merger.merge(options: options, scale: 1).image
+        func downsampled(_ x: Int, _ y: Int) -> Float {
+            var sum: Float = 0
+            for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                sum += Float(full.pixels[((y * 2 + dy) * full.width + x * 2 + dx) * 3 + 1])
+            }
+            return sum / 4
+        }
+        var coveredDifference: Float = 0, coveredCount: Float = 0
+        var holeFull: Float = 0, holePreview: Float = 0, holeCount: Float = 0, white = 0
+        for y in 0..<min(preview.height, full.height / 2) {
+            for x in 0..<min(preview.width, full.width / 2) {
+                let value = coverage.values[y * coverage.width + x]
+                let small = Float(preview.pixels[(y * preview.width + x) * 3 + 1])
+                if value >= 1, x > 30, y > 30, x < preview.width - 30, y < preview.height - 30 {
+                    coveredDifference += abs(downsampled(x, y) - small)
+                    coveredCount += 1
+                } else if value < 0.01 {
+                    holeFull += downsampled(x, y)
+                    holePreview += small
+                    holeCount += 1
+                    if downsampled(x, y) > 0.98 { white += 1 }
+                }
+            }
+        }
+        #expect(coveredDifference / coveredCount < 0.02, "covered: mean difference \(coveredDifference / coveredCount)")
+        #expect(holeCount > 100 && Float(white) / holeCount < 0.05)
+        #expect(abs(holeFull - holePreview) / holeCount < 0.05, "filled: mean difference \(abs(holeFull - holePreview) / holeCount)")
+    }
+
+    @Test func fillEdgesLeavesNoLightLineAlongThePhotosEdges() throws {
+        // Where the photos partly cover, the fill mixes with their own color: mixing it with the white beyond the
+        // photos as well left a light dashed line along their edges (RAW-226).
+        let panorama = try SyntheticPanorama()
+        let merger = try PanoramaMerger(sources: panorama.sources)
+        let coverage = try #require(try merger.merge(options: PanoramaMergeOptions(), scale: 0.5).coverage)
+        var options = PanoramaMergeOptions()
+        options.fillEdges = true
+        let image = try merger.merge(options: options, scale: 0.5).image
+        func green(_ x: Int, _ y: Int) -> Float { Float(image.pixels[(y * image.width + x) * 3 + 1]) }
+        var edge = 0, lighter = 0
+        for y in 1..<(image.height - 1) {
+            for x in 1..<(image.width - 1) {
+                let covered = coverage.values[y * image.width + x]
+                guard covered > 0.05, covered < 0.95 else { continue }
+                edge += 1
+                var neighbors: [Float] = []
+                for (dx, dy) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
+                    neighbors.append(green(x + dx, y + dy))
+                }
+                if green(x, y) > (neighbors.max() ?? 0) + 0.03 { lighter += 1 }
+            }
+        }
+        #expect(edge > 50)
+        #expect(Float(lighter) / Float(edge) < 0.02, "\(lighter) of \(edge) edge pixels lighter than all around them")
+    }
+
+    @Test func fillEdgesAtOneHundredPercentMatchesTheFullMerge() throws {
+        // Solved smaller than the merge, the fill copies from a tiled copy of the part it reads (RAW-225): only
+        // that part for the sheet's 100% view, all of it for Merge. The two must agree.
+        let panorama = try SyntheticPanorama()
+        let merger = try PanoramaMerger(sources: panorama.sources)
+        merger.fillPixels = 20_000
+        var options = PanoramaMergeOptions()
+        options.fillEdges = true
+        options.autoSettings = false
+        let full = try merger.merge(options: options, scale: 1).image
+        let region = CGRect(x: 0, y: full.height - 90, width: 160, height: 90)
+        let part = try merger.merge(options: options, scale: 1, region: region).image
+        #expect(part.width == 160 && part.height == 90)
+        var total: Float = 0, worst: Float = 0
+        for y in 0..<part.height {
+            for x in 0..<part.width {
+                for c in 0..<3 {
+                    let difference = abs(Float(part.pixels[(y * part.width + x) * 3 + c])
+                        - Float(full.pixels[((y + Int(region.minY)) * full.width + x + Int(region.minX)) * 3 + c]))
+                    total += difference
+                    worst = max(worst, difference)
+                }
+            }
+        }
+        let mean = total / Float(part.pixels.count)
+        #expect(mean < 0.002 && worst < 0.05, "mean \(mean), worst \(worst)")
+    }
+
+    @Test func cancellingStopsAFilledMerge() async throws {
+        let panorama = try SyntheticPanorama()
+        let sources = panorama.sources
+        let task = Task.detached {
+            let merger = try PanoramaMerger(sources: sources)
+            var options = PanoramaMergeOptions()
+            options.fillEdges = true
+            return try merger.merge(options: options, scale: 1)
+        }
+        task.cancel()
+        await #expect(throws: CancellationError.self) { _ = try await task.value }
+        withExtendedLifetime(panorama) {}
+    }
+
     @Test func cancellingStopsTheMerge() async throws {
         let panorama = try SyntheticPanorama()
         let sources = panorama.sources
@@ -287,6 +447,45 @@ struct PanoramaMergeTests {
     }
 
     // MARK: Seams, gains, crops and warps
+
+    @Test func theBlendDoesntDependOnWhatsDrawnAfterIt() {
+        // Two textured photos overlapping in the middle, on a canvas whose size halves to fractions. Drawn as it is
+        // and through a kernel that changes nothing (adding a clear image), the blend must be the same.
+        let width = 355, height = 114
+        let canvas = CGRect(x: 0, y: 0, width: width, height: height)
+        func image(_ value: (Int, Int) -> SIMD4<Float>) -> CIImage {
+            var pixels = [Float](repeating: 0, count: width * height * 4)
+            for y in 0..<height {
+                for x in 0..<width {
+                    let v = value(x, y)
+                    for c in 0..<4 { pixels[(y * width + x) * 4 + c] = v[c] }
+                }
+            }
+            return CIImage(bitmapData: pixels.withUnsafeBytes { Data($0) }, bytesPerRow: width * 16,
+                           size: canvas.size, format: .RGBAf, colorSpace: nil)
+        }
+        func texture(_ x: Int, _ y: Int) -> Float { 0.2 + 0.6 * Float((x * 7 + y * 13) % 17) / 17 }
+        let photos = [(0, 230), (120, width)].map { range in
+            let covers = { (x: Int, y: Int) in x >= range.0 && x < range.1 && y > 6 && y < height - 9 }
+            return PanoramaMerger.BlendPhoto(
+                image: image { x, y in covers(x, y) ? SIMD4(texture(x, y), texture(y, x), 0.5, 1) : .zero },
+                mask: image { x, _ in SIMD4(x >= range.0 && x < range.1 && (range.0 == 0 ? x < 175 : x >= 175) ? 1 : 0, 0, 0, 1) },
+                feather: image { x, _ in SIMD4(range.0 == 0 ? Float(230 - x) / 230 : Float(x - 120) / 235, 0, 0, 1) }
+            )
+        }
+        let blended = PanoramaMerger.blend(photos, canvas: canvas, levels: 6)
+        let passedOn = PanoramaKernels.add.apply(extent: canvas, arguments: [blended, PanoramaMerger.blank(canvas)])!
+        let context = CIContext(options: [.workingColorSpace: PanoramaMerger.colorSpace, .cacheIntermediates: false])
+        func render(_ image: CIImage) -> [Float] {
+            var pixels = [Float](repeating: 0, count: width * height * 4)
+            context.render(image, toBitmap: &pixels, rowBytes: width * 16, bounds: canvas, format: .RGBAf, colorSpace: nil)
+            return pixels
+        }
+        let direct = render(blended), after = render(passedOn)
+        let worst = zip(direct, after).map { abs($0 - $1) }.max() ?? 0
+        // To a step or so of the half floats Core Image keeps its intermediates in.
+        #expect(worst < 1e-3, "worst difference \(worst)")
+    }
 
     @Test func seamsGoAroundWhatMoved() {
         // Two photos overlapping in the middle third; something sits in the overlap in the first only.
@@ -360,6 +559,141 @@ struct PanoramaMergeTests {
         #expect(abs(center.x * Float(width) - 100.5) < 0.5 && abs(center.y * Float(height) - 40.5) < 0.5)
     }
 
+    // MARK: HDR Panorama
+
+    /// How far the merge is from the scene (relative, at points the first photo that sees them shows
+    /// well inside it): the median error and the brightness ratio over all points. `exposure` is the
+    /// stops the scene is shown at.
+    private static func errors(_ image: LinearDNGImage, panorama: SyntheticPanorama, merger: PanoramaMerger,
+                               brightness: Float, exposure: Float = 0) throws -> (median: Float, brightness: Float, worstTruth: Float) {
+        let scale = Float(pow(2, image.headroom ?? 0))
+        let size = CGSize(width: panorama.width, height: panorama.height)
+        let layout = try #require(PanoramaLayout(
+            alignment: merger.alignment, alignedSizes: Array(repeating: size, count: panorama.rotations.count),
+            photoSizes: Array(repeating: size, count: panorama.rotations.count), projection: .spherical
+        ))
+        var errors: [Float] = []
+        var mergedTotal: Float = 0, truthTotal: Float = 0, brightest: Float = 0
+        for y in stride(from: 20, to: image.height - 20, by: 7) {
+            for x in stride(from: 20, to: image.width - 20, by: 7) {
+                let ray = layout.ray(at: SIMD2(Double(x) + 0.5, Double(y) + 0.5))
+                guard let (index, point) = layout.cameras.enumerated().lazy.compactMap({ index, camera -> (Int, SIMD2<Double>)? in
+                    guard let p = camera?.project(ray), abs(p.x) < Double(panorama.width) / 2 - 8, abs(p.y) < Double(panorama.height) / 2 - 8 else { return nil }
+                    return (index, p)
+                }).first else { continue }
+                let truth = SyntheticPanorama.scene(panorama.rotations[index] * simd_normalize(SIMD3(point.x, point.y, panorama.focal)))
+                    * brightness * pow(2, exposure)
+                let merged = Float(image.pixels[(y * image.width + x) * 3 + 1]) * scale
+                errors.append(abs(merged - truth) / truth)
+                mergedTotal += merged
+                truthTotal += truth
+                brightest = max(brightest, truth)
+            }
+        }
+        errors.sort()
+        try #require(errors.count > 500)
+        return (errors[errors.count / 2], mergedTotal / truthTotal, brightest)
+    }
+
+    @Test func hdrPanoramaKeepsWhatTheMiddleExposureClips() throws {
+        // 16 times as bright (up to 3.8): the 0 EV photos clip most of the scene, the −2 EV ones none of it.
+        let panorama = try SyntheticPanorama(bracket: [-2, 0, 2], brightness: 16)
+        let merger = try PanoramaMerger(brackets: panorama.sets)
+        #expect(merger.frames.count == 4 && merger.mergedCount == 4)
+        #expect(merger.reference.name == "PANO_0_1.dng", "the earliest set's middle exposure")
+        let hdr = try merger.merge(options: PanoramaMergeOptions(), scale: 1).image
+        let found = try Self.errors(hdr, panorama: panorama, merger: merger, brightness: 16)
+        #expect(found.worstTruth > 3, "the scene is brighter than the middle exposure holds")
+        #expect(abs(found.brightness - 1) < 0.03, "brightness \(found.brightness)")
+        #expect(found.median < 0.1, "median error \(found.median)")
+
+        // The middle exposures alone, as a plain panorama: clipped.
+        let plain = try PanoramaMerger(sources: panorama.sets.map { $0[1] })
+        let clipped = try plain.merge(options: PanoramaMergeOptions(), scale: 1).image
+        let lost = try Self.errors(clipped, panorama: panorama, merger: plain, brightness: 16)
+        #expect(lost.brightness < 0.7 && lost.median > 0.3, "brightness \(lost.brightness), median \(lost.median)")
+    }
+
+    @Test func bracketSetsMeteredDifferentlyMatchAcrossSeams() throws {
+        // Each position metered its own base exposure (as on Ted's 10-29 shoot): the sets still join
+        // up, at the sets' average exposure (+0.5 stop here).
+        let panorama = try SyntheticPanorama(stops: [0, 1, 0, 1], bracket: [-2, 0, 2], brightness: 4)
+        let merger = try PanoramaMerger(brackets: panorama.sets)
+        let image = try merger.merge(options: PanoramaMergeOptions(), scale: 1).image
+        let found = try Self.errors(image, panorama: panorama, merger: merger, brightness: 4, exposure: 0.5)
+        #expect(abs(found.brightness - 1) < 0.03, "brightness \(found.brightness)")
+        #expect(found.median < 0.1, "median error \(found.median)")
+    }
+
+    @Test func hdrPanoramaPreviewAndFullMergeMatch() throws {
+        let panorama = try SyntheticPanorama(stops: [0, 1, 0, 1], bracket: [-2, 0, 2], brightness: 4)
+        let merger = try PanoramaMerger(brackets: panorama.sets)
+        let options = PanoramaMergeOptions()
+        let full = try merger.merge(options: options, scale: 1).image
+        let preview = try merger.merge(options: options, scale: 0.5).image
+        #expect(full.headroom == preview.headroom)
+        var difference: Float = 0, count: Float = 0
+        for y in stride(from: 30, to: preview.height - 30, by: 9) {
+            for x in stride(from: 30, to: preview.width - 30, by: 9) {
+                var sum: Float = 0
+                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    sum += Float(full.pixels[((y * 2 + dy) * full.width + x * 2 + dx) * 3 + 1])
+                }
+                difference += abs(sum / 4 - Float(preview.pixels[(y * preview.width + x) * 3 + 1]))
+                count += 1
+            }
+        }
+        #expect(difference / count < 0.02, "mean difference \(difference / count)")
+    }
+
+    @Test func fullResolutionBracketSetsAreReadFromFiles() throws {
+        // Full resolution merges each set once into a file and reads it back in tiles (RAW-225); the small
+        // synthetic photos normally merge from their copies, so the two ways must draw the same.
+        let panorama = try SyntheticPanorama(stops: [0, 1, 0, 1], bracket: [-2, 0, 2], brightness: 4)
+        let merger = try PanoramaMerger(brackets: panorama.sets)
+        var plain = PanoramaMergeOptions()
+        plain.autoSettings = false
+        var filled = plain
+        filled.fillEdges = true
+        filled.boundaryWarp = 50
+        let region = CGRect(x: 130, y: 40, width: 200, height: 120)
+        let fromCopies = try [plain, filled].map { try merger.merge(options: $0, scale: 1).image }
+        let regionFromCopies = try merger.merge(options: plain, scale: 1, region: region).image
+        merger.largestSnapshotScale = 0.1
+        let fromFiles = try [plain, filled].map { try merger.merge(options: $0, scale: 1).image }
+        let regionFromFiles = try merger.merge(options: plain, scale: 1, region: region).image
+        for (copies, files) in zip(fromCopies + [regionFromCopies], fromFiles + [regionFromFiles]) {
+            #expect(copies.width == files.width && copies.height == files.height && copies.headroom == files.headroom)
+            var total: Float = 0, worst: Float = 0
+            for (a, b) in zip(copies.pixels, files.pixels) {
+                let difference = abs(Float(a) - Float(b))
+                total += difference
+                worst = max(worst, difference)
+            }
+            let mean = total / Float(copies.pixels.count)
+            #expect(mean < 0.001 && worst < 0.02, "mean \(mean), worst \(worst)")
+        }
+    }
+
+    @Test func cancellingStopsAnHDRPanoramaMerge() async throws {
+        let panorama = try SyntheticPanorama(bracket: [-2, 0, 2], brightness: 4)
+        let sets = panorama.sets
+        let task = Task.detached {
+            let merger = try PanoramaMerger(brackets: sets)
+            return try merger.merge(options: PanoramaMergeOptions(), scale: 1)
+        }
+        task.cancel()
+        await #expect(throws: CancellationError.self) { _ = try await task.value }
+        withExtendedLifetime(panorama) {}
+    }
+
+    @Test func bracketSetsFromDifferentCamerasDontMerge() throws {
+        let panorama = try SyntheticPanorama(bracket: [-2, 0, 2])
+        var sets = panorama.sets
+        sets[1][2].model = "EOS R6"
+        #expect(throws: PhotoMergeError.differentCameras) { try PanoramaMerger(brackets: sets) }
+    }
+
     // MARK: Options
 
     @Test func optionsStartAtLightroomsDefaultsAndAreRemembered() throws {
@@ -373,6 +707,24 @@ struct PanoramaMergeTests {
         changed.autoCrop = true
         changed.save(to: defaults)
         #expect(PanoramaMergeOptions.load(from: defaults) == changed)
+        // Fill Edges is remembered too, for Merge with Previous Settings.
+        changed.fillEdges = true
+        changed.save(to: defaults)
+        #expect(PanoramaMergeOptions.load(from: defaults).fillEdges)
+    }
+
+    @Test func fillEdgesStartsOffAndOlderSettingsStillLoad() throws {
+        #expect(!PanoramaMergeOptions().fillEdges)
+        // Saved before Fill Edges existed.
+        let old = Data(#"{"projection":"cylindrical","boundaryWarp":40,"autoCrop":true,"autoSettings":false,"createsStack":true}"#.utf8)
+        let options = try JSONDecoder().decode(PanoramaMergeOptions.self, from: old)
+        #expect(options.projection == .cylindrical && options.boundaryWarp == 40 && options.autoCrop)
+        #expect(!options.autoSettings && options.createsStack && !options.fillEdges)
+        #expect(options.cropsToCovered)
+        var filled = options
+        filled.fillEdges = true
+        #expect(!filled.cropsToCovered && filled.autoCrop, "Fill Edges turns Auto Crop off but keeps the choice")
+        #expect(try JSONDecoder().decode(PanoramaMergeOptions.self, from: JSONEncoder().encode(filled)) == filled)
     }
 }
 
@@ -386,8 +738,8 @@ struct PanoramaCatalogTests {
         let ids: [NSManagedObjectID]
         var editing: PhotoEditing { PhotoEditing(store: store) }
 
-        init(stops: [Double]? = nil) async throws {
-            panorama = try SyntheticPanorama(stops: stops)
+        init(stops: [Double]? = nil, bracket: [Double]? = nil) async throws {
+            panorama = try SyntheticPanorama(stops: stops, bracket: bracket, brightness: bracket == nil ? 1 : 4)
             store = try CatalogStore.inMemory(
                 info: Fixtures.referencedInfo, packageURL: panorama.directory.url.appending(path: "Test.pixelloupe")
             )
@@ -448,6 +800,17 @@ struct PanoramaCatalogTests {
         #expect(merged.isCropped)
     }
 
+    @Test func fillEdgesLeavesTheMergeUncropped() async throws {
+        let setup = try await Setup()
+        var options = PanoramaMergeOptions()
+        options.autoCrop = true
+        options.fillEdges = true
+        options.autoSettings = false
+        let (merged, _) = try await setup.merge(options: options)
+        #expect(!merged.isCropped)
+        #expect(merged.adjustments.crop.rect == CGRect(x: 0, y: 0, width: 1, height: 1))
+    }
+
     @Test func createStackPutsThePanoramaOnTopOfThePhotosInOrder() async throws {
         let setup = try await Setup()
         var options = PanoramaMergeOptions()
@@ -458,6 +821,84 @@ struct PanoramaCatalogTests {
         let stack = try #require(merged.stack)
         #expect(stack.isCollapsed)
         #expect(stack.orderedPhotos.map(\.fileName) == ["PANO_0-Pano.dng", "PANO_0.dng", "PANO_1.dng", "PANO_2.dng", "PANO_3.dng"])
+    }
+
+    // MARK: HDR Panorama
+
+    /// Every label's text in `view`, for reading an alert.
+    private static func text(in view: NSView) -> String {
+        ((view as? NSTextField)?.stringValue ?? "") + view.subviews.map { text(in: $0) }.joined(separator: "\n")
+    }
+
+    private static func button(_ title: String, in view: NSView) -> NSButton? {
+        if let button = view as? NSButton, button.title == title { return button }
+        return view.subviews.lazy.compactMap { button(title, in: $0) }.first
+    }
+
+    @Test func hdrPanoramaMergesBracketSetsFromTheSheet() async throws {
+        let setup = try await Setup(bracket: [-2, 0, 2])
+        let controller = CatalogWindowController(store: setup.store)
+        defer { controller.close() }
+        controller.showWindow(nil)
+        let window = try #require(controller.window)
+        var options = PanoramaMergeOptions()
+        options.createsStack = true
+        options.autoSettings = false
+        options.save()
+        defer { Defaults.store.removeObject(forKey: "PanoramaMergeOptions") }
+
+        controller.state.selectedPhotoIDs = setup.ids
+        controller.photoMergeHDRPanorama(nil)
+        await controller.bracketTask?.value
+        let sheet = try #require(controller.mergeSheet as? PanoramaMergeSheetController)
+        #expect(window.attachedSheet === sheet.window)
+        #expect(sheet.window?.title == "HDR Panorama Merge Preview")
+        #expect(sheet.brackets?.count == 4 && sheet.brackets?.allSatisfy { $0.count == 3 } == true)
+        for _ in 0..<600 where !sheet.mergeButton.isEnabled { try await Task.sleep(for: .milliseconds(100)) }
+        #expect(sheet.statusLabel.stringValue == "All 4 bracket sets merged")
+
+        sheet.merge(nil)
+        #expect(controller.state.mergeKind == .hdrPanorama)
+        let task = try #require(controller.mergeTask)
+        await task.value
+        let mergedID = try #require(controller.state.selectedPhotoIDs.first)
+        let merged = setup.photo(mergedID)
+        #expect(merged.fileName == "PANO_0_0-HDR-Pano.dng")
+        // Every photo stacks under it, in the order they were taken.
+        let stack = try #require(merged.stack)
+        let photos = (0..<4).flatMap { i in (0..<3).map { "PANO_\(i)_\($0).dng" } }
+        #expect(stack.orderedPhotos.map(\.fileName) == ["PANO_0_0-HDR-Pano.dng"] + photos)
+        #expect(setup.editing.mergeDestination(for: setup.ids, kind: .hdrPanorama)?.lastPathComponent == "PANO_0_0-HDR-Pano-2.dng")
+    }
+
+    @Test func photosThatArentBracketSetsOfferAPlainPanorama() async throws {
+        let setup = try await Setup()
+        let controller = CatalogWindowController(store: setup.store)
+        defer { controller.close() }
+        controller.showWindow(nil)
+        let window = try #require(controller.window)
+        controller.state.selectedPhotoIDs = setup.ids
+        controller.photoMergeHDRPanorama(nil)
+        await controller.bracketTask?.value
+        // Lightroom's alert: one exposure per position isn't a bracket.
+        let alert = try #require(window.attachedSheet?.contentView)
+        let text = Self.text(in: alert)
+        #expect(text.contains("Unable To Detect HDR Exposure Bracket Size") && text.contains("Merge To Non-HDR Panorama Instead?"))
+        #expect(controller.mergeSheet == nil)
+        try #require(Self.button("Yes", in: alert)).performClick(nil)
+        for _ in 0..<50 where controller.mergeSheet == nil { try await Task.sleep(for: .milliseconds(20)) }
+        let sheet = try #require(controller.mergeSheet as? PanoramaMergeSheetController)
+        #expect(sheet.window?.title == "Panorama Merge Preview" && sheet.brackets == nil)
+        sheet.cancel(nil)
+        for _ in 0..<100 where window.attachedSheet != nil { try await Task.sleep(for: .milliseconds(20)) }
+
+        // Cancel does nothing.
+        controller.photoMergeHDRPanorama(nil)
+        await controller.bracketTask?.value
+        let again = try #require(window.attachedSheet?.contentView)
+        try #require(Self.button("Cancel", in: again)).performClick(nil)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(controller.mergeSheet == nil && controller.mergeTask == nil && window.attachedSheet == nil)
     }
 
     @Test func sheetShowsTheOptionsAndHowManyPhotosMerged() async throws {
@@ -490,5 +931,66 @@ struct PanoramaCatalogTests {
         sheet.autoCropCheckbox.performClick(nil)
         sheet.merge(nil)
         #expect(finished?.projection == .spherical && finished?.autoCrop == true && finished?.boundaryWarp == 30)
+        #expect(finished?.fillEdges == false)
+    }
+
+    @Test func fillEdgesTurnsAutoCropOffButKeepsTheChoice() async throws {
+        let setup = try await Setup()
+        var options = PanoramaMergeOptions()
+        options.autoCrop = true
+        let sheet = PanoramaMergeSheetController(sources: setup.editing.photoMergeSources(setup.ids), options: options)
+        let window = try #require(sheet.window)
+        window.contentView?.layoutSubtreeIfNeeded()
+        for _ in 0..<600 where !sheet.mergeButton.isEnabled { try await Task.sleep(for: .milliseconds(100)) }
+        // Lightroom's order: Fill Edges just above Auto Crop.
+        let fill = sheet.fillEdgesCheckbox.convert(sheet.fillEdgesCheckbox.bounds, to: nil)
+        let crop = sheet.autoCropCheckbox.convert(sheet.autoCropCheckbox.bounds, to: nil)
+        #expect(fill.minY > crop.maxY && abs(fill.minX - crop.minX) < 1)
+        #expect(sheet.fillEdgesCheckbox.state == .off && sheet.fillEdgesCheckbox.isEnabled)
+        #expect(sheet.autoCropCheckbox.state == .on && sheet.autoCropCheckbox.isEnabled)
+
+        sheet.fillEdgesCheckbox.performClick(nil)
+        #expect(sheet.options.fillEdges && sheet.options.autoCrop)
+        #expect(sheet.autoCropCheckbox.state == .off && !sheet.autoCropCheckbox.isEnabled)
+        // Other options still change with it on.
+        sheet.autoSettingsCheckbox.performClick(nil)
+        #expect(sheet.options.autoCrop && !sheet.options.autoSettings)
+
+        sheet.fillEdgesCheckbox.performClick(nil)
+        #expect(!sheet.options.fillEdges && sheet.options.autoCrop)
+        #expect(sheet.autoCropCheckbox.state == .on && sheet.autoCropCheckbox.isEnabled)
+
+        sheet.fillEdgesCheckbox.performClick(nil)
+        var finished: PanoramaMergeOptions?
+        sheet.onFinish = { finished = $0 }
+        sheet.merge(nil)
+        #expect(finished?.fillEdges == true && finished?.autoCrop == true && finished?.cropsToCovered == false)
+    }
+
+    @Test func previewWithFillEdgesHasNoCheckerboard() async throws {
+        let setup = try await Setup()
+        let previewer = try PanoramaMergePreviewer(sources: setup.editing.photoMergeSources(setup.ids))
+        var options = PanoramaMergeOptions()
+        options.autoSettings = false
+        // The merge's top left corner is outside every photo (they're turned side to side, and Spherical bows them).
+        func corner(_ options: PanoramaMergeOptions) async throws -> (CGSize, [UInt8]) {
+            let preview = try await previewer.render(options: options, maxPixels: 400)
+            let image = preview.image
+            let context = try #require(CGContext(
+                data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            let pixels = try #require(context.data).assumingMemoryBound(to: UInt8.self)
+            // The top left pixel (the context's rows run top down).
+            return (preview.photoSize, [pixels[0], pixels[1], pixels[2]])
+        }
+        let (plainSize, plain) = try await corner(options)
+        options.fillEdges = true
+        let (filledSize, filled) = try await corner(options)
+        // The same uncropped panorama, but the checkerboard's light gray (0.84 or 0.98) is gone from the corner.
+        #expect(plainSize == filledSize)
+        #expect(plain.allSatisfy { $0 > 200 } && Set(plain).count == 1, "\(plain)")
+        #expect(filled != plain, "\(filled)")
     }
 }

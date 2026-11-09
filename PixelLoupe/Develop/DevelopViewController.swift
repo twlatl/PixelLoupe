@@ -50,13 +50,17 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     private(set) var zoomAnimationsStarted = 0
     /// Whether the photo has been drawn (for tests: a zoom only animates from a photo already on screen).
     var hasDrawnPhoto: Bool { lastDrawnRect != nil }
+    /// The preview's layer (for tests: how a frame drawn for another size is shown).
+    var canvasLayer: CALayer? { metalView.layer }
+    /// The scale the photo was last rendered at (for tests).
+    var renderedScale: CGFloat? { lastPreviewScale }
     private let cropPanel = CropPanelViewController()
     private let cropOverlay = CropOverlayView()
     /// The crop when the crop tool was opened for the current photo, restored by Esc.
     private var cropSessionStart: PhotoAdjustments.Crop?
     private let adjustToolButton = NSButton()
-    private let rimLightToolButton = NSButton()
-    private let rimLightPanel = RimLightPanelViewController()
+    private let lightingToolButton = NSButton()
+    private let lightingPanel = LightingPanelViewController()
     /// Lightroom presets (RAW-13), in a section at the top of the Adjust panel (RAW-260).
     private let presetsPanel = PresetsPanelViewController(embedded: true)
     private let cropToolButton = NSButton()
@@ -94,8 +98,20 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     /// While Option-dragging the Masking slider, the preview shows the sharpening mask.
     private var showsSharpenMask = false
     let whiteBalancePicker = WhiteBalancePickerView()
+    /// Covers the preview while a Color Grading well's eyedropper is on.
+    private let gradingPicker = FringePickerView(
+        label: "Pick a color on the photo for Color Grading", identifier: "colorGradingPicker", cursor: .eyedropper
+    )
+    /// The wheel that eyedropper picks for, and whether it's the selected mask's.
+    private var gradingPick: (tab: ColorGradingTab, isMask: Bool)?
     /// The preview as last drawn, for the defringe eyedropper: the image and where it's shown (points).
     private var lastPreview: (image: CIImage, rect: CGRect)?
+    /// The scale `lastPreview` was rendered at.
+    private var lastPreviewScale: CGFloat?
+    /// Keeps the render scale while the canvas changes size, so each frame is only re-fitted.
+    private var scaleHold = PreviewScaleHold()
+    /// Ends `scaleHold`'s resize once the size has stopped changing.
+    private var resizeSettle: DispatchWorkItem?
     private let histogramView = HistogramView()
     /// The clipping overlays drawn on the preview (switched on, or previewed by hovering).
     private var clippingDisplay: (shadows: Bool, highlights: Bool) = (false, false)
@@ -111,7 +127,10 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     private var keyMonitor: Any?
     private var adjustments = PhotoAdjustments() {
         // However the settings change (an edit, undo, another photo, a preset), the Rim Light panel shows them.
-        didSet { if adjustments.rimLight != oldValue.rimLight { rimLightPanel.display(adjustments.rimLight) } }
+        didSet {
+            if adjustments.portraitLighting != oldValue.portraitLighting { lightingPanel.portraitLighting.display(adjustments.portraitLighting) }
+            if adjustments.rimLight != oldValue.rimLight { lightingPanel.rimLight.display(adjustments.rimLight) }
+        }
     }
     private var displayedPhotoID: NSManagedObjectID?
     private var loadTask: Task<Void, Never>?
@@ -139,6 +158,12 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         // graphic drawn over it.
         metalView.presentsWithTransaction = true
         metalView.layer?.isOpaque = false
+        // A frame drawn for the old size stays as drawn, centred over the matte behind, until the next
+        // one: not stretched to the new shape, or shrunk into it (RAW-254). The photo is centred in each
+        // frame, so where its size doesn't change (a portrait photo as the panels slide), this is what
+        // the next frame shows.
+        metalView.layerContentsPlacement = .center
+        metalView.layer?.contentsGravity = .center
         metalView.setAccessibilityElement(true)
         metalView.setAccessibilityRole(.image)
         metalView.setAccessibilityIdentifier("developImageView")
@@ -157,7 +182,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         addChild(panel)
         addChild(cropPanel)
         addChild(lensPanel)
-        addChild(rimLightPanel)
+        addChild(lightingPanel)
         // The panel isn't part of this view: it lives in the window's right column, shared with the
         // Library's inspector (see ``MainSplitViewController``).
         sidebarView = makeSidebar()
@@ -166,10 +191,11 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         cropOverlay.isHidden = true
         fringePicker.isHidden = true
         whiteBalancePicker.isHidden = true
+        gradingPicker.isHidden = true
         maskOverlay.isHidden = true
         retouchOverlay.isHidden = true
         removeOverlay.isHidden = true
-        for view in [metalView!, beforeAfterOverlay, zoomClickView, loupeOverlay, cropOverlay, maskOverlay, retouchOverlay, removeOverlay, fringePicker, whiteBalancePicker, infoLabel, messageLabel, locateButton, spinner] as [NSView] {
+        for view in [metalView!, beforeAfterOverlay, zoomClickView, loupeOverlay, cropOverlay, maskOverlay, retouchOverlay, removeOverlay, fringePicker, whiteBalancePicker, gradingPicker, infoLabel, messageLabel, locateButton, spinner] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             previewContainer.addSubview(view)
         }
@@ -214,6 +240,10 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             maskOverlay.leadingAnchor.constraint(equalTo: metalView.leadingAnchor),
             maskOverlay.trailingAnchor.constraint(equalTo: metalView.trailingAnchor),
             maskOverlay.bottomAnchor.constraint(equalTo: metalView.bottomAnchor),
+            gradingPicker.topAnchor.constraint(equalTo: metalView.topAnchor),
+            gradingPicker.leadingAnchor.constraint(equalTo: metalView.leadingAnchor),
+            gradingPicker.trailingAnchor.constraint(equalTo: metalView.trailingAnchor),
+            gradingPicker.bottomAnchor.constraint(equalTo: metalView.bottomAnchor),
             whiteBalancePicker.topAnchor.constraint(equalTo: metalView.topAnchor),
             whiteBalancePicker.leadingAnchor.constraint(equalTo: metalView.leadingAnchor),
             whiteBalancePicker.trailingAnchor.constraint(equalTo: metalView.trailingAnchor),
@@ -238,6 +268,10 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         panel.onPreview = { [weak self] adjustments in self?.previewSettings(adjustments) }
+        panel.onMuteWheels = { [weak self] wheels in
+            self?.mutedWheels = wheels
+            self?.metalView.needsDisplay = true
+        }
         panel.onChange = { [weak self] adjustments, isFinal, actionName in
             self?.adjustmentsChanged(adjustments, isFinal: isFinal, actionName: actionName)
         }
@@ -251,6 +285,12 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         }
         whiteBalancePicker.onPick = { [weak self] point in self?.pickWhiteBalance(at: point) }
         whiteBalancePicker.sample = { [weak self] point in self?.neutralTargetSample(at: point) }
+        panel.ungradedPixels = { [weak self] in await self?.ungradedPixels() ?? [] }
+        panel.onPickGradingColor = { [weak self] tab in
+            if let tab { self?.startGradingColorPicking(tab, isMask: false) } else { self?.endGradingColorPicking() }
+        }
+        panel.onDropGradingColor = { [weak self] tab, point in self?.dropGradingColor(tab, at: point, isMask: false) }
+        gradingPicker.onPick = { [weak self] point in self?.pickGradingColor(at: point) }
         panel.autoWhiteBalance = { [weak self] in self?.autoWhiteBalance() }
         panel.onUprightLevel = { [weak self] in self?.levelWithUpright() }
         panel.onSharpenMaskPreview = { [weak self] on in
@@ -267,7 +307,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         configureHistogram()
         configurePresets()
         configureLens()
-        configureRimLight()
+        configureLighting()
 
         loupeOverlay.geometry = { [weak self] in self?.geometry }
         loupeOverlay.onChange = { [weak self] in self?.metalView.needsDisplay = true }
@@ -342,6 +382,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         // Leaving Develop closes the crop tool, keeping the crop.
         if state.developTool == .crop { state.developTool = .adjust }
         endFringePicking()
+        closeColorWells()
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
         loupeOverlay.isPlacementKeyDown = false
@@ -363,7 +404,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     private func makeSidebar() -> NSView {
         for (button, symbol, title, identifier) in [
             (adjustToolButton, "slider.horizontal.3", "Adjust", "developTool.adjust"),
-            (rimLightToolButton, "", "Rim Light", "developTool.rimLight"),
+            (lightingToolButton, "", "Lighting", "developTool.lighting"),
             (cropToolButton, "crop.rotate", "Crop & Straighten (R)", "developTool.crop"),
             (maskToolButton, "circle.dashed.inset.filled", "Masking (⇧W)", "developTool.mask"),
             (removeToolButton, "eraser.fill", "Remove (Q)", "developTool.remove"),
@@ -371,7 +412,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             (historyToolButton, "clock.arrow.circlepath", "History and Snapshots", "developTool.history"),
         ] {
             button.image = symbol.isEmpty
-                ? Self.rimLightIcon(title)
+                ? Self.lightingIcon(title)
                 : NSImage(systemSymbolName: symbol, accessibilityDescription: title)?.withSymbolConfiguration(.init(pointSize: 28, weight: .regular))
             button.isBordered = false
             button.imagePosition = .imageOnly
@@ -381,7 +422,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             button.setAccessibilityLabel(title)
             button.setAccessibilityIdentifier(identifier)
         }
-        let header = NSStackView(views: [adjustToolButton, rimLightToolButton, cropToolButton, maskToolButton, removeToolButton, retouchToolButton, historyToolButton])
+        let header = NSStackView(views: [adjustToolButton, lightingToolButton, cropToolButton, maskToolButton, removeToolButton, retouchToolButton, historyToolButton])
         // Adjust flush left, History flush right, and the same space between each pair of icons.
         header.distribution = .equalSpacing
         header.spacing = 8
@@ -397,7 +438,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         // Presets above the Adjust panel's sections and Lens Corrections below them, as Lightroom's Develop panels are.
         panel.addEmbeddedSection("Presets", symbol: "photo.on.rectangle.angled", content: presetsPanel.view, atTop: true)
         panel.addEmbeddedSection("Lens Corrections", symbol: "camera", content: lensPanel.view, atTop: false)
-        let content = [panel.view, rimLightPanel.view, cropPanel.view, maskPanel.view, removePanel.view, retouchPanel.view, historyPanel.view]
+        let content = [panel.view, lightingPanel.view, cropPanel.view, maskPanel.view, removePanel.view, retouchPanel.view, historyPanel.view]
         for view in [histogramView, header, activeToolDot, headerLine] + content {
             view.translatesAutoresizingMaskIntoConstraints = false
             sidebar.addSubview(view)
@@ -430,7 +471,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         // the Mask, Spot Removal and History panels drew over Adjust until a tool was chosen.
         let tool = state.developTool
         panel.view.isHidden = tool != .adjust
-        rimLightPanel.view.isHidden = tool != .rimLight
+        lightingPanel.view.isHidden = tool != .lighting
         cropPanel.view.isHidden = tool != .crop
         maskPanel.view.isHidden = tool != .mask
         removePanel.view.isHidden = tool != .remove
@@ -442,11 +483,11 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     }
 
     @objc private func toolButtonClicked(_ sender: NSButton) {
-        state.developTool = sender === rimLightToolButton ? .rimLight : sender === cropToolButton ? .crop : sender === maskToolButton ? .mask : sender === removeToolButton ? .remove : sender === retouchToolButton ? .retouch : sender === historyToolButton ? .history : .adjust
+        state.developTool = sender === lightingToolButton ? .lighting : sender === cropToolButton ? .crop : sender === maskToolButton ? .mask : sender === removeToolButton ? .remove : sender === retouchToolButton ? .retouch : sender === historyToolButton ? .history : .adjust
     }
 
     private func updateToolButtons() {
-        for (button, tool) in [(adjustToolButton, DevelopTool.adjust), (rimLightToolButton, .rimLight), (cropToolButton, .crop), (maskToolButton, .mask), (removeToolButton, .remove), (retouchToolButton, .retouch), (historyToolButton, .history)] {
+        for (button, tool) in [(adjustToolButton, DevelopTool.adjust), (lightingToolButton, .lighting), (cropToolButton, .crop), (maskToolButton, .mask), (removeToolButton, .remove), (retouchToolButton, .retouch), (historyToolButton, .history)] {
             let active = state.developTool == tool
             button.contentTintColor = active ? Accent.color : .systemGray
             button.setAccessibilityValue(active ? "active" : "inactive")
@@ -473,7 +514,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     }
 
     /// The softbox (Design/RimLight-Softbox.svg), a template so it's tinted like the symbols beside it, at their size.
-    private static func rimLightIcon(_ title: String) -> NSImage? {
+    private static func lightingIcon(_ title: String) -> NSImage? {
         guard let image = NSImage(named: "RimLight")?.copy() as? NSImage else { return nil }
         image.size = NSSize(width: 30, height: 30)
         image.isTemplate = true
@@ -524,12 +565,19 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         computeHistogram(input, key: key)
     }
 
+    /// Shows the photo's histogram in the Histogram and behind the Tone Curves.
+    private func showHistogram(_ histogram: Histogram?) {
+        histogramView.histogram = histogram
+        panel.histogram = histogram
+        maskPanel.histogram = histogram
+    }
+
     private func computeHistogram(_ input: HistogramCalculator.Input, key: HistogramKey) {
         histogramTask = Task { [weak self] in
             let histogram = await HistogramCalculator.histogram(of: input)
             guard let self else { return }
             histogramTask = nil
-            if key.photo == displayedPhotoID { histogramView.histogram = histogram }
+            if key.photo == displayedPhotoID { showHistogram(histogram) }
             if let pending = pendingHistogram {
                 pendingHistogram = nil
                 computeHistogram(pending.input, key: pending.key)
@@ -558,22 +606,41 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         let shooting: ShootingInfo
     }
 
-    private func configureRimLight() {
-        rimLightPanel.display(adjustments.rimLight)
-        rimLightPanel.onChange = { [weak self] rimLight, isFinal, actionName in
+    private func configureLighting() {
+        lightingPanel.portraitLighting.display(adjustments.portraitLighting)
+        lightingPanel.portraitLighting.onChange = { [weak self] portraitLighting, isFinal, actionName in
+            guard let self, let source else { return }
+            var newValue = adjustments
+            newValue.portraitLighting = portraitLighting
+            // Keep the Adjust panel's copy current, or its next edit would undo this one.
+            panel.display(newValue, asShotWhiteBalance: source.asShotWhiteBalance, isRaw: source.isRaw)
+            adjustmentsChanged(newValue, isFinal: isFinal, actionName: actionName)
+            refreshLightingStatus()
+        }
+        lightingPanel.rimLight.display(adjustments.rimLight)
+        lightingPanel.rimLight.onChange = { [weak self] rimLight, isFinal, actionName in
             guard let self, let source else { return }
             var newValue = adjustments
             newValue.rimLight = rimLight
             // Keep the Adjust panel's copy current, or its next edit would undo this one.
             panel.display(newValue, asShotWhiteBalance: source.asShotWhiteBalance, isRaw: source.isRaw)
             adjustmentsChanged(newValue, isFinal: isFinal, actionName: actionName)
-            refreshRimLightStatus()
+            refreshLightingStatus()
         }
     }
 
-    /// Tells the Rim Light panel whether the photo's subject has been found (it's found when the light first renders).
-    private func refreshRimLightStatus() {
-        rimLightPanel.subjectStatus = source.map { $0.subjectMattes.status(for: $0, adjustments: adjustments, refined: true) }
+    /// Tells the Lighting panel's sections whether the photo's people and subject have been found (they're found when
+    /// the effect first renders).
+    private func refreshLightingStatus() {
+        lightingPanel.portraitLighting.peopleStatus = source.map {
+            $0.subjectMattes.status(for: $0, adjustments: adjustments, kind: .person, refined: true)
+        }
+        lightingPanel.rimLight.subjectStatus = source.map { $0.subjectMattes.status(for: $0, adjustments: adjustments, refined: true) }
+    }
+
+    private func clearLightingStatus() {
+        lightingPanel.portraitLighting.peopleStatus = nil
+        lightingPanel.rimLight.subjectStatus = nil
     }
 
     private func configureLens() {
@@ -640,7 +707,13 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         let shooting = ShootingInfo.read(from: url)
         let camera = database.camera(make: make, model: model)
         let cropFactor = camera?.cropFactor ?? shooting.cropFactor
-        let match = database.match(make: make, model: model, lens: lens).map {
+        // Photos cataloged before the lens was read from {ExifAux} have none recorded, or Lightroom's
+        // "24.0-120.0 mm f/4.0", which names no lens; the file has the real name.
+        var lensMatch = database.match(make: make, model: model, lens: lens)
+        if lensMatch == nil, let fileLens = ImageMetadata.read(from: url)?.lensModel, fileLens != lens {
+            lensMatch = database.match(make: make, model: model, lens: fileLens)
+        }
+        let match = lensMatch.map {
             LensFunDatabase.profile(for: $0, cropFactor: cropFactor, focalLength: shooting.focalLength,
                                     aperture: shooting.aperture, distance: shooting.subjectDistance)
         }
@@ -722,6 +795,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         fringePicker.isHidden = true
         lensPanel.endFringePicking()
         endWhiteBalancePicking()
+        endGradingColorPicking()
     }
 
     private func endWhiteBalancePicking() {
@@ -737,24 +811,113 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
 
     /// The average color of the preview (display RGB) over `rect` of the image, or the whole image.
     private func previewColor(around point: CGPoint?) -> [Double]? {
-        guard let preview = lastPreview, let ciContext else { return nil }
-        let extent = preview.image.extent
+        guard let preview = lastPreview else { return nil }
+        return averageColor(of: preview.image, shownIn: preview.rect, around: point, in: CGColorSpace(name: CGColorSpace.displayP3))
+    }
+
+    /// The average color of `image`, shown at `rect` (points), over a 5-point square around `point`, or all of it.
+    private func averageColor(of image: CIImage, shownIn rect: CGRect, around point: CGPoint?, in colorSpace: CGColorSpace?) -> [Double]? {
+        guard let ciContext else { return nil }
+        let extent = image.extent
         var bounds = extent
         if let point {
-            guard preview.rect.contains(point) else { return nil }
-            let x = extent.minX + (point.x - preview.rect.minX) / preview.rect.width * extent.width
-            let y = extent.minY + (point.y - preview.rect.minY) / preview.rect.height * extent.height
+            guard rect.contains(point) else { return nil }
+            let x = extent.minX + (point.x - rect.minX) / rect.width * extent.width
+            let y = extent.minY + (point.y - rect.minY) / rect.height * extent.height
             // A 5-point square of the preview, so noise doesn't decide.
-            let side = max(3, (5 * extent.width / preview.rect.width).rounded())
+            let side = max(3, (5 * extent.width / rect.width).rounded())
             bounds = CGRect(x: x - side / 2, y: y - side / 2, width: side, height: side).intersection(extent).integral
         }
         guard !bounds.isEmpty, let filter = CIFilter(name: "CIAreaAverage", parameters: [
-            kCIInputImageKey: preview.image, kCIInputExtentKey: CIVector(cgRect: bounds),
+            kCIInputImageKey: image, kCIInputExtentKey: CIVector(cgRect: bounds),
         ]), let average = filter.outputImage else { return nil }
         var pixel = [Float](repeating: 0, count: 4)
-        ciContext.render(average, toBitmap: &pixel, rowBytes: 16, bounds: average.extent, format: .RGBAf,
-                         colorSpace: CGColorSpace(name: CGColorSpace.displayP3))
+        ciContext.render(average, toBitmap: &pixel, rowBytes: 16, bounds: average.extent, format: .RGBAf, colorSpace: colorSpace)
         return pixel.prefix(3).map(Double.init)
+    }
+
+    // MARK: Color Grading wells
+
+    /// A well's eyedropper was switched on: until it's switched off (or its well closes), each click on the photo
+    /// picks for that wheel.
+    private func startGradingColorPicking(_ tab: ColorGradingTab, isMask: Bool) {
+        guard source != nil else {
+            NSSound.beep()
+            return isMask ? maskPanel.endGradingColorPicking() : panel.endGradingColorPicking()
+        }
+        fringePicker.isHidden = true
+        lensPanel.endFringePicking()
+        endWhiteBalancePicking()
+        // Only one eyedropper at a time: the other panel's goes off.
+        isMask ? panel.endGradingColorPicking() : maskPanel.endGradingColorPicking()
+        gradingPick = (tab, isMask)
+        gradingPicker.isHidden = false
+        // The popover took key when its eyedropper was clicked, and the eyedropper pointer (a cursor rect) only shows
+        // in the key window; the popover stays open.
+        view.window?.makeKey()
+        view.window?.invalidateCursorRects(for: gradingPicker)
+    }
+
+    /// The well's eyedropper was dragged out of its popover and let go at `screenPoint`: pick the photo there.
+    private func dropGradingColor(_ tab: ColorGradingTab, at screenPoint: NSPoint, isMask: Bool) {
+        guard let window = view.window, source != nil else { return NSSound.beep() }
+        let armed = gradingPick
+        gradingPick = (tab, isMask)
+        pickGradingColor(at: gradingPicker.convert(window.convertPoint(fromScreen: screenPoint), from: nil))
+        gradingPick = armed
+    }
+
+    /// Switches the eyedropper off (the wells stay open).
+    private func endGradingColorPicking() {
+        gradingPick = nil
+        gradingPicker.isHidden = true
+        panel.endGradingColorPicking()
+        maskPanel.endGradingColorPicking()
+    }
+
+    /// Closes any open color well, and with it the eyedropper.
+    private func closeColorWells() {
+        panel.closeColorWell()
+        maskPanel.closeColorWell()
+        endGradingColorPicking()
+    }
+
+    /// The settings with Color Grading off (the photo's and every mask's), so swatches and picks show the photo's own
+    /// colors rather than the current grade.
+    private var ungradedAdjustments: PhotoAdjustments {
+        var settings = adjustments
+        settings.color.isEnabled = false
+        for index in settings.masks.indices { settings.masks[index].settings.color.isEnabled = false }
+        return settings
+    }
+
+    /// A small copy of the photo with Color Grading off, as sRGB pixels, for the wells' swatches.
+    private func ungradedPixels() async -> [ColorGradingSwatches.RGB] {
+        guard let source else { return [] }
+        let settings = ungradedAdjustments
+        let frame = source.frameSize(settings)
+        let scale = min(1, ColorGradingSwatches.sampleSide / max(frame.width, frame.height, 1))
+        return await Self.readPixels(NavigatorPreviewInput(image: source.image(with: settings, scale: scale)))
+    }
+
+    @concurrent
+    private nonisolated static func readPixels(_ input: NavigatorPreviewInput) async -> [ColorGradingSwatches.RGB] {
+        ColorGradingSwatches.pixels(of: input.image, context: navigatorContext)
+    }
+
+    /// A well's eyedropper: sets the wheel from the clicked spot of the photo with Color Grading off, as one undoable edit.
+    /// The eyedropper stays on for more picks, as Lightroom's does.
+    private func pickGradingColor(at point: CGPoint) {
+        guard let pick = gradingPick else { return }
+        guard let source, let preview = lastPreview, let scale = lastPreviewScale,
+              let color = averageColor(
+                  of: source.image(with: ungradedAdjustments, scale: scale), shownIn: preview.rect, around: point,
+                  in: CGColorSpace(name: CGColorSpace.sRGB)
+              ), color.count == 3
+        else { return NSSound.beep() }
+        let rgb = ColorGradingSwatches.RGB(color[0], color[1], color[2]).clamped(lowerBound: .zero, upperBound: .one)
+        let applied = pick.isMask ? maskPanel.applyGradingColor(rgb, to: pick.tab) : panel.applyGradingColor(rgb, to: pick.tab)
+        if !applied { NSSound.beep() }
     }
 
     /// The 5 × 5 grid of the preview around `point` (one square per screen point) for the White
@@ -833,6 +996,11 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         cropPanel.onChange = { [weak self] crop, _ in self?.cropChanged(crop) }
         cropOverlay.onChange = { [weak self] crop, _ in self?.cropChanged(crop) }
         cropOverlay.toolOverlay = cropPanel.toolOverlay
+        cropOverlay.guideOverlay = .saved
+        cropOverlay.guideOrientation = CropGuideOverlay.saved.savedOrientation
+        cropOverlay.aspectRatios = CropGuideOverlay.shownAspectRatios
+        cropOverlay.gridCells = CropGuideOverlay.gridCells
+        cropOverlay.onGridCellsChange = { CropGuideOverlay.gridCells = $0 }
         cropPanel.onOverlayChange = { [weak self] overlay in self?.cropOverlay.toolOverlay = overlay }
         cropPanel.onAspect = { [weak self] aspect in self?.setCropAspect(aspect) }
         cropPanel.onAuto = { [weak self] in self?.autoStraighten() }
@@ -854,8 +1022,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         updateToolButtons()
         let cropping = state.developTool == .crop
         panel.view.isHidden = state.developTool != .adjust
-        rimLightPanel.view.isHidden = state.developTool != .rimLight
-        if state.developTool == .rimLight { refreshRimLightStatus() }
+        lightingPanel.view.isHidden = state.developTool != .lighting
+        if state.developTool == .lighting { refreshLightingStatus() }
         if state.developTool != .adjust { endPresetPreview() }
         cropPanel.view.isHidden = !cropping
         maskPanel.view.isHidden = state.developTool != .mask
@@ -872,6 +1040,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         cropOverlay.isHidden = !cropping
         loupeOverlay.isLoupeVisible = state.isLoupeVisible && !cropping
         if state.developTool == .adjust { loadLensContext() } else { endFringePicking() }
+        closeColorWells()
         if cropping {
             cropSessionStart = adjustments.crop
             showCrop(adjustments.crop)
@@ -902,6 +1071,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
 
     /// Saves the crop as one undoable edit.
     func commitCrop() {
+        refreshPanelCrop()
         guard let photo = displayedPhoto, photo.adjustments.crop != adjustments.crop else { return }
         var saved = photo.adjustments
         saved.crop = adjustments.crop
@@ -917,9 +1087,62 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         if let cropSessionStart { adjustments.crop = cropSessionStart }
         showCrop(adjustments.crop)
         state.developTool = .adjust
+        refreshPanelCrop()
+    }
+
+    /// Crop edits don't go through the Adjust panel, so bring its copy of the settings up to date when a
+    /// crop session ends; otherwise its previews (Profile, White Balance) would show the old crop.
+    private func refreshPanelCrop() {
+        guard let source, panel.adjustments.crop != adjustments.crop else { return }
+        var refreshed = panel.adjustments
+        refreshed.crop = adjustments.crop
+        panel.display(refreshed, asShotWhiteBalance: source.asShotWhiteBalance, isRaw: source.isRaw)
     }
 
     /// X: swaps the crop between landscape and portrait, keeping its aspect ratio.
+    /// The crop's composition guide (View ▸ Crop Guide Overlay).
+    var cropGuideOverlay: CropGuideOverlay { cropOverlay.guideOverlay }
+
+    /// O while cropping: the next guide.
+    func cycleCropGuideOverlay() { setCropGuideOverlay(cropOverlay.guideOverlay.next) }
+
+    /// Shows a guide and flashes its name. With Tool Overlay on Never it turns to Always, so the change
+    /// is visible.
+    func setCropGuideOverlay(_ overlay: CropGuideOverlay) {
+        CropGuideOverlay.saved = overlay
+        cropOverlay.guideOverlay = overlay
+        cropOverlay.guideOrientation = overlay.savedOrientation
+        if cropPanel.toolOverlay == .never { cropPanel.setToolOverlay(.always) }
+        cropOverlay.flashGuideName()
+    }
+
+    /// View ▸ Crop Guide Overlay ▸ Choose Overlays to Cycle…: a sheet of the guides O visits and the
+    /// ratios the Aspect Ratios guide shows. Changes show on the crop as they're made.
+    func showCropGuideOptions() {
+        guard let window = view.window else { return }
+        let options = CropGuideOptionsView()
+        options.onChange = { [weak self] in self?.cropOverlay.aspectRatios = CropGuideOverlay.shownAspectRatios }
+        let alert = NSAlert()
+        alert.messageText = "Choose Overlays to Cycle"
+        alert.informativeText = "O cycles through the ticked overlays. View ▸ Crop Guide Overlay can still show any of them."
+        alert.accessoryView = options
+        alert.addButton(withTitle: "Done")
+        alert.beginSheetModal(for: window)
+    }
+
+    /// ⇧O while cropping: turns Triangle or the Golden Spiral. Returns false for the symmetric guides.
+    @discardableResult
+    func cycleCropGuideOrientation() -> Bool {
+        let overlay = cropOverlay.guideOverlay
+        guard overlay.orientationCount > 1 else { return false }
+        let orientation = (cropOverlay.guideOrientation + 1) % overlay.orientationCount
+        overlay.savedOrientation = orientation
+        cropOverlay.guideOrientation = orientation
+        if cropPanel.toolOverlay == .never { cropPanel.setToolOverlay(.always) }
+        cropOverlay.flashGuideName()
+        return true
+    }
+
     func flipCropOrientation() {
         guard let source else { return }
         var crop = adjustments.crop
@@ -997,6 +1220,15 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         maskPanel.onChange = { [weak self] masks, isFinal, actionName in self?.masksChanged(masks, isFinal: isFinal, actionName: actionName) }
         maskPanel.onSelectionChange = { [weak self] id in self?.maskOverlay.adjustment = self?.adjustments.masks.first { $0.id == id } }
         maskPanel.onAdd = { [weak self] kind in self?.addMask(kind) }
+        maskPanel.onMuteWheels = { [weak self] mask, wheels in
+            self?.mutedMaskWheels = mask.map { ($0, wheels) }
+            self?.metalView.needsDisplay = true
+        }
+        maskPanel.ungradedPixels = { [weak self] in await self?.ungradedPixels() ?? [] }
+        maskPanel.onPickGradingColor = { [weak self] tab in
+            if let tab { self?.startGradingColorPicking(tab, isMask: true) } else { self?.endGradingColorPicking() }
+        }
+        maskPanel.onDropGradingColor = { [weak self] tab, point in self?.dropGradingColor(tab, at: point, isMask: true) }
         maskPanel.onBrushChange = { [weak self] brush in self?.maskOverlay.brush = brush }
         maskOverlay.onBrushChange = { [weak self] brush in self?.maskPanel.brush = brush }
         maskOverlay.brush = maskPanel.brush
@@ -1015,7 +1247,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         subjectObserver = NotificationCenter.default.addObserver(forName: SubjectMatteStore.didFind, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.refreshSubjectStatus()
-                self?.refreshRimLightStatus()
+                self?.refreshLightingStatus()
                 self?.metalView.needsDisplay = true
             }
         }
@@ -1525,6 +1757,41 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
 
     var isPreviewingPreset: Bool { presetPreview != nil }
 
+    /// Color Grading wheels hidden by their eye buttons, the photo's and one mask's: left out of what's drawn, never
+    /// saved. Cleared when another photo is shown.
+    private var mutedWheels: Set<ColorGradingTab> = []
+    private var mutedMaskWheels: (mask: UUID, wheels: Set<ColorGradingTab>)?
+
+    /// The photo's settings as drawn: without any wheels hidden by their eyes.
+    private var drawnAdjustments: PhotoAdjustments {
+        Self.muting(adjustments, wheels: mutedWheels, maskWheels: mutedMaskWheels)
+    }
+
+    /// What the canvas shows: a hover preview in place of the photo's settings, with the same wheels hidden
+    /// (RAW-282), since a preview is the committed render with only the hovered setting swapped.
+    private var shownAdjustments: PhotoAdjustments {
+        presetPreview.map { Self.muting($0, wheels: mutedWheels, maskWheels: mutedMaskWheels) } ?? drawnAdjustments
+    }
+
+    static func muting(
+        _ adjustments: PhotoAdjustments, wheels: Set<ColorGradingTab>, maskWheels: (mask: UUID, wheels: Set<ColorGradingTab>)?
+    ) -> PhotoAdjustments {
+        guard !wheels.isEmpty || maskWheels != nil else { return adjustments }
+        var muted = adjustments
+        muted.color = ColorGradingTab.muting(wheels, in: muted.color)
+        if let maskWheels, let index = muted.masks.firstIndex(where: { $0.id == maskWheels.mask }) {
+            muted.masks[index].settings.color = ColorGradingTab.muting(maskWheels.wheels, in: muted.masks[index].settings.color)
+        }
+        return muted
+    }
+
+    private func clearMutedWheels() {
+        mutedWheels = []
+        mutedMaskWheels = nil
+        panel.clearMutedWheels()
+        maskPanel.clearMutedWheels()
+    }
+
     /// Previews a preset on the photo (`nil` ends the preview).
     func previewPreset(_ preset: DevelopPreset?) {
         guard let preset, let photo = displayedPhoto, presetsPanel.isEditingEnabled else {
@@ -1538,14 +1805,18 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     /// Shows `previewed` in place of the photo's settings, here and in the Navigator, without saving
     /// anything (a preset under the pointer, a profile highlighted in the Profile menu); `nil` ends it.
     func previewSettings(_ previewed: PhotoAdjustments?) {
-        guard let previewed, displayedPhoto != nil, let source else {
+        guard var previewed, displayedPhoto != nil, let source else {
             endPresetPreview()
             return
         }
+        // The Adjust panel's copy of the crop may be stale (as in `adjustmentsChanged`); a preview only
+        // swaps the looks, so it always shows the photo's current crop.
+        previewed.crop = adjustments.crop
         presetPreview = previewed
         metalView.needsDisplay = true
         // The Navigator's copy, small and off the main thread.
-        let image = source.image(with: previewed, scale: source.scale(toFit: 480, adjustments: previewed))
+        let drawn = Self.muting(previewed, wheels: mutedWheels, maskWheels: mutedMaskWheels)
+        let image = source.image(with: drawn, scale: source.scale(toFit: 480, adjustments: drawn))
         navigatorPreviewTask?.cancel()
         navigatorPreviewTask = Task { [weak self] in
             let rendered = await Self.renderNavigatorPreview(.init(image: image))
@@ -1578,6 +1849,11 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
 
     /// The Presets panel (for tests).
     var presetsPanelForTesting: PresetsPanelViewController { presetsPanel }
+    /// The Adjust and Crop panels, and the settings a hover preview is showing (for tests).
+    var adjustmentsPanelForTesting: AdjustmentsPanelViewController { panel }
+    var cropPanelForTesting: CropPanelViewController { cropPanel }
+    var previewedAdjustmentsForTesting: PhotoAdjustments? { presetPreview }
+    var shownAdjustmentsForTesting: PhotoAdjustments { shownAdjustments }
 
     /// The preset last applied, for its Amount slider: the settings before it and with it at 100%.
     private var presetAmount: (photo: NSManagedObjectID, preset: DevelopPreset, before: PhotoAdjustments, full: PhotoAdjustments)?
@@ -1758,11 +2034,12 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             lensContext = nil
             lensPanel.isEditingEnabled = false
             lensPanel.display(.init(), status: .unavailable, catalog: LensCatalog())
-            rimLightPanel.isEditingEnabled = false
-            rimLightPanel.subjectStatus = nil
+            lightingPanel.isEditingEnabled = false
+            clearLightingStatus()
             endFringePicking()
+            closeColorWells()
             histogramView.isEditingEnabled = false
-            histogramView.histogram = nil
+            showHistogram(nil)
             histogramView.shootingInfo = ShootingInfo()
             histogramView.sourceStatus = nil
             histogramKey = nil
@@ -1774,13 +2051,16 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         if state.developTool == .crop { commitCrop() }
         endPresetAmount()
         endPresetPreview()
+        clearMutedWheels()
+        closeColorWells()
         displayedPhotoID = id
         historyCursor = nil
         _ = cancelPendingRemove()
         removeSelectedID = nil
         source = nil
         loupeSource = nil
-        placeholder = store.thumbnails.cachedImage(for: photo.id).map { CIImage(cgImage: $0) }
+        placeholder = (store.standardPreviews.cachedImage(for: photo.id) ?? store.thumbnails.cachedImage(for: photo.id))
+            .map { CIImage(cgImage: $0) }
         adjustments = photo.adjustments
         if state.developTool == .crop {
             cropSessionStart = adjustments.crop
@@ -1789,15 +2069,15 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         panel.isEditingEnabled = false
         presetsPanel.isEditingEnabled = false
         histogramView.isEditingEnabled = false
-        histogramView.histogram = nil
+        showHistogram(nil)
         histogramView.shootingInfo = ShootingInfo()
         histogramView.sourceStatus = store.sourceStatus(of: photo)
         histogramKey = nil
         endFringePicking()
         lensContext = nil
         lensPanel.isEditingEnabled = false
-        rimLightPanel.isEditingEnabled = false
-        rimLightPanel.subjectStatus = nil
+        lightingPanel.isEditingEnabled = false
+        clearLightingStatus()
         showLens()
         panel.cameraModel = photo.cameraModel
         presetsPanel.photo = .init(cameraModel: photo.cameraModel)
@@ -1820,13 +2100,21 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         show(message: nil)
         spinner.startAnimation(nil)
         let thumbnails = store.thumbnails
+        let previews = store.standardPreviews
         let uuid = photo.id
+        let showsPreview = previews.isCurrent(uuid) && previews.cachedImage(for: uuid) == nil
         loadTask = Task { [weak self] in
             let info = await Self.readShootingInfo(location)
             if self?.displayedPhotoID == id { self?.histogramView.shootingInfo = info }
             if self?.placeholder == nil, let thumbnail = await thumbnails.image(for: uuid) {
                 guard let self, displayedPhotoID == id, source == nil else { return }
                 placeholder = CIImage(cgImage: thumbnail)
+                metalView.needsDisplay = true
+            }
+            // The Standard preview, a larger rendering, until the photo is decoded (RAW-84).
+            if showsPreview, let preview = await previews.image(for: uuid) {
+                guard let self, displayedPhotoID == id, source == nil else { return }
+                placeholder = CIImage(cgImage: preview)
                 metalView.needsDisplay = true
             }
             let loaded = await Self.loadSource(location)
@@ -1846,8 +2134,8 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             presetsPanel.isEditingEnabled = true
             histogramView.isEditingEnabled = true
             lensPanel.isEditingEnabled = true
-            rimLightPanel.isEditingEnabled = true
-            refreshRimLightStatus()
+            lightingPanel.isEditingEnabled = true
+            refreshLightingStatus()
             if state.developTool == .adjust { loadLensContext() }
             if state.developTool == .remove { showRemove() }
             metalView.needsDisplay = true
@@ -1904,7 +2192,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         zoomClickView.isActive = { [weak self] in
             guard let self, source != nil else { return false }
             // Crop, Masking and Spot Removal use clicks on the photo themselves.
-            return [.adjust, .rimLight, .history].contains(state.developTool)
+            return [.adjust, .lighting, .history].contains(state.developTool)
         }
         zoomClickView.isZoomed = { [weak self] in self?.state.zoom.isZoomed ?? false }
         zoomClickView.onClick = { [weak self] point in
@@ -1970,8 +2258,22 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     // MARK: - MTKViewDelegate
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+        // The side panels slide (or the window resizes) a frame at a time: redraw each one at the
+        // scale already rendered, then sharp once the size has settled.
+        scaleHold.isResizing = true
+        resizeSettle?.cancel()
+        let settle = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            scaleHold.isResizing = false
+            metalView.needsDisplay = true
+        }
+        resizeSettle = settle
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.resizeSettleDelay, execute: settle)
         view.needsDisplay = true
     }
+
+    /// How long the canvas size must stay put before the preview renders at its new scale.
+    static let resizeSettleDelay: TimeInterval = 0.15
 
     func draw(in view: MTKView) {
         guard let drawable = view.currentDrawable,
@@ -1985,7 +2287,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         var newArrangement: BeforeAfterOverlayView.Arrangement?
         var previewImage: (image: CIImage, scale: CGFloat)?
         /// The settings the loupe magnifies: the before's in Before Only.
-        var loupeAdjustments = presetPreview ?? adjustments
+        var loupeAdjustments = shownAdjustments
         if source == nil, let placeholder, !placeholder.extent.isEmpty {
             // Fill the same rect the decoded photo will, so the swap is seamless.
             let extent = placeholder.extent
@@ -2005,11 +2307,13 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             // overlays map through the crop and its straightening.
             let masking = [.mask, .remove, .retouch].contains(state.developTool)
             // A preset under the pointer in the Presets panel is previewed.
-            let shownAdjustments = presetPreview ?? adjustments
+            let shownAdjustments = self.shownAdjustments
             // A cropped photo renders at the size it's shown; the crop tool shows the whole frame.
-            let previewScale = cropping
+            let wantedScale = cropping
                 ? source.scale(toFit: max(bounds.width, bounds.height))
                 : source.scale(toFit: max(bounds.width, bounds.height), adjustments: shownAdjustments)
+            // While the canvas changes size, the scale already rendered (RAW-254).
+            let previewScale = scaleHold.scale(for: wantedScale, source: ObjectIdentifier(source))
             // View ▸ Before/After (not in the tools that show the photo their own way).
             let beforeAfter = cropping || masking ? nil : state.beforeAfter
             let beforeAdjustments = shownAdjustments.before
@@ -2086,7 +2390,9 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
                         return rect
                     }
                     let shown = decorate(preview, scale: previewScale)
-                    let fit = min(pane.width / preview.extent.width, pane.height / preview.extent.height, 1)
+                    // Up to the size it would be at the scale asked for: a held, smaller render is enlarged
+                    // to follow the canvas as it grows.
+                    let fit = min(pane.width / preview.extent.width, pane.height / preview.extent.height, wantedScale / previewScale)
                     let scaled = shown
                         .transformed(by: CGAffineTransform(translationX: -preview.extent.minX, y: -preview.extent.minY))
                         .transformed(by: CGAffineTransform(scaleX: fit, y: fit))
@@ -2157,6 +2463,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
                     lastDrawnRect = rect
                 }
                 // Side by side, the eyedroppers and loupe work on the after.
+                lastPreviewScale = previewScale
                 lastPreview = (beforeAfter?.isSideBySide == true ? afterImage : image, CGRect(
                     x: rect.minX / backingScale, y: rect.minY / backingScale,
                     width: rect.width / backingScale, height: rect.height / backingScale

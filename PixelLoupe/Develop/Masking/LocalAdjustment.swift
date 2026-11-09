@@ -347,6 +347,8 @@ nonisolated extension PhotoAdjustments.LocalSettings {
         for (key, path) in paths {
             if let value = try legacy.decodeIfPresent(Double.self, forKey: key) { self[keyPath: path] = value }
         }
+        // Their Shadows predates RAW-230, so it keeps the original process.
+        if try legacy.decodeIfPresent(Double.self, forKey: .shadows) ?? 0 != 0 { light.shadowsProcess = .highlightShadowFilter }
     }
 
     /// Only what differs from the defaults, so an untouched section adds nothing to the catalog.

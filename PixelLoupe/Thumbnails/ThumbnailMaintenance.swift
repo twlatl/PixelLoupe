@@ -7,7 +7,8 @@ import OSLog
 ///
 /// - photos that have no thumbnail (no Lightroom preview, or one that failed) get one from the original;
 /// - thumbnails copied from Lightroom's previews (see ``SeededThumbnails``) are redrawn by PixelLoupe
-///   for photos whose edits PixelLoupe renders, so the grid matches Develop;
+///   for photos whose edits PixelLoupe renders, so the grid matches Develop, and for every photo whose
+///   Lightroom preview was smaller than a thumbnail;
 /// - thumbnails drawn from a Smart Preview while the original was missing are redrawn from the
 ///   original, here and again whenever originals come back (a drive is connected).
 ///
@@ -21,6 +22,16 @@ final class ThumbnailMaintenance {
     private var generation = 0
     private var availabilityObserver: NSObjectProtocol?
     private static let logger = Logger(subsystem: "net.pixegen.PixelLoupe", category: "Thumbnails")
+
+    /// Passes shorter than this (a few redraws after edits, an original coming back) don't show progress.
+    var progressThreshold = 50
+
+    /// The thumbnails drawn and to draw in this pass, for the progress shown under the grid; nil while idle and
+    /// for small passes.
+    private(set) var progress: LibraryState.ImportStatus? {
+        didSet { if progress != oldValue { onProgress(progress) } }
+    }
+    var onProgress: (LibraryState.ImportStatus?) -> Void = { _ in }
 
     init(store: CatalogStore) {
         self.store = store
@@ -43,6 +54,7 @@ final class ThumbnailMaintenance {
         generation += 1
         task?.cancel()
         task = nil
+        progress = nil
     }
 
     private func schedule(after delay: Duration) {
@@ -79,14 +91,20 @@ final class ThumbnailMaintenance {
     private func run() async {
         let directory = store.thumbnails.directory
         let context = store.newBackgroundContext()
+        let generation = generation
         let work = await Self.plan(context: context, directory: directory, fromSmartPreviews: store.thumbnails.drawnFromSmartPreviews)
-        guard !work.isEmpty else { return }
+        guard !work.isEmpty, generation == self.generation else { return }
         Self.logger.info("Drawing \(work.count) thumbnails in the background")
+        let showsProgress = work.count >= progressThreshold
+        if showsProgress { progress = LibraryState.ImportStatus(completed: 0, total: work.count) }
+        defer { if generation == self.generation { progress = nil } }
 
         var seeded = SeededThumbnails.load(from: directory)
+        var lowResolution = SeededThumbnails.load(from: directory, origin: .lowResolution)
         var sinceSave = 0
-        for item in work {
+        for (index, item) in work.enumerated() {
             if Task.isCancelled { break }
+            if showsProgress { progress?.completed = index }
             // Use the photo's current edits: they may have changed since the plan was made.
             let request = Photo.fetchRequest()
             request.predicate = NSPredicate(format: "id == %@", item.id as CVarArg)
@@ -94,15 +112,18 @@ final class ThumbnailMaintenance {
             guard let photo = try? store.viewContext.fetch(request).first else { continue }
             let ok = await store.thumbnails.render(id: item.id, source: store.sourceLocation(of: photo), adjustments: photo.adjustments)
             if ok, seeded.remove(item.id) != nil {
+                lowResolution.remove(item.id)
                 sinceSave += 1
                 if sinceSave >= 50 {
                     SeededThumbnails.save(seeded, to: directory)
+                    SeededThumbnails.save(lowResolution, to: directory, origin: .lowResolution)
                     sinceSave = 0
                 }
             }
             await Task.yield()
         }
         SeededThumbnails.save(seeded, to: directory)
+        SeededThumbnails.save(lowResolution, to: directory, origin: .lowResolution)
     }
 
     @concurrent
@@ -112,6 +133,7 @@ final class ThumbnailMaintenance {
             name.hasSuffix(".jpg") ? UUID(uuidString: String(name.dropLast(4))) : nil
         })
         let seeded = SeededThumbnails.load(from: directory)
+        let lowResolution = SeededThumbnails.load(from: directory, origin: .lowResolution)
 
         let (photos, edited): ([(UUID, String)], Set<UUID>) = await context.perform {
             let request = NSFetchRequest<NSDictionary>(entityName: "Photo")
@@ -133,7 +155,7 @@ final class ThumbnailMaintenance {
         for (id, path) in photos {
             if Task.isCancelled { return [] }
             let needsThumbnail = !existing.contains(id)
-            let needsRedraw = (seeded.contains(id) && edited.contains(id)) || fromSmartPreviews.contains(id)
+            let needsRedraw = (seeded.contains(id) && (edited.contains(id) || lowResolution.contains(id))) || fromSmartPreviews.contains(id)
             guard needsThumbnail || needsRedraw, FileManager.default.fileExists(atPath: path) else { continue }
             work.append(Work(id: id, path: path))
         }

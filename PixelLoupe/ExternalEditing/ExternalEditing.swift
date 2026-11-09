@@ -123,7 +123,7 @@ extension PhotoEditing {
         let copyCount = photos.filter { Self.externalEditMode(for: $0, choice: choice) != .original }.count
         return photos.map { photo in
             let mode = Self.externalEditMode(for: photo, choice: choice)
-            let item = ExportItem(photo)
+            let item = ExportItem(photo, includesDevelopSettings: store.settings.includesDevelopSettingsInExports)
             guard mode != .original else {
                 return ExternalEditJob(sourceID: photo.objectID, item: item, mode: mode, url: photo.fileURL)
             }

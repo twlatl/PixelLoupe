@@ -39,6 +39,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
     init(store: CatalogStore) {
         self.store = store
         CollectionEditing(store: store).createDefaultSmartCollections()
+        state.selectionMemory = SelectionMemory(saved: store.viewState.sourceSelections, context: store.viewContext)
         Self.restoreSelection(store.viewState, into: state, context: store.viewContext)
         store.pruneOrphanedPreviews()
         rootViewController = RootViewController(store: store, state: state)
@@ -78,12 +79,18 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
 
         modeSelection.onSelect = { [weak self] mode in self?.switchTo(mode) }
         store.availability.start()
+        store.thumbnailMaintenance.onProgress = { [weak self] progress in self?.state.thumbnailStatus = progress }
         store.thumbnailMaintenance.start()
         store.locationBackfill.start()
+        store.duplicateDetection.onProgress = { [weak self] progress in self?.state.duplicateStatus = progress }
+        store.duplicateDetection.start()
         store.smartPreviewBuilder.onProgress = { [weak self] progress in self?.state.smartPreviewStatus = progress }
         store.smartPreviewBuilder.start()
+        store.standardPreviewBuilder.onProgress = { [weak self] progress in self?.state.standardPreviewStatus = progress }
+        store.standardPreviewBuilder.start()
         store.cullingAnalysis.start()
         Task { [store] in await store.smartPreviews.load() }
+        Task { [store] in await store.standardPreviews.load() }
         store.externalEdits.start()
         NotificationCenter.default.addObserver(
             self, selector: #selector(settingsDidChange(_:)), name: AppSettings.didChangeNotification, object: nil
@@ -153,7 +160,9 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         store.availability.stop()
         store.thumbnailMaintenance.stop()
         store.locationBackfill.stop()
+        store.duplicateDetection.stop()
         store.smartPreviewBuilder.stop()
+        store.standardPreviewBuilder.stop()
         store.cullingAnalysis.stop()
         store.externalEdits.stop()
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
@@ -189,6 +198,9 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         if let height = viewState.metadataBrowserHeight { state.metadataBrowserHeight = height }
         if let id = viewState.collectionID, let collection = PhotoCollection.with(id: id, in: context) {
             state.filter.scope = .collection(id: id, content: collection.content)
+        } else if viewState.showsDuplicates {
+            // The sidebar goes back to All Photographs if Duplicate Detection has been turned off.
+            state.filter.scope = .duplicates
         } else if viewState.showsPreviousImport, let id = Photo.latestImportID(in: context) {
             state.filter.scope = .previousImport(id: id)
         } else if let path = viewState.folderPath {
@@ -219,12 +231,16 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         if case .folder(let path) = state.filter.scope { viewState.folderPath = path } else { viewState.folderPath = nil }
         viewState.collectionID = state.filter.scope.collectionID
         if case .previousImport = state.filter.scope { viewState.showsPreviousImport = true } else { viewState.showsPreviousImport = false }
+        viewState.showsDuplicates = state.filter.scope == .duplicates
         viewState.filterCriteria = state.filter.criteria
         viewState.isFilterBarVisible = state.isFilterBarVisible
         viewState.metadataBrowserHeight = state.metadataBrowserHeight
-        viewState.selectedPhotos = state.selectedPhotoIDs.prefix(CatalogViewState.maximumSavedSelection).compactMap {
-            (try? store.viewContext.existingObject(with: $0) as? Photo)?.id
-        }
+        // All of the source's selection, including photos the filter bar hides.
+        viewState.selectedPhotos = state.selectionMemory?.photos(for: state.filter.scope)
+            ?? state.selectedPhotoIDs.prefix(CatalogViewState.maximumSavedSelection).compactMap {
+                (try? store.viewContext.existingObject(with: $0) as? Photo)?.id
+            }
+        viewState.sourceSelections = state.selectionMemory?.saved ?? []
         store.viewState = viewState
     }
 
@@ -273,9 +289,16 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         let selection = state.selectedPhotoIDs
         let cropping = state.mode == .develop && state.developTool == .crop
         let develop = rootViewController.main.develop
-        // While cropping, Return applies, Esc cancels and X flips the orientation (as in Lightroom).
+        // While cropping, Return applies, Esc cancels, X flips the orientation and O cycles the guide overlay
+        // (as in Lightroom; elsewhere O is Masking's Show Overlay).
         if cropping {
             switch command {
+            case .maskOverlay:
+                develop.cycleCropGuideOverlay()
+                return true
+            case .cropGuideOrientation:
+                if !develop.cycleCropGuideOrientation() { NSSound.beep() }
+                return true
             case .toggleEnlarge:
                 state.developTool = .adjust
                 return true
@@ -437,6 +460,8 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         case .maskOverlay:
             guard state.mode == .develop, state.developTool == .mask else { return false }
             develop.toggleMaskOverlay()
+        case .cropGuideOrientation:
+            return false // ⇧O only turns the crop tool's guide (handled above).
         case .beforeAfter(.beforeOnly) where state.mode.showsLibraryInspector:
             // \ is Lightroom's Library Filter bar key in Library (and Map, which shows the bar too),
             // Before Only in Develop.
@@ -601,6 +626,20 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         rootViewController.main.develop.addMask(.background)
     }
     @objc func showMaskOverlay(_ sender: Any?) { _ = perform(.maskOverlay) }
+    @objc func cycleCropGuideOverlay(_ sender: Any?) { _ = perform(.maskOverlay) }
+    @objc func cycleCropGuideOrientation(_ sender: Any?) { _ = perform(.cropGuideOrientation) }
+
+    @objc func chooseCropGuideOverlays(_ sender: Any?) {
+        guard state.mode == .develop, state.developTool == .crop else { return }
+        rootViewController.main.develop.showCropGuideOptions()
+    }
+
+    /// View ▸ Crop Guide Overlay: the item's tag is the guide's index in ``CropGuideOverlay/allCases``.
+    @objc func chooseCropGuideOverlay(_ sender: NSMenuItem) {
+        guard state.mode == .develop, state.developTool == .crop,
+              CropGuideOverlay.allCases.indices.contains(sender.tag) else { return }
+        rootViewController.main.develop.setCropGuideOverlay(CropGuideOverlay.allCases[sender.tag])
+    }
 
     /// View ▸ Before/After: the item's tag is its ``BeforeAfterView``.
     @objc func showBeforeAfter(_ sender: NSMenuItem) {
@@ -645,9 +684,11 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
     var publishingManager: PublishingManagerWindowController?
     /// The running Publish (RAW-179), cancelled from the bottom bar.
     var publishTask: Task<Void, Never>?
-    /// Photo ▸ Photo Merge's merge (HDR or Panorama), running in the background.
+    /// Photo ▸ Photo Merge's merge (HDR, Panorama or HDR Panorama), running in the background.
     var mergeTask: Task<Void, Never>?
     var mergeSheet: NSWindowController?
+    /// HDR Panorama finding the selection's bracket sets, before its sheet opens.
+    var bracketTask: Task<Void, Never>?
     /// Photo ▸ Edit In's copies being written.
     var editInTask: Task<Void, Never>?
     var editInSheet: EditPhotoSheetController?
@@ -932,14 +973,16 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         editing.photos(state.selectedPhotoIDs).contains { $0.stack != nil }
     }
 
-    /// Photos hidden by a collapsed stack can't stay selected: the stack's top photo is selected instead.
+    /// Photos hidden by a collapsed stack can't stay selected: the stack's top photo is selected instead (see
+    /// `GridViewController.shown(_:)`, which does the same for a source's remembered selection).
     func selectTopsOfCollapsedStacks(for photos: [Photo]? = nil) {
         var result: [NSManagedObjectID] = []
         for photo in photos ?? editing.photos(state.selectedPhotoIDs) {
             let shown = photo.isHiddenInStack ? (photo.stack?.topPhoto ?? photo) : photo
             if !result.contains(shown.objectID) { result.append(shown.objectID) }
         }
-        if result != state.selectedPhotoIDs { state.selectedPhotoIDs = result }
+        // The source still remembers the hidden photos, for when the stack is expanded.
+        if result != state.selectedPhotoIDs { state.showSelection(result) }
     }
 
     /// ⌘G: the selected photos (in grid order) become a stack, collapsed under the first.
@@ -1189,8 +1232,9 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         case #selector(cancelExport(_:)):
             return exportTask != nil
         case #selector(photoMergeHDR(_:)), #selector(photoMergePanorama(_:)),
-             #selector(photoMergeHDRWithPreviousSettings(_:)), #selector(photoMergePanoramaWithPreviousSettings(_:)):
-            return mergeTask == nil && window?.attachedSheet == nil
+             #selector(photoMergeHDRWithPreviousSettings(_:)), #selector(photoMergePanoramaWithPreviousSettings(_:)),
+             #selector(photoMergeHDRPanorama(_:)):
+            return mergeTask == nil && bracketTask == nil && window?.attachedSheet == nil
                 && state.selectedPhotoIDs.count >= 2
                 && editing.photos(state.selectedPhotoIDs).filter { SupportedImageTypes.isRaw($0.fileURL) }.count >= 2
         case #selector(cancelPhotoMerge(_:)):
@@ -1228,6 +1272,22 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
             let typing = (window?.firstResponder as? NSText)?.isEditable ?? false
             (item as? NSMenuItem)?.state = state.mode == .develop && state.developTool == .crop ? .on : .off
             return !typing && (state.mode == .develop || !state.selectedPhotoIDs.isEmpty)
+        case #selector(cycleCropGuideOverlay(_:)):
+            // Shown with O, which is Show Mask Overlay outside the crop tool.
+            let typing = (window?.firstResponder as? NSText)?.isEditable ?? false
+            return !typing && state.mode == .develop && state.developTool == .crop
+        case #selector(cycleCropGuideOrientation(_:)):
+            // Shown with ⇧O; only Triangle and the Golden Spiral turn.
+            let typing = (window?.firstResponder as? NSText)?.isEditable ?? false
+            return !typing && state.mode == .develop && state.developTool == .crop
+                && rootViewController.main.develop.cropGuideOverlay.orientationCount > 1
+        case #selector(chooseCropGuideOverlays(_:)):
+            return state.mode == .develop && state.developTool == .crop
+        case #selector(chooseCropGuideOverlay(_:)):
+            let cropping = state.mode == .develop && state.developTool == .crop
+            let current = rootViewController.main.develop.cropGuideOverlay
+            (item as? NSMenuItem)?.state = CropGuideOverlay.allCases.firstIndex(of: current) == item.tag ? .on : .off
+            return cropping
         case #selector(showClipping(_:)):
             // Shown with J in the menu; disabled while typing so the key reaches the text field.
             let typing = (window?.firstResponder as? NSText)?.isEditable ?? false

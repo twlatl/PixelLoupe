@@ -84,6 +84,7 @@ extension CatalogWindowController {
     private func relink(_ oldPath: String, to newPath: String) {
         do {
             try FileRelinking.relinkFolder(oldPath, to: newPath, in: store)
+            state.selectionMemory?.renameFolder(from: oldPath, to: newPath)
             // Keep showing the folder if it was the one on screen.
             if case .folder(let path) = state.filter.scope, path == oldPath || path.hasPrefix(oldPath + "/") {
                 state.filter.scope = .folder(path: newPath + String(path.dropFirst(oldPath.count)))

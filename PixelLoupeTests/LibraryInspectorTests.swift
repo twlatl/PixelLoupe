@@ -69,6 +69,17 @@ struct FileMetadataTests {
         #expect(metadata[.dateTimeOriginal]?.contains("39") == true)
     }
 
+    @Test func readsLensAndSerialNumberFromExifAux() {
+        let metadata = FileMetadata(properties: [
+            kCGImagePropertyExifAuxDictionary: [
+                kCGImagePropertyExifAuxLensModel: "AF-S Nikkor 24-120mm f/4G ED VR",
+                kCGImagePropertyExifAuxSerialNumber: 3001358,
+            ] as [CFString: Any],
+        ])
+        #expect(metadata[.lens] == "AF-S Nikkor 24-120mm f/4G ED VR")
+        #expect(metadata[.serialNumber] == "3001358")
+    }
+
     @Test func readsXMPFromTheFile() throws {
         let directory = try TemporaryDirectory()
         let url = directory.url.appending(path: "x.jpg")

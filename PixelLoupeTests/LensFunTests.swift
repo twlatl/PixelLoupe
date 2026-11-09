@@ -125,6 +125,11 @@ struct LensFunDatabaseTests {
         #expect(database.cameras.count > 500)
         #expect(database.lenses.count > 1000)
         #expect(database.match(make: "SONY", model: "ILCE-7M4", lens: "FE 24-70mm F2.8 GM II")?.distortion.isEmpty == false)
+        // A Nikon D750's lens, as ImageIO reads it from the NEF's {ExifAux}.
+        let nikkor = database.match(make: "NIKON CORPORATION", model: "NIKON D750", lens: "AF-S Nikkor 24-120mm f/4G ED VR")
+        #expect(nikkor?.model == "Nikon AF-S Nikkor 24-120mm f/4G ED VR 170" && nikkor?.hasCorrections == true)
+        // Lightroom's lens text for the same photo names no lens; Develop falls back to the file's.
+        #expect(database.match(make: "NIKON CORPORATION", model: "NIKON D750", lens: "24.0-120.0 mm f/4.0") == nil)
     }
 }
 

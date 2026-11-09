@@ -88,7 +88,7 @@ nonisolated struct DevelopPreset: Identifiable, Equatable, Sendable {
         if photo.isMonochrome, settings["SupportsMonochrome"]?.bool == false { return .incompatible("Not for monochrome cameras.") }
         if !photo.isMonochrome, settings["SupportsColor"]?.bool == false { return .incompatible("Only for monochrome cameras.") }
         if settings["SupportsNormalDynamicRange"]?.bool == false { return .incompatible("Only for HDR editing.") }
-        let look = settings["Look"]?.table
+        let look = settings["Look"]?.table.flatMap { $0["Name"]?.string?.isEmpty == false ? $0 : nil }
         if let name = look?["Name"]?.string ?? settings["CameraProfile"]?.string {
             // Adobe's standard looks have PixelLoupe stand-ins; any other profile has to be imported.
             if LightroomDevelopMapper.profileMapping(for: name) == .unknown,
@@ -128,6 +128,9 @@ nonisolated struct DevelopPreset: Identifiable, Equatable, Sendable {
         _ = LightroomDevelopMapper.apply(input, to: &mapped)
         var result = Self.baseline(settings["Baseline"]?.string, from: adjustments)
         PresetMerge.copy(Set(settings.hash.keys).subtracting(Self.metadataKeys), from: mapped, to: &result)
+        if let portraitLighting = PortraitLightingPreset.portraitLighting(settings[PortraitLightingPreset.key]?.string) {
+            result.portraitLighting = portraitLighting
+        }
         if let rimLight = RimLightPreset.rimLight(settings[RimLightPreset.key]?.string) { result.rimLight = rimLight }
         return result
     }
@@ -193,7 +196,7 @@ nonisolated enum PresetMerge {
         add(["Exposure2012"], "exposure") { $1.light.exposure = $0.light.exposure }
         add(["Contrast2012"], "contrast") { $1.light.contrast = $0.light.contrast }
         add(["Highlights2012"], "highlights") { $1.light.highlights = $0.light.highlights }
-        add(["Shadows2012"], "shadows") { $1.light.shadows = $0.light.shadows }
+        add(["Shadows2012"], "shadows") { $1.light.shadows = $0.light.shadows; $1.light.shadowsProcess = $0.light.shadowsProcess }
         add(["Whites2012"], "whites") { $1.light.whites = $0.light.whites }
         add(["Blacks2012"], "blacks") { $1.light.blackPoint = $0.light.blackPoint }
         add(["Texture"], "texture") { $1.presence.texture = $0.presence.texture }
@@ -219,13 +222,20 @@ nonisolated enum PresetMerge {
             $1.blackAndWhite.intensity = $0.blackAndWhite.intensity
         }
 
-        // Color grading, wheel by wheel (split toning sets the shadow and highlight wheels).
+        // Color grading, wheel by wheel (split toning sets the shadow and highlight wheels). A wheel brings the preset's
+        // process, as Shadows does.
+        func wheel(_ path: WritableKeyPath<PhotoAdjustments.ColorGrading, PhotoAdjustments.ColorWheel> & Sendable) -> Copy {
+            { preset, photo in
+                photo.color[keyPath: path] = preset.color[keyPath: path]
+                if preset.color[keyPath: path].isSet { photo.color.process = preset.color.process }
+            }
+        }
         add(["ColorGradeShadowHue", "ColorGradeShadowSat", "ColorGradeShadowLum", "SplitToningShadowHue", "SplitToningShadowSaturation"],
-            "wheel-shadows") { $1.color.shadows = $0.color.shadows }
-        add(["ColorGradeMidtoneHue", "ColorGradeMidtoneSat", "ColorGradeMidtoneLum"], "wheel-midtones") { $1.color.midtones = $0.color.midtones }
+            "wheel-shadows", wheel(\.shadows))
+        add(["ColorGradeMidtoneHue", "ColorGradeMidtoneSat", "ColorGradeMidtoneLum"], "wheel-midtones", wheel(\.midtones))
         add(["ColorGradeHighlightHue", "ColorGradeHighlightSat", "ColorGradeHighlightLum", "SplitToningHighlightHue",
-             "SplitToningHighlightSaturation"], "wheel-highlights") { $1.color.highlights = $0.color.highlights }
-        add(["ColorGradeGlobalHue", "ColorGradeGlobalSat", "ColorGradeGlobalLum"], "wheel-global") { $1.color.global = $0.color.global }
+             "SplitToningHighlightSaturation"], "wheel-highlights", wheel(\.highlights))
+        add(["ColorGradeGlobalHue", "ColorGradeGlobalSat", "ColorGradeGlobalLum"], "wheel-global", wheel(\.global))
         add(["ColorGradeBlending"], "blending") { $1.color.blending = $0.color.blending }
         add(["SplitToningBalance"], "balance") { $1.color.balance = $0.color.balance }
 
@@ -252,6 +262,7 @@ nonisolated enum PresetMerge {
             $1.effects.grain = $0.effects.grain
             $1.effects.grainSize = $0.effects.grainSize
             $1.effects.grainRoughness = $0.effects.grainRoughness
+            $1.effects.grainProcess = $0.effects.grainProcess
             if $1.effects.grainSeed == 0 { $1.effects.grainSeed = $0.effects.grainSeed }
         }
 
@@ -272,6 +283,10 @@ nonisolated enum PresetMerge {
                 $1.blackAndWhite.isEnabled = true
                 $1.blackAndWhite.intensity = $0.blackAndWhite.intensity
             }
+        }
+        // A preset's masks (a radial vignette, a graduated sky) are added to the photo's own, as Lightroom does.
+        add(["MaskGroupBasedCorrections", "GradientBasedCorrections", "CircularGradientBasedCorrections"], "masks") {
+            $1.masks += $0.masks
         }
         add(["ShadowTint", "RedHue", "RedSaturation", "GreenHue", "GreenSaturation", "BlueHue", "BlueSaturation"], "calibration") {
             $1.calibration = $0.calibration

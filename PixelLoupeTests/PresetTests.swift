@@ -116,13 +116,42 @@ struct PresetApplyTests {
         #expect(result.color.highlights == PhotoAdjustments.ColorWheel(), "other wheels untouched")
     }
 
+    /// A preset's radial filter (Busy City darkens and warms the edges with one) is added to the photo's own masks.
+    @Test func aPresetsMasksAreAddedToThePhotos() throws {
+        let data = Data("""
+            <x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+            <rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:PresetType="Normal"
+              crs:ProcessVersion="6.7" crs:CameraProfile="Adobe Standard" crs:HasSettings="True">
+            <crs:Name><rdf:Alt><rdf:li xml:lang="x-default">Edges</rdf:li></rdf:Alt></crs:Name>
+            <crs:CircularGradientBasedCorrections><rdf:Seq><rdf:li><rdf:Description crs:What="Correction" crs:CorrectionAmount="1.000000"
+              crs:CorrectionActive="true" crs:LocalExposure2012="-0.300000" crs:LocalTemperature="0.088663">
+              <crs:CorrectionMasks><rdf:Seq><rdf:li crs:What="Mask/CircularGradient" crs:MaskValue="1.000000" crs:Top="0.1" crs:Left="0.05"
+                crs:Bottom="0.9" crs:Right="0.95" crs:Angle="0" crs:Midpoint="+50" crs:Roundness="0" crs:Feather="+50" crs:Flipped="false"
+                crs:Version="+2"/></rdf:Seq></crs:CorrectionMasks>
+              <crs:CorrectionRangeMask crs:Version="+2" crs:Type="0" crs:LumMin="0.000000" crs:LumMax="1.000000"/>
+            </rdf:Description></rdf:li></rdf:Seq></crs:CircularGradientBasedCorrections>
+            <crs:Look crs:Name=""/>
+            </rdf:Description></rdf:RDF></x:xmpmeta>
+            """.utf8)
+        let preset = try #require(DevelopPreset.parse(data, url: URL(filePath: "/p/edges.xmp"), defaultGroup: "x"))
+        var photo = PhotoAdjustments()
+        photo.masks = [PhotoAdjustments.LocalAdjustment()]
+        let result = preset.applied(to: photo, isRaw: true)
+        #expect(result.masks.count == 2, "the photo's mask stays and the preset's is added")
+        let added = try #require(result.masks.last)
+        #expect(added.settings.exposure == -0.3 && added.settings.temperature > 0)
+        // The older radial filter works outside its ellipse unless Flipped.
+        #expect(added.components.first?.isInverted == true)
+        // An empty look names no profile: the camera profile does.
+        #expect(preset.compatibility(with: .init(cameraModel: "Canon EOS 5D Mark III")) == .compatible)
+    }
+
     /// Every setting the Lightroom import maps can also come from a preset (except those that belong to
-    /// one photo: crop, masks, spots, red eye).
+    /// one photo: crop, brush strokes, spots, red eye).
     @Test func everyMappedSettingCanBeAppliedFromAPreset() {
         let perPhoto: Set<String> = [
             "CropLeft", "CropRight", "CropTop", "CropBottom", "CropAngle", "CropConstrainAspectRatio", "CropConstrainToWarp",
-            "MaskGroupBasedCorrections", "GradientBasedCorrections", "CircularGradientBasedCorrections", "PaintBasedCorrections",
-            "RetouchInfo", "RetouchAreas", "RedEyeInfo",
+            "PaintBasedCorrections", "RetouchInfo", "RetouchAreas", "RedEyeInfo",
         ]
         let mapped = Set(LightroomDevelopCoverage.table.filter { $0.value == .mapped }.map(\.key)).subtracting(perPhoto)
         let missing = mapped.subtracting(PresetMerge.supportedKeys)
@@ -303,5 +332,40 @@ struct PresetISOTests {
         let preset = try #require(DevelopPreset.parse(Self.adaptive(), url: URL(filePath: "/p/nr.xmp"), defaultGroup: "x"))
         let result = preset.applied(to: photo, isRaw: false, iso: 800)
         #expect(result.light.exposure == 0 && abs(result.noiseReduction.amount - 0.15) < 1e-9)
+    }
+}
+
+/// RAW-228.
+@Suite("New Preset sheet")
+struct NewPresetSheetTests {
+    /// The sheet's controls line up with its text (they sat at its left edge), short or with a checkbox
+    /// for every section.
+    @Test func theControlsLineUpWithTheSheetsText() async throws {
+        let host = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 900), styleMask: [.titled], backing: .buffered, defer: false)
+        host.isReleasedWhenClosed = false
+        defer { host.close() }
+        for count in [2, PresetSection.allCases.count] {
+            let checks = NSStackView(views: (0..<count).map { NSButton(checkboxWithTitle: "Section \($0)", target: nil, action: nil) })
+            checks.orientation = .vertical
+            checks.alignment = .leading
+            let name = NSTextField(string: "")
+            name.widthAnchor.constraint(equalToConstant: 300).isActive = true
+            let stack = NSStackView(views: [name, checks])
+            stack.orientation = .vertical
+            stack.alignment = .leading
+
+            let alert = NSAlert()
+            alert.messageText = "New Preset"
+            alert.informativeText = "Saves the chosen settings of this photo as a preset."
+            alert.accessoryView = PresetsPanelViewController.alertAccessory(stack)
+            alert.beginSheetModal(for: host, completionHandler: nil)
+            alert.window.layoutIfNeeded()
+            let content = try #require(alert.window.contentView)
+            let title = try #require(content.subviews.compactMap { $0 as? NSTextField }.first { $0.stringValue == "New Preset" })
+            let titleX = title.convert(title.bounds, to: nil).minX
+            let fieldX = name.convert(name.bounds, to: nil).minX
+            host.endSheet(alert.window)
+            #expect(titleX > 0 && abs(fieldX - titleX) <= 4, "\(count) checkboxes: the name field is at \(fieldX), the title at \(titleX)")
+        }
     }
 }

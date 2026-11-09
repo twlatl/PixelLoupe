@@ -370,7 +370,7 @@ final class PresetsPanelViewController: NSViewController, NSOutlineViewDataSourc
         name.placeholderString = "Preset name"
         name.setAccessibilityIdentifier("newPresetName")
         let group = NSComboBox()
-        group.addItems(withObjectValues: Array(Set(library.presets.map(\.group) + ["User Presets"])).sorted())
+        group.addItems(withObjectValues: Array(Set(library.presets.filter { !library.isBuiltIn($0) }.map(\.group) + ["User Presets"])).sorted())
         group.stringValue = "User Presets"
         group.setAccessibilityLabel("Group")
         var boxes: [(PresetSection, NSButton)] = []
@@ -389,10 +389,9 @@ final class PresetsPanelViewController: NSViewController, NSOutlineViewDataSourc
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
-        stack.frame = NSRect(x: 0, y: 0, width: 300, height: 420)
         name.widthAnchor.constraint(equalToConstant: 300).isActive = true
         group.widthAnchor.constraint(equalToConstant: 240).isActive = true
-        alert.accessoryView = stack
+        alert.accessoryView = Self.alertAccessory(stack)
         alert.window.initialFirstResponder = name
         let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
             guard response == .alertFirstButtonReturn, let self else { return }
@@ -400,6 +399,21 @@ final class PresetsPanelViewController: NSViewController, NSOutlineViewDataSourc
             Task { await self.createPreset(name: name.stringValue, group: group.stringValue, from: settings, sections: sections) }
         }
         if let window = view.window { alert.beginSheetModal(for: window, completionHandler: finish) } else { finish(alert.runModal()) }
+    }
+
+    /// `content` in a plain view of its size, for an alert's accessory. An alert lines a plain view up
+    /// with its text, but puts a stack view at its left edge.
+    static func alertAccessory(_ content: NSView) -> NSView {
+        let container = NSView(frame: NSRect(origin: .zero, size: content.fittingSize))
+        content.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            content.topAnchor.constraint(equalTo: container.topAnchor),
+            content.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        return container
     }
 
     /// Creates a preset and selects it. Errors (a name already used) are shown.
@@ -459,6 +473,8 @@ final class PresetsPanelViewController: NSViewController, NSOutlineViewDataSourc
         if let preset = (item as? Item)?.preset {
             add("Apply") { [weak self] in if self?.isEditingEnabled == true { self?.onApply?(preset) } }
             add("Copy") { SettingsClipboard.content = .preset(preset) }
+            // PixelLoupe's own presets are read-only.
+            guard !library.isBuiltIn(preset) else { return }
             menu.addItem(.separator())
             add("Update with Current Settings") { [weak self] in
                 guard let self, let settings = currentSettings() else { return }
@@ -474,7 +490,7 @@ final class PresetsPanelViewController: NSViewController, NSOutlineViewDataSourc
             add("Delete") { [weak self] in
                 Task { do { try await self?.library.delete(preset) } catch { self?.show(error) } }
             }
-        } else if let group = item as? Group {
+        } else if let group = item as? Group, !group.presets.contains(where: library.isBuiltIn) {
             add("Rename Group…") { [weak self] in
                 self?.askName(title: "Rename Group", initial: group.name) { name in
                     Task { do { try await self?.library.renameGroup(group.name, to: name) } catch { self?.show(error) } }

@@ -205,8 +205,9 @@ struct ToneCurvePointsTests {
               ParametricShadowSplit = 20, ParametricMidtoneSplit = 45, ParametricHighlightSplit = 80 }
             """)
         #expect(differences.isEmpty)
+        // Lightroom's regions are gentler than PixelLoupe's at the same number (RAW-229).
         #expect(adjustments.curves.parametric == ParametricCurve(
-            shadows: 0.2, darks: -0.1, lights: 0, highlights: 0.35, shadowSplit: 0.2, midtoneSplit: 0.45, highlightSplit: 0.8))
+            shadows: 0.12, darks: -0.06, lights: 0, highlights: 0.21, shadowSplit: 0.2, midtoneSplit: 0.45, highlightSplit: 0.8))
         // Splits alone change nothing.
         #expect(try map("{ ParametricShadowSplit = 20, ParametricShadows = 0 }").0.isDefault)
     }

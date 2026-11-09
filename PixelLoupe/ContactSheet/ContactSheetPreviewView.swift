@@ -12,6 +12,7 @@ final class ContactSheetPreviewView: NSView {
     let photos: [ContactSheetPhoto]
     private let thumbnails: ThumbnailStore
     private(set) var settings: ContactSheetSettings
+    private(set) var logo: CGImage?
     private(set) var layout: ContactSheetLayout
     /// Thumbnails loading, and ones that couldn't be loaded (drawn as placeholders), so each is asked for once.
     private var loading: Set<UUID> = []
@@ -36,9 +37,10 @@ final class ContactSheetPreviewView: NSView {
     override var isFlipped: Bool { true }
     override var isOpaque: Bool { false }
 
-    func update(_ settings: ContactSheetSettings) {
+    func update(_ settings: ContactSheetSettings, logo: CGImage?) {
         self.settings = settings
-        layout = ContactSheetLayout(settings: settings, photoCount: photos.count)
+        self.logo = logo
+        layout = ContactSheetLayout(settings: settings, photoCount: photos.count, logoAspect: logo.map(ContactSheetLayout.aspect(of:)))
         fitWidth()
         needsDisplay = true
         updateAccessibilityValue()
@@ -97,7 +99,7 @@ final class ContactSheetPreviewView: NSView {
             // The renderer draws with the origin at the page's bottom-left, in page points.
             context.translateBy(x: frame.minX, y: frame.maxY)
             context.scaleBy(x: scale, y: -scale)
-            ContactSheetRenderer.drawPage(page, layout: layout, settings: settings, in: context) { index in
+            ContactSheetRenderer.drawPage(page, layout: layout, settings: settings, logo: logo, in: context) { index in
                 let photo = photos[index]
                 return ContactSheetRenderer.Cell(image: thumbnail(for: index), aspect: photo.aspect,
                                                  name: photo.fileName, caption: photo.caption(settings.captionField))

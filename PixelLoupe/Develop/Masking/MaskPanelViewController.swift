@@ -5,10 +5,46 @@ import AppKit
 /// are saved and undoable).
 final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
     private(set) var masks: [PhotoAdjustments.LocalAdjustment] = []
-    private(set) var selectedID: UUID?
+    private(set) var selectedID: UUID? {
+        // A wheel hidden with its eye belongs to the mask it was hidden in.
+        didSet { if selectedID != oldValue, !sections.mutedWheels.isEmpty { clearMutedWheels(); onMuteWheels?(nil, []) } }
+    }
 
     var onChange: ((_ masks: [PhotoAdjustments.LocalAdjustment], _ isFinal: Bool, _ actionName: String) -> Void)?
     var onSelectionChange: ((UUID?) -> Void)?
+    /// A Color Grading wheel's eye was switched in the selected mask: the preview should leave out these wheels of it.
+    var onMuteWheels: ((_ mask: UUID?, _ wheels: Set<ColorGradingTab>) -> Void)?
+    /// For Color Grading's color wells in the mask's sections: the photo's pixels with Color Grading off.
+    var ungradedPixels: (() async -> [ColorGradingSwatches.RGB])? {
+        get { sections.ungradedPixels }
+        set { sections.ungradedPixels = newValue }
+    }
+
+    /// The photo's histogram, drawn behind the mask's Tone Curve.
+    var histogram: Histogram? {
+        get { sections.histogram }
+        set { sections.histogram = newValue }
+    }
+    /// A color well's eyedropper was switched on for one of the mask's wheels, or off (`nil`).
+    var onPickGradingColor: ((ColorGradingTab?) -> Void)? {
+        get { sections.onPickGradingColor }
+        set { sections.onPickGradingColor = newValue }
+    }
+
+    /// A color well's eyedropper was dragged onto the photo for one of the mask's wheels (screen coordinates).
+    var onDropGradingColor: ((ColorGradingTab, NSPoint) -> Void)? {
+        get { sections.onDropGradingColor }
+        set { sections.onDropGradingColor = newValue }
+    }
+
+    func closeColorWell() { sections.closeColorWell() }
+    func endGradingColorPicking() { sections.endGradingColorPicking() }
+
+    /// Sets one of the selected mask's wheels from a picked color, as one undoable edit (`false` for a gray).
+    @discardableResult
+    func applyGradingColor(_ color: ColorGradingSwatches.RGB, to tab: ColorGradingTab) -> Bool {
+        sections.applyGradingColor(color, to: tab)
+    }
     var onAdd: ((MaskKind) -> Void)?
     var onOverlayChange: ((Bool) -> Void)?
     var onBrushChange: ((MaskGeometry.BrushSettings) -> Void)?
@@ -197,6 +233,10 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         sections.onChange = { [weak self] adjustments, isFinal, action in
             self?.edit(action, isFinal: isFinal) { $0.settings = PhotoAdjustments.LocalSettings(adjustments) }
         }
+        sections.onMuteWheels = { [weak self] wheels in
+            guard let self else { return }
+            onMuteWheels?(wheels.isEmpty ? nil : selectedID, wheels)
+        }
         refreshers.append { [weak self] in
             guard let self else { return }
             sections.display((selected?.settings ?? .init()).adjustments, asShotWhiteBalance: (0, 0), isRaw: false)
@@ -376,6 +416,11 @@ final class MaskPanelViewController: NSViewController, NSTableViewDataSource, NS
         onSelectionChange?(selectedID)
         onChange?(masks, true, "Delete Mask")
         refresh()
+    }
+
+    /// Shows every Color Grading wheel again (another photo is shown).
+    func clearMutedWheels() {
+        sections.clearMutedWheels()
     }
 
     // MARK: - Showing

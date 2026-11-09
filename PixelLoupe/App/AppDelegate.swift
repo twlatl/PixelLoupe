@@ -76,23 +76,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard Self.shouldAskBeforeQuitting(confirmsQuit: AppSettings.shared.confirmsQuit, event: NSAppleEventManager.shared().currentAppleEvent)
-        else { return .terminateNow }
-        let alert = Self.quitAlert()
-        let response = alert.runModal()
-        if alert.suppressionButton?.state == .on { AppSettings.shared.confirmsQuit = false }
-        return response == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
+        let event = NSAppleEventManager.shared().currentAppleEvent
+        if Self.shouldAskBeforeQuitting(confirmsQuit: AppSettings.shared.confirmsQuit, event: event) {
+            let alert = Self.quitAlert()
+            let response = alert.runModal()
+            if alert.suppressionButton?.state == .on { AppSettings.shared.confirmsQuit = false }
+            guard response == .alertFirstButtonReturn else { return .terminateCancel }
+        }
+        // Catalog Settings ▸ Backups: a backup that's due is offered first (not as macOS logs out or shuts down).
+        if !Self.isRunningUnitTests, !Self.isSystemQuit(event),
+           catalogWindowController?.backUpBeforeQuittingIfDue(completion: { NSApp.reply(toApplicationShouldTerminate: $0) }) == true {
+            return .terminateLater
+        }
+        return .terminateNow
     }
 
     /// Asks unless the setting is off, while hosting tests, or when macOS is logging out, restarting
     /// or shutting down (it has asked already).
     static func shouldAskBeforeQuitting(confirmsQuit: Bool, event: NSAppleEventDescriptor?) -> Bool {
-        guard confirmsQuit, !isRunningUnitTests else { return false }
-        if let event, event.eventClass == kCoreEventClass, event.eventID == kAEQuitApplication,
-           event.attributeDescriptor(forKeyword: kAEQuitReason) != nil {
-            return false
-        }
-        return true
+        confirmsQuit && !isRunningUnitTests && !isSystemQuit(event)
+    }
+
+    /// Whether macOS is quitting the app as it logs out, restarts or shuts down.
+    static func isSystemQuit(_ event: NSAppleEventDescriptor?) -> Bool {
+        guard let event else { return false }
+        return event.eventClass == kCoreEventClass && event.eventID == kAEQuitApplication
+            && event.attributeDescriptor(forKeyword: kAEQuitReason) != nil
     }
 
     /// "Are you sure you want to quit?": Quit is the default button (Return), Cancel is Escape.
@@ -134,6 +143,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsWindowController = SettingsWindowController()
         }
         settingsWindowController?.showWindow(nil)
+    }
+
+    /// PixelLoupe ▸ Catalog Settings… (⌥⌘,): the open catalog's settings. Unavailable with no catalog open.
+    @objc func showCatalogSettings(_ sender: Any?) {
+        catalogWindowController?.showCatalogSettings()
     }
 
     /// PixelLoupe ▸ Edit Watermarks…: previews the selected photos of the open catalog.
@@ -266,9 +280,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 extension AppDelegate: NSMenuItemValidation {
-    /// Check for Updates… is unavailable while a check is under way, and in builds that don't update.
+    /// Check for Updates… is unavailable while a check is under way, and in builds that don't update;
+    /// Catalog Settings… while no catalog is open.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(checkForUpdates(_:)) { return Updates.shared.canCheckForUpdates }
+        if menuItem.action == #selector(showCatalogSettings(_:)) { return catalogWindowController != nil }
         return true
     }
 }

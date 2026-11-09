@@ -8,6 +8,8 @@ nonisolated struct LibraryFilter: Equatable, Sendable {
         case folder(path: String)
         /// The photos of the catalog's most recent import (see `Photo.latestImportID(in:)`).
         case previousImport(id: UUID)
+        /// Photos whose original has the same contents as another photo's (Duplicate Detection, RAW-292).
+        case duplicates
         /// A collection, smart collection or collection set, with what it contains.
         case collection(id: UUID, content: CollectionContent)
         /// Photos whose Lightroom settings weren't fully imported for a reason (the import report's
@@ -490,6 +492,8 @@ nonisolated struct LibraryFilter: Equatable, Sendable {
             NSPredicate(format: "folder.path == %@ OR folder.path BEGINSWITH %@", path, path + "/")
         case .previousImport(let id):
             NSPredicate(format: "importID == %@", id as CVarArg)
+        case .duplicates:
+            NSPredicate(format: "hasDuplicate == YES")
         case .collection(_, let content):
             content.predicate
         case .importDifference(let reason):

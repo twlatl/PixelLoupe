@@ -76,6 +76,15 @@ enum PreviewFixture {
         return url
     }
 
+    /// Writes Lightroom Classic 15's per-level files for an image: `<uuid>-<digest>_<long edge>`.
+    static func writeLevels(_ sizes: [(Int, Int)], uuid: String, digest: String, in folder: URL) throws {
+        let directory = LightroomPreviews.directory(uuid: uuid, in: folder)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for size in sizes {
+            try jpeg(width: size.0, height: size.1).write(to: directory.appending(path: "\(uuid.uppercased())-\(digest)_\(max(size.0, size.1))"))
+        }
+    }
+
     static func size(of url: URL) -> (width: Int, height: Int)? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
@@ -186,6 +195,42 @@ struct LightroomPreviewTests {
         #expect(PreviewFixture.size(of: small)?.width == 200)
     }
 
+    @Test("Reads a Lightroom Classic 15 preview: one JPEG file per level")
+    func readsLevelFiles() throws {
+        let directory = try TemporaryDirectory()
+        let uuid = "b2e38e9d-ab94-4062-887d-0e55cdea1b75"
+        try PreviewFixture.writeLevels([(160, 106), (960, 640), (1920, 1280)], uuid: uuid, digest: "7cc1", in: directory.url)
+        let file = try #require(LightroomPreviewFile.levels(
+            uuid: uuid, digest: "7cc1", levels: [(1920, 1280), (160, 106), (960, 640)], cropped: (5760, 3840), in: directory.url))
+        let best = try #require(file.bestLevel(minimumLongEdge: 768))
+        #expect(best.width == 960)
+        #expect(best.url.path(percentEncoded: false).hasSuffix("/B/B2E3/B2E38E9D-AB94-4062-887D-0E55CDEA1B75-7cc1_960"))
+        let source = try #require(CGImageSourceCreateWithData(try file.jpegData(for: best) as CFData, nil))
+        let properties = try #require(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
+        #expect(properties[kCGImagePropertyPixelWidth] as? Int == 960)
+        #expect(file.croppedWidth == 5760)
+
+        let thumbnail = directory.url.appending(path: "t.jpg")
+        #expect(try LightroomPreviews.writeThumbnail(from: file, orientation: "AB", to: thumbnail))
+        #expect(PreviewFixture.size(of: thumbnail)?.width == 768)
+
+        #expect(LightroomPreviewFile.levels(uuid: uuid, digest: "7cc1", levels: [], cropped: nil, in: directory.url) == nil)
+    }
+
+    @Test("A preview smaller than a thumbnail is written as it is and reported as small")
+    func smallPreview() throws {
+        let directory = try TemporaryDirectory()
+        let uuid = "00000001-0000-0000-0000-000000000000"
+        try PreviewFixture.writeLevels([(160, 106)], uuid: uuid, digest: "aa", in: directory.url)
+        let file = try #require(LightroomPreviewFile.levels(uuid: uuid, digest: "aa", levels: [(160, 106)], cropped: nil, in: directory.url))
+        let thumbnail = directory.url.appending(path: "t.jpg")
+        #expect(try LightroomPreviews.writeThumbnail(from: file, orientation: "AB", to: thumbnail) == false)
+        #expect(PreviewFixture.size(of: thumbnail)?.width == 160)
+        let turned = directory.url.appending(path: "turned.jpg")
+        #expect(try LightroomPreviews.writeThumbnail(from: file, orientation: "DA", to: turned) == false)
+        #expect(PreviewFixture.size(of: turned).map { ($0.width, $0.height) } ?? (0, 0) == (106, 160))
+    }
+
     @Test("The seeded list appends, loads and shrinks")
     func seededList() throws {
         let directory = try TemporaryDirectory()
@@ -245,6 +290,45 @@ struct LightroomThumbnailsPhaseTests {
         #expect(report.warnings.contains { $0.contains("4 photos have no Lightroom preview") })
     }
 
+    @Test("Seeds thumbnails from a Lightroom Classic 15 previews folder, marking small ones")
+    func seedsLevelFiles() async throws {
+        let fixture = try PhotosFixture()
+        let previews = fixture.directory.url.appending(path: "Test Previews.lrdata")
+        func uuid(_ n: Int) -> String { String(format: "%08X-0000-0000-0000-000000000000", n) }
+        // A has a 960 level; D only Lightroom's 160-pixel one; image 13's 1920 level is listed but missing.
+        try PreviewFixture.writeLevels([(160, 106), (960, 640)], uuid: uuid(1), digest: "aaaa", in: previews)
+        try PreviewFixture.writeLevels([(160, 106)], uuid: uuid(2), digest: "bbbb", in: previews)
+        let database = try FixtureDatabase(creating: previews.appending(path: "previews.db"))
+        try database.run("""
+            CREATE TABLE ImageCacheEntry ( imageId NOT NULL, uuid NOT NULL, digest NOT NULL, orientation );
+            CREATE TABLE Pyramid ( uuid NOT NULL, digest NOT NULL, colorProfile NOT NULL, fileTimeStamp, quality NOT NULL,
+                croppedWidth NOT NULL, croppedHeight NOT NULL, pyramidFileTimeStamp, fingerprint, fromProxy );
+            CREATE TABLE PyramidLevel ( uuid NOT NULL, digest NOT NULL, level NOT NULL, longDimension NOT NULL, lastAccess NOT NULL,
+                width NOT NULL, height NOT NULL, fileSize );
+            INSERT INTO ImageCacheEntry VALUES (10.0, '\(uuid(1))', 'aaaa', 'AB'), (13.0, '\(uuid(2))', 'bbbb', 'DA'), (99.0, '\(uuid(3))', 'cccc', 'AB');
+            INSERT INTO Pyramid VALUES ('\(uuid(1))', 'aaaa', 'sRGB', 0, 'thumbnail', 5760.0, 3840.0, 0, NULL, 0),
+                ('\(uuid(2))', 'bbbb', 'sRGB', 0, 'thumbnail', 5760.0, 3840.0, 0, NULL, 0);
+            INSERT INTO PyramidLevel VALUES ('\(uuid(1))', 'aaaa', 1.0, 160.0, 0, 160.0, 106.0, 0),
+                ('\(uuid(1))', 'aaaa', 2.0, 960.0, 0, 960.0, 640.0, 0),
+                ('\(uuid(2))', 'bbbb', 1.0, 160.0, 0, 160.0, 106.0, 0);
+            """)
+        _ = database
+
+        let (store, report) = try await fixture.importAll(phases: [{ LightroomPhotosPhase() }, { LightroomThumbnailsPhase() }])
+        let photos = Dictionary(try store.viewContext.fetch(Photo.fetchRequest()).filter { !$0.isVirtualCopy }.map { ($0.fileName, $0) }) { first, _ in first }
+        let directory = store.thumbnails.directory
+        let a = try #require(photos["A.jpg"]), d = try #require(photos["D.cr2"])
+        #expect(PreviewFixture.size(of: ThumbnailStore.url(for: a.id, in: directory))?.width == 768)
+        let dSize = try #require(PreviewFixture.size(of: ThumbnailStore.url(for: d.id, in: directory)))
+        #expect(dSize.width == 106 && dSize.height == 160)
+
+        #expect(SeededThumbnails.load(from: directory) == [a.id, d.id])
+        #expect(SeededThumbnails.load(from: directory, origin: .lowResolution) == [d.id])
+        #expect(report.imported.contains(.init(title: "Thumbnails from Lightroom previews", count: 2)))
+        #expect(report.warnings.contains { $0.contains("1 Lightroom preview was smaller than a thumbnail") })
+        #expect(report.warnings.contains { $0.contains("4 photos have no Lightroom preview") })
+    }
+
     @Test("A catalog without previews is imported with a warning")
     func noPreviews() async throws {
         let fixture = try PhotosFixture()
@@ -256,7 +340,7 @@ struct LightroomThumbnailsPhaseTests {
 @Suite("Thumbnail maintenance")
 @MainActor
 struct ThumbnailMaintenanceTests {
-    @Test("Draws missing thumbnails and redraws seeded ones that have edits; leaves the rest")
+    @Test("Draws missing thumbnails and redraws seeded ones that have edits or are small; leaves the rest")
     func maintains() async throws {
         let directory = try TemporaryDirectory()
         let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "C.pixelloupe"))
@@ -288,9 +372,15 @@ struct ThumbnailMaintenanceTests {
         let seededPlain = try photo("seeded-plain.jpg")                   // Lightroom copy, no edits: kept
         let offline = try photo("offline.jpg", exists: false)             // file gone: left alone
         let offlineSeeded = try photo("offline-seeded.jpg", exists: false, edited: true)
+        let small = try photo("small.jpg")                                 // small Lightroom copy, no edits: redrawn
+        let offlineSmall = try photo("offline-small.jpg", exists: false)  // small copy, file gone: kept
         try context.save()
         for photo in [seededEdited, seededPlain, offlineSeeded] { try lightroomCopy(for: photo) }
-        SeededThumbnails.append([seededEdited.id, seededPlain.id, offlineSeeded.id], in: thumbnails)
+        for photo in [small, offlineSmall] {
+            try PreviewFixture.jpeg(width: 160, height: 106).write(to: ThumbnailStore.url(for: photo.id, in: thumbnails))
+        }
+        SeededThumbnails.append([seededEdited.id, seededPlain.id, offlineSeeded.id, small.id, offlineSmall.id], in: thumbnails)
+        SeededThumbnails.append([small.id, offlineSmall.id], in: thumbnails, origin: .lowResolution)
         let plainBefore = try Data(contentsOf: ThumbnailStore.url(for: seededPlain.id, in: thumbnails))
         let offlineBefore = try Data(contentsOf: ThumbnailStore.url(for: offlineSeeded.id, in: thumbnails))
 
@@ -307,7 +397,104 @@ struct ThumbnailMaintenanceTests {
         #expect(try Data(contentsOf: url(seededPlain)) == plainBefore)
         #expect(!exists(offline))
         #expect(try Data(contentsOf: url(offlineSeeded)) == offlineBefore)
-        // Done ones leave the seeded list; the ones still waiting stay.
-        #expect(SeededThumbnails.load(from: thumbnails) == [seededPlain.id, offlineSeeded.id])
+        #expect(PreviewFixture.size(of: url(small))?.width == 768)
+        #expect(PreviewFixture.size(of: url(offlineSmall))?.width == 160)
+        // Done ones leave the seeded lists; the ones still waiting stay.
+        #expect(SeededThumbnails.load(from: thumbnails) == [seededPlain.id, offlineSeeded.id, offlineSmall.id])
+        #expect(SeededThumbnails.load(from: thumbnails, origin: .lowResolution) == [offlineSmall.id])
+    }
+}
+
+@Suite("Thumbnail maintenance progress")
+@MainActor
+struct ThumbnailMaintenanceProgressTests {
+    private func store(drawing count: Int) throws -> (CatalogStore, TemporaryDirectory) {
+        let directory = try TemporaryDirectory()
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "C.pixelloupe"))
+        for n in 0..<count {
+            let url = directory.url.appending(path: "\(n).jpg")
+            try Fixtures.writeJPEG(to: url, width: 300, height: 200)
+            let photo = Photo(context: store.viewContext)
+            photo.id = UUID()
+            photo.fileName = url.lastPathComponent
+            photo.filePath = url.path(percentEncoded: false)
+            photo.captureDate = Date()
+            photo.importDate = Date()
+            photo.editDate = Date()
+        }
+        try store.viewContext.save()
+        return (store, directory)
+    }
+
+    @Test("A big pass reports its progress under the grid, then clears it")
+    func reports() async throws {
+        let (store, directory) = try store(drawing: 3)
+        defer { withExtendedLifetime(directory) {} }
+        let maintenance = store.thumbnailMaintenance
+        maintenance.progressThreshold = 3
+        var seen: [LibraryState.ImportStatus?] = []
+        maintenance.onProgress = { seen.append($0) }
+        maintenance.start(after: .zero)
+        await maintenance.waitUntilIdle()
+        #expect(seen.first == LibraryState.ImportStatus(completed: 0, total: 3))
+        #expect(seen.compactMap { $0?.completed } == [0, 1, 2])
+        #expect(seen.last == .some(nil))
+        #expect(maintenance.progress == nil)
+        maintenance.stop()
+    }
+
+    @Test("A small pass shows no progress")
+    func quietWhenSmall() async throws {
+        let (store, directory) = try store(drawing: 2)
+        defer { withExtendedLifetime(directory) {} }
+        let maintenance = store.thumbnailMaintenance
+        maintenance.progressThreshold = 3
+        var seen: [LibraryState.ImportStatus?] = []
+        maintenance.onProgress = { seen.append($0) }
+        maintenance.start(after: .zero)
+        await maintenance.waitUntilIdle()
+        #expect(seen.isEmpty)
+        maintenance.stop()
+    }
+}
+
+@Suite("Lightroom import: Build Previews")
+@MainActor
+struct LightroomImportPreviewOptionsTests {
+    private func store(with names: [String]) throws -> (CatalogStore, TemporaryDirectory) {
+        let directory = try TemporaryDirectory()
+        let store = try CatalogStore.inMemory(info: Fixtures.referencedInfo, packageURL: directory.url.appending(path: "C.pixelloupe"))
+        for name in names {
+            let photo = Photo(context: store.viewContext)
+            photo.id = UUID()
+            photo.fileName = name
+            photo.filePath = directory.url.appending(path: name).path(percentEncoded: false)
+            photo.captureDate = Date()
+            photo.importDate = Date()
+            photo.editDate = Date()
+        }
+        try store.viewContext.save()
+        return (store, directory)
+    }
+
+    private func request(previews: ImportPreviewLevel, smart: Bool, in directory: TemporaryDirectory) -> LightroomImportRequest {
+        LightroomImportRequest(
+            packageURL: directory.url.appending(path: "C.pixelloupe"), info: Fixtures.referencedInfo,
+            previews: previews, buildsSmartPreviews: smart)
+    }
+
+    @Test("Standard and Smart Previews queue the imported photos; Minimal queues nothing")
+    func queues() throws {
+        let (store, directory) = try store(with: ["a.cr2", "b.nef", "c.jpg"])
+        LightroomImportCoordinator.queuePreviews(request(previews: .minimal, smart: false, in: directory), in: store)
+        #expect(store.standardPreviewBuilder.progress == nil)
+        #expect(store.smartPreviewBuilder.progress == nil)
+
+        LightroomImportCoordinator.queuePreviews(request(previews: .standard, smart: true, in: directory), in: store)
+        // Standard previews are for RAW files only; Smart Previews for every still.
+        #expect(store.standardPreviewBuilder.progress?.total == 2)
+        #expect(store.smartPreviewBuilder.progress?.total == 3)
+        store.standardPreviewBuilder.stop()
+        store.smartPreviewBuilder.stop()
     }
 }

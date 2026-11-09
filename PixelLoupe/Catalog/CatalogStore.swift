@@ -33,20 +33,26 @@ final class CatalogStore: NSObject {
     let thumbnails: ThumbnailStore
     /// Stand-ins for originals that can't be read (see ``SmartPreviewStore``).
     let smartPreviews: SmartPreviewStore
+    /// Large rendered previews built for the loupe (see ``StandardPreviewStore``).
+    let standardPreviews: StandardPreviewStore
     /// Which photos and folders can't be found on disk (see ``FileAvailability``).
     private(set) lazy var availability = FileAvailability(store: self)
     /// Draws missing thumbnails and redraws Lightroom-seeded ones in the background.
     private(set) lazy var thumbnailMaintenance = ThumbnailMaintenance(store: self)
     /// Writes Smart Previews in the background.
     private(set) lazy var smartPreviewBuilder = SmartPreviewBuilder(store: self)
+    /// Draws Standard previews in the background.
+    private(set) lazy var standardPreviewBuilder = StandardPreviewBuilder(store: self)
     /// Scores photos for Assisted Culling in the background.
     private(set) lazy var cullingAnalysis = CullingAnalysis(store: self)
     /// Reads the locations of photos from before model v16 (see ``LocationBackfill``).
     private(set) lazy var locationBackfill = LocationBackfill(store: self)
+    private(set) lazy var duplicateDetection = DuplicateDetection(store: self)
+    private var photosSavedObserver: NSObjectProtocol?
     /// Brings back edits other apps save to files sent with Photo ▸ Edit In (see ``ExternalEditMonitor``).
     private(set) lazy var externalEdits = ExternalEditMonitor(store: self)
 
-    private static let logger = Logger(subsystem: "net.pixegen.PixelLoupe", category: "Catalog")
+    static let logger = Logger(subsystem: "net.pixegen.PixelLoupe", category: "Catalog")
 
     /// Loaded once; multiple models describing the same entities confuse Core Data's class mapping.
     static let managedObjectModel: NSManagedObjectModel = {
@@ -56,6 +62,10 @@ final class CatalogStore: NSObject {
         }
         return model
     }()
+
+    isolated deinit {
+        if let photosSavedObserver { NotificationCenter.default.removeObserver(photosSavedObserver) }
+    }
 
     var viewContext: NSManagedObjectContext { container.viewContext }
     var name: String { info.name }
@@ -72,12 +82,34 @@ final class CatalogStore: NSObject {
         }
     }
 
+    /// Posted (with the store) when Catalog Settings change.
+    static let settingsDidChangeNotification = Notification.Name("CatalogStoreSettingsDidChange")
+
+    /// The catalog's settings (Catalog Settings…), saved in the package.
+    var settings: CatalogSettings {
+        didSet {
+            guard settings != oldValue else { return }
+            do {
+                try settings.save(to: packageURL)
+            } catch {
+                Self.logger.error("Failed to save catalog settings: \(error.localizedDescription, privacy: .public)")
+            }
+            applyPreviewSettings()
+            NotificationCenter.default.post(name: Self.settingsDidChangeNotification, object: self)
+            if settings.detectsDuplicates != oldValue.detectsDuplicates {
+                if settings.detectsDuplicates { duplicateDetection.start(after: .zero) } else { duplicateDetection.stop() }
+            }
+        }
+    }
+
     private init(packageURL: URL, info: CatalogInfo, inMemory: Bool) throws {
         self.packageURL = packageURL
         self.info = info
         self.viewState = CatalogViewState.load(from: packageURL)
+        self.settings = CatalogSettings.load(from: packageURL)
         self.thumbnails = ThumbnailStore(directory: CatalogPackage.thumbnailsURL(in: packageURL))
         self.smartPreviews = SmartPreviewStore(directory: CatalogPackage.smartPreviewsURL(in: packageURL))
+        self.standardPreviews = StandardPreviewStore(directory: CatalogPackage.standardPreviewsURL(in: packageURL))
 
         container = NSPersistentContainer(name: "PixelLoupe", managedObjectModel: Self.managedObjectModel)
         let description = NSPersistentStoreDescription(
@@ -87,6 +119,9 @@ final class CatalogStore: NSObject {
         description.shouldInferMappingModelAutomatically = true
         container.persistentStoreDescriptions = [description]
         super.init()
+        thumbnails.rendersThroughDevelop = { [unowned standardPreviews] id in standardPreviews.contains(id) }
+        standardPreviews.onOutdated = { [unowned self] id in standardPreviewBuilder.redraw(id) }
+        applyPreviewSettings()
 
         var loadError: Error?
         container.loadPersistentStores { _, error in loadError = error }
@@ -102,13 +137,29 @@ final class CatalogStore: NSObject {
             self, selector: #selector(viewContextObjectsDidChange(_:)),
             name: .NSManagedObjectContextObjectsDidChange, object: container.viewContext
         )
+        // Photos added or removed by any context (imports save in the background): Duplicate Detection hashes the new
+        // ones and works out which have duplicates again.
+        let coordinator = container.persistentStoreCoordinator
+        photosSavedObserver = NotificationCenter.default.addObserver(
+            forName: .NSManagedObjectContextDidSave, object: nil, queue: nil
+        ) { [weak self] notification in
+            guard let context = notification.object as? NSManagedObjectContext, context.persistentStoreCoordinator === coordinator
+            else { return }
+            let changed = [NSInsertedObjectsKey, NSDeletedObjectsKey].contains { key in
+                (notification.userInfo?[key] as? Set<NSManagedObject>)?.contains { $0 is Photo } == true
+            }
+            guard changed else { return }
+            Task { @MainActor in self?.duplicateDetection.photosDidChange() }
+        }
     }
 
-    /// Re-renders thumbnails when a photo's Develop settings change, including through undo.
+    /// Re-renders thumbnails when a photo's Develop settings change, including through undo, and marks its Standard
+    /// preview stale until it's drawn again.
     @objc private func viewContextObjectsDidChange(_ notification: Notification) {
         let updated = notification.userInfo?[NSUpdatedObjectsKey] as? Set<NSManagedObject> ?? []
         for case let photo as Photo in updated
         where photo.changedValuesForCurrentEvent()[#keyPath(Photo.adjustmentsData)] != nil {
+            if standardPreviews.invalidate(photo.id) { standardPreviewBuilder.scheduleRebuild(photo.id) }
             thumbnails.regenerate(id: photo.id, source: sourceLocation(of: photo), adjustments: photo.adjustments)
         }
     }
@@ -167,12 +218,13 @@ final class CatalogStore: NSObject {
         try encoder.encode(info).write(to: CatalogPackage.infoURL(in: packageURL), options: .atomic)
     }
 
-    /// Deletes cached thumbnails and Smart Previews of photos no longer in the catalog. Removed photos
+    /// Deletes cached thumbnails, Standard previews and Smart Previews of photos no longer in the catalog. Removed photos
     /// keep theirs while the app runs, so undoing a removal shows them straight away; this runs when
     /// the catalog opens, in the background.
     func pruneOrphanedPreviews() {
         let context = newBackgroundContext()
         let directory = thumbnails.directory, smartPreviews = smartPreviews.directory
+        let standardPreviews = standardPreviews.directory
         context.perform {
             let request = NSFetchRequest<NSDictionary>(entityName: "Photo")
             request.resultType = .dictionaryResultType
@@ -186,6 +238,7 @@ final class CatalogStore: NSObject {
                 try? FileManager.default.removeItem(at: file)
             }
             SmartPreviewStore.pruneOrphans(in: smartPreviews, keeping: kept)
+            StandardPreviewStore.pruneOrphans(in: standardPreviews, keeping: kept)
         }
     }
 

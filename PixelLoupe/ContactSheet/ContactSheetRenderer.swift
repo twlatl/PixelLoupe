@@ -17,8 +17,9 @@ nonisolated enum ContactSheetRenderer {
         var caption: String
     }
 
-    /// Draws `page` with its bottom-left at the context's origin, one unit per point.
-    static func drawPage(_ page: Int, layout: ContactSheetLayout, settings: ContactSheetSettings,
+    /// Draws `page` with its bottom-left at the context's origin, one unit per point. `logo` goes in
+    /// the layout's logo rect.
+    static func drawPage(_ page: Int, layout: ContactSheetLayout, settings: ContactSheetSettings, logo: CGImage? = nil,
                          in context: CGContext, cell: (Int) -> Cell) {
         context.saveGState()
         defer { context.restoreGState() }
@@ -29,6 +30,9 @@ nonisolated enum ContactSheetRenderer {
         context.setFillColor(settings.backgroundColor.cgColor)
         context.fill(CGRect(origin: .zero, size: layout.pageSize))
 
+        if let logo, let rect = layout.logoRect {
+            context.draw(logo, in: rect)
+        }
         if let rect = layout.headlineRect {
             drawLine(settings.headline.trimmingCharacters(in: .whitespacesAndNewlines),
                      font: ContactSheetLayout.font(size: ContactSheetLayout.headlineSize, bold: true),
@@ -138,9 +142,9 @@ nonisolated enum ContactSheetPDF {
     /// Writes the sheet to `url`, page by page. `progress` gets the fraction done on the main actor.
     /// Throws `CancellationError` when cancelled; nothing is left at `url` unless it succeeds.
     @concurrent
-    static func write(_ photos: [ContactSheetPhoto], settings: ContactSheetSettings, to url: URL,
+    static func write(_ photos: [ContactSheetPhoto], settings: ContactSheetSettings, logo: CGImage? = nil, to url: URL,
                       progress: @escaping @MainActor @Sendable (Double) -> Void) async throws {
-        let layout = ContactSheetLayout(settings: settings, photoCount: photos.count)
+        let layout = ContactSheetLayout(settings: settings, photoCount: photos.count, logoAspect: logo.map(ContactSheetLayout.aspect(of:)))
         var mediaBox = CGRect(origin: .zero, size: layout.pageSize)
         let headline = settings.headline.trimmingCharacters(in: .whitespacesAndNewlines)
         let info: [CFString: Any] = [
@@ -163,7 +167,7 @@ nonisolated enum ContactSheetPDF {
             let images = await renderImages(Array(photos[range]), maxPixels: maxPixels)
             try Task.checkCancellation()
             context.beginPDFPage(nil)
-            ContactSheetRenderer.drawPage(page, layout: layout, settings: settings, in: context) { index in
+            ContactSheetRenderer.drawPage(page, layout: layout, settings: settings, logo: logo, in: context) { index in
                 let photo = photos[index]
                 return ContactSheetRenderer.Cell(image: images[index - range.lowerBound]?.image, aspect: photo.aspect,
                                                  name: photo.fileName, caption: photo.caption(settings.captionField))

@@ -13,8 +13,17 @@ nonisolated enum PhotoRenderer {
     static let context = CIContext(options: [.cacheIntermediates: false])
 
     /// Renders the photo at `location` so its long edge is at most `maxPixels` (never upscaled).
-    @concurrent
-    static func render(_ location: PhotoSourceLocation, adjustments: PhotoAdjustments, maxPixels: CGFloat) async -> Rendered? {
+    ///
+    /// The render runs on `queue`, one at a time and off the cooperative pool (RAW-256). Returns nil
+    /// without rendering when the calling task is cancelled before its turn comes.
+    static func render(
+        _ location: PhotoSourceLocation, adjustments: PhotoAdjustments, maxPixels: CGFloat, queue: RenderQueue = .fullSize
+    ) async -> Rendered? {
+        (try? await queue.run { renderNow(location, adjustments: adjustments, maxPixels: maxPixels) }) ?? nil
+    }
+
+    /// Renders on the calling thread, which it blocks until done.
+    private static func renderNow(_ location: PhotoSourceLocation, adjustments: PhotoAdjustments, maxPixels: CGFloat) -> Rendered? {
         guard let source = DevelopSource.open(location) else { return nil }
         let image = source.image(with: adjustments, scale: source.scale(toFit: maxPixels, adjustments: adjustments))
         guard let colorSpace = CGColorSpace(name: CGColorSpace.displayP3),
