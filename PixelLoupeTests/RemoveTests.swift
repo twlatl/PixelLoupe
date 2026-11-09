@@ -244,4 +244,15 @@ struct RemoveTests {
                        format: .RGBAf, colorSpace: nil)
         return data
     }
+
+    @Test("A server's error page is reported as the server's error, not as the wrong model")
+    func downloadErrorMessage() throws {
+        let url = URL(string: "https://example.com/model.zip")!
+        func response(_ code: Int) -> HTTPURLResponse { HTTPURLResponse(url: url, statusCode: code, httpVersion: nil, headerFields: nil)! }
+        #expect(InpaintingModelStore.failureMessage(for: response(200)) == nil)
+        #expect(InpaintingModelStore.failureMessage(for: response(404)) == "The model isn't on the server (HTTP 404).")
+        #expect(InpaintingModelStore.failureMessage(for: response(503))?.contains("HTTP 503") == true)
+        // A file URL (the tests' downloads) has no status to check.
+        #expect(InpaintingModelStore.failureMessage(for: URLResponse(url: url, mimeType: nil, expectedContentLength: 0, textEncodingName: nil)) == nil)
+    }
 }

@@ -84,9 +84,14 @@ nonisolated final class InpaintingModelStore: GenerativeInpainting, @unchecked S
         case .notDownloaded, .failed: break
         }
         setState(.downloading(progress: 0))
-        let task = URLSession.shared.downloadTask(with: downloadURL) { [self] location, _, error in
+        let task = URLSession.shared.downloadTask(with: downloadURL) { [self] location, response, error in
             guard let location, error == nil else {
                 setState(.failed(error?.localizedDescription ?? "The download failed."))
+                return
+            }
+            // A server's error page arrives as a download too: say what went wrong rather than checking its sum.
+            if let message = Self.failureMessage(for: response) {
+                setState(.failed(message))
                 return
             }
             do {
@@ -104,6 +109,13 @@ nonisolated final class InpaintingModelStore: GenerativeInpainting, @unchecked S
         }
         lock.withLock { self.task = task }
         task.resume()
+    }
+
+    /// Why a finished download isn't the model, from the server's answer, or nil when it answered with the file.
+    static func failureMessage(for response: URLResponse?) -> String? {
+        guard let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) else { return nil }
+        if http.statusCode == 404 { return "The model isn't on the server (HTTP 404)." }
+        return "The server answered \(HTTPURLResponse.localizedString(forStatusCode: http.statusCode)) (HTTP \(http.statusCode))."
     }
 
     /// The file's SHA-256, in hex, read a megabyte at a time.
