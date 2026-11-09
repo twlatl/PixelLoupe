@@ -14,9 +14,9 @@ struct DevelopSidebarTests {
         controller.showWindow(nil)
         controller.state.mode = .develop
         let sidebar = try #require(controller.rootViewController.main.develop.sidebarView)
-        // Histogram, tool icons and their line, plus the seven tools' panels stacked in one place.
-        #expect(sidebar.subviews.count == 10)
-        #expect(sidebar.subviews.filter { !$0.isHidden }.count == 4, "the histogram, icons, line and the Adjust panel")
+        // Histogram, tool icons, the active tool's dot and the line, plus the seven tools' panels stacked in one place.
+        #expect(sidebar.subviews.count == 11)
+        #expect(sidebar.subviews.filter { !$0.isHidden }.count == 5, "the histogram, icons, dot, line and the Adjust panel")
     }
 
     @Test func toolIconsSitAboveTheActiveDot() throws {

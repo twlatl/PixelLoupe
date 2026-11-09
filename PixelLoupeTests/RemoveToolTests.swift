@@ -292,6 +292,7 @@ struct RemoveToolTests {
         #expect(abs(RemoveOverlayView.pulse(at: RemoveOverlayView.pulsePeriod)) < 1e-9)
 
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
         defer { window.close() }
         let overlay = RemoveOverlayView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
         overlay.previewFrame = PreviewFrame(rect: CGRect(x: 0, y: 0, width: 400, height: 300))
