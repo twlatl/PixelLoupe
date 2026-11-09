@@ -62,6 +62,8 @@ final class RemovePanelViewController: NSViewController {
     private(set) var toolOverlay: ToolOverlay
     /// Painting with the Selected card's Subtract.
     private(set) var subtracts = false
+    /// Option is held: the Mask buttons show the other choice, the way the brush paints while it's down.
+    private(set) var isOptionDown = false
     private(set) var pending: Pending?
     private(set) var selected: PhotoAdjustments.Spot?
 
@@ -285,7 +287,7 @@ final class RemovePanelViewController: NSViewController {
         maskPicker.setAccessibilityIdentifier("removeMaskMode")
         target({ [weak self] control in
             guard let self else { return }
-            subtracts = (control as! NSSegmentedControl).selectedSegment == 1
+            subtracts = ((control as! NSSegmentedControl).selectedSegment == 1) != isOptionDown
             onSubtractChange?(subtracts)
         }, for: maskPicker)
         let maskRow = NSStackView(views: [small(NSTextField(labelWithString: "Mask:")), maskPicker])
@@ -373,6 +375,12 @@ final class RemovePanelViewController: NSViewController {
         onBrushChange?()
     }
 
+    func showOptionDown(_ down: Bool) {
+        guard down != isOptionDown else { return }
+        isOptionDown = down
+        if isViewLoaded { maskPicker.selectedSegment = subtracts != isOptionDown ? 1 : 0 }
+    }
+
     func showPending(_ pending: Pending?) {
         self.pending = pending
         if pending == nil, subtracts {
@@ -419,7 +427,7 @@ final class RemovePanelViewController: NSViewController {
         spotRows.isHidden = pending != nil || selected == nil
         cardDelete.isHidden = pending != nil || selected == nil
         detectingLabel.isHidden = pending != .detecting
-        maskPicker.selectedSegment = subtracts ? 1 : 0
+        maskPicker.selectedSegment = subtracts != isOptionDown ? 1 : 0
         maskPicker.isEnabled = pending != .detecting
         if let spot = selected, pending == nil {
             cardTitle.stringValue = "Selected"
@@ -452,6 +460,7 @@ final class RemovePanelViewController: NSViewController {
     /// For tests.
     var modePickerForTesting: NSSegmentedControl { modePicker }
     var cardForTesting: NSView { card }
+    var maskPickerForTesting: NSSegmentedControl { maskPicker }
 }
 
 /// The Selected card's rounded, lightly filled background, following the appearance.

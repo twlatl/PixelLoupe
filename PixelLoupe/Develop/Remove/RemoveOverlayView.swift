@@ -21,7 +21,16 @@ final class RemoveOverlayView: NSView {
     /// Painting takes away from the pending area (the Selected card's Subtract).
     var subtracts = false { didSet { needsDisplay = true } }
     /// Option is held: the brush does the opposite of the Selected card's Add or Subtract, as in Lightroom.
-    private(set) var isOptionDown = false { didSet { if isOptionDown != oldValue { needsDisplay = true } } }
+    var isOptionDown = false {
+        didSet {
+            guard isOptionDown != oldValue else { return }
+            needsDisplay = true
+            onOptionChange?(isOptionDown)
+        }
+    }
+    /// Option went down or up: the Selected card shows which way the brush paints.
+    var onOptionChange: ((Bool) -> Void)?
+    private var flagsMonitor: Any?
     /// What painting does to the pending area now: Subtract (or Add with Option) takes away from it.
     var paintSubtracts: Bool { pendingArea != nil && subtracts != isOptionDown }
     /// Spots whose fills are still being made: their pins show it.
@@ -344,9 +353,16 @@ final class RemoveOverlayView: NSView {
 
     // MARK: Mouse
 
-    override func flagsChanged(with event: NSEvent) {
-        isOptionDown = event.modifierFlags.contains(.option)
-        super.flagsChanged(with: event)
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let flagsMonitor { NSEvent.removeMonitor(flagsMonitor) }
+        flagsMonitor = nil
+        guard window != nil else { return }
+        // Watched in the window, not just when this view has the keyboard: Option shows on the Selected card at once.
+        flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            MainActor.assumeIsolated { self?.isOptionDown = event.modifierFlags.contains(.option) }
+            return event
+        }
     }
 
     override func mouseDown(with event: NSEvent) {

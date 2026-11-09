@@ -1182,6 +1182,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         }
         removePanel.onToolOverlayChange = { [weak self] overlay in self?.removeOverlay.toolOverlay = overlay }
         removePanel.onSubtractChange = { [weak self] on in self?.removeOverlay.subtracts = on }
+        removeOverlay.onOptionChange = { [weak self] down in self?.removePanel.showOptionDown(down) }
         removePanel.onCommitPending = { [weak self] in _ = self?.commitPendingRemove() }
         removePanel.onCancelPending = { [weak self] in _ = self?.cancelPendingRemove() }
         removePanel.onEditSelected = { [weak self] spot, isFinal, action in self?.editRemoveSpot(spot, isFinal: isFinal, actionName: action) }

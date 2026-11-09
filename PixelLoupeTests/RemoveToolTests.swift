@@ -258,4 +258,29 @@ struct RemoveToolTests {
         drag(option: true)
         #expect(strokes.map(\.isErasing) == [false, false, true, true, false])
     }
+
+    @Test("While Option is held the Selected card's Mask buttons show the way the brush paints")
+    func optionShowsOnTheMaskButtons() async throws {
+        let directory = try TemporaryDirectory()
+        let (controller, develop, _) = try await openRemove(directory)
+        defer { controller.close() }
+        let overlay = develop.removeOverlayForTesting
+        let panel = develop.removePanelForTesting
+        let picker = panel.maskPickerForTesting
+        #expect(picker.selectedSegment == 0, "Add")
+        overlay.isOptionDown = true
+        #expect(picker.selectedSegment == 1, "Option: Subtract")
+        overlay.isOptionDown = false
+        #expect(picker.selectedSegment == 0)
+
+        // Choose Subtract; Option shows Add, and letting go shows Subtract again.
+        picker.selectedSegment = 1
+        _ = picker.sendAction(picker.action, to: picker.target)
+        #expect(panel.subtracts && overlay.subtracts)
+        overlay.isOptionDown = true
+        #expect(picker.selectedSegment == 0, "Option: Add")
+        #expect(panel.subtracts, "the choice itself doesn't change")
+        overlay.isOptionDown = false
+        #expect(picker.selectedSegment == 1)
+    }
 }
