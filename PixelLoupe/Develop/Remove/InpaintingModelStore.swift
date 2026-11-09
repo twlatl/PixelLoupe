@@ -1,16 +1,19 @@
 import CoreML
 import CoreVideo
+import CryptoKit
 import Foundation
 
 /// The on-device inpainting model Remove's Use Generative AI fills with (RAW-260). It isn't in the app: it's
 /// downloaded the first time Use Generative AI is turned on, compiled, and kept in Application Support.
 ///
-/// The model takes `image` (RGB, 512 × 512, sRGB) and `mask` (grayscale, 512 × 512, white where to fill) and
-/// returns `output` (RGB, 512 × 512), as LaMa-style models converted to Core ML do. It always runs on the CPU
+/// The model takes `image` (RGB, sRGB) and `mask` (grayscale, white where to fill), both square, and returns `output`
+/// (RGB) the same size, as LaMa converted to Core ML does (Big LaMa at 800 × 800, from
+/// huggingface.co/mlboydaisuke/LaMa-CoreML, Apache-2.0); the size is read from the model. It always runs on the CPU
 /// and GPU in full precision, never the Neural Engine, so a Mac always makes the same fill (ADR 0004).
 ///
 /// Where it's downloaded from is the `PLInpaintingModelURL` key in the app's Info.plist (a zipped, compiled
-/// `.mlmodelc` or an `.mlmodel`); without it, generative Remove isn't offered and spots use patch fill.
+/// `.mlmodelc`, `.mlpackage` or `.mlmodel`), checked against `PLInpaintingModelSHA256`; without a URL, generative
+/// Remove isn't offered and spots use patch fill.
 nonisolated final class InpaintingModelStore: GenerativeInpainting, @unchecked Sendable {
     static let shared = InpaintingModelStore()
     /// Posted on the main thread when the state changes (downloading progress, ready, failed).
@@ -25,10 +28,11 @@ nonisolated final class InpaintingModelStore: GenerativeInpainting, @unchecked S
         case failed(String)
     }
 
-    static let side = 512
-    private static let urlKey = "PLInpaintingModelURL"
+    private static let urlKey = "PLInpaintingModelURL", checksumKey = "PLInpaintingModelSHA256"
 
     let downloadURL: URL?
+    /// The download's SHA-256 (hex); a download that doesn't match isn't installed.
+    let checksum: String?
     let directory: URL
     private let lock = NSLock()
     private var _state: State
@@ -37,11 +41,21 @@ nonisolated final class InpaintingModelStore: GenerativeInpainting, @unchecked S
     private var observation: NSKeyValueObservation?
 
     init(downloadURL: URL? = (Bundle.main.object(forInfoDictionaryKey: urlKey) as? String).flatMap(URL.init(string:)),
-         directory: URL = URL.applicationSupportDirectory.appending(path: Bundle.main.bundleIdentifier ?? "PixelLoupe").appending(path: "Models")) {
+         checksum: String? = Bundle.main.object(forInfoDictionaryKey: checksumKey) as? String,
+         directory: URL = InpaintingModelStore.defaultDirectory) {
         self.downloadURL = downloadURL
+        self.checksum = checksum?.lowercased()
         self.directory = directory
         _state = .unavailable
-        _state = downloadURL == nil ? .unavailable : (FileManager.default.fileExists(atPath: compiledURL.path) ? .ready : .notDownloaded)
+        let installed = FileManager.default.fileExists(atPath: compiledURL.path)
+        // An installed model works even without a download location (one copied there, or a test's).
+        _state = installed ? .ready : (downloadURL == nil ? .unavailable : .notDownloaded)
+    }
+
+    /// Application Support's Models folder, or the folder `PL_INPAINTING_MODEL_DIRECTORY` names (tests).
+    static var defaultDirectory: URL {
+        if let override = ProcessInfo.processInfo.environment["PL_INPAINTING_MODEL_DIRECTORY"] { return URL(filePath: override) }
+        return URL.applicationSupportDirectory.appending(path: Bundle.main.bundleIdentifier ?? "PixelLoupe").appending(path: "Models")
     }
 
     var compiledURL: URL { directory.appending(path: "Inpainting.mlmodelc") }
@@ -70,12 +84,20 @@ nonisolated final class InpaintingModelStore: GenerativeInpainting, @unchecked S
         case .notDownloaded, .failed: break
         }
         setState(.downloading(progress: 0))
-        let task = URLSession.shared.downloadTask(with: downloadURL) { [self] location, _, error in
+        let task = URLSession.shared.downloadTask(with: downloadURL) { [self] location, response, error in
             guard let location, error == nil else {
                 setState(.failed(error?.localizedDescription ?? "The download failed."))
                 return
             }
+            // A server's error page arrives as a download too: say what went wrong rather than checking its sum.
+            if let message = Self.failureMessage(for: response) {
+                setState(.failed(message))
+                return
+            }
             do {
+                if let checksum, try Self.sha256(of: location) != checksum {
+                    throw CocoaError(.fileReadCorruptFile, userInfo: [NSLocalizedDescriptionKey: "The downloaded model isn't the one expected."])
+                }
                 try install(from: location, name: downloadURL.lastPathComponent)
                 setState(.ready)
             } catch {
@@ -87,6 +109,22 @@ nonisolated final class InpaintingModelStore: GenerativeInpainting, @unchecked S
         }
         lock.withLock { self.task = task }
         task.resume()
+    }
+
+    /// Why a finished download isn't the model, from the server's answer, or nil when it answered with the file.
+    static func failureMessage(for response: URLResponse?) -> String? {
+        guard let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) else { return nil }
+        if http.statusCode == 404 { return "The model isn't on the server (HTTP 404)." }
+        return "The server answered \(HTTPURLResponse.localizedString(forStatusCode: http.statusCode)) (HTTP \(http.statusCode))."
+    }
+
+    /// The file's SHA-256, in hex, read a megabyte at a time.
+    static func sha256(of url: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty { hasher.update(data: chunk) }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     /// Moves a downloaded model into place, unzipping and compiling it as needed.
@@ -126,15 +164,32 @@ nonisolated final class InpaintingModelStore: GenerativeInpainting, @unchecked S
             configuration.computeUnits = .cpuAndGPU
             configuration.allowLowPrecisionAccumulationOnGPU = false
             model = try? MLModel(contentsOf: compiledURL, configuration: configuration)
+            // One prediction to warm it up: Core ML may specialize the model for this Mac on its first, so every fill
+            // the app keeps is made after that (see ADR 0004).
+            if let model { Self.warmUp(model) }
             return model
         }
     }
 
-    /// The image squeezed to 512 × 512 (with the seed choosing a mirror image and a slight zoom, so Refresh
+    private static func warmUp(_ model: MLModel) {
+        let side = side(of: model)
+        guard let image = pixelBuffer(side, side, format: kCVPixelFormatType_32BGRA),
+              let mask = pixelBuffer(side, side, format: kCVPixelFormatType_OneComponent8),
+              let input = try? MLDictionaryFeatureProvider(dictionary: ["image": MLFeatureValue(pixelBuffer: image), "mask": MLFeatureValue(pixelBuffer: mask)])
+        else { return }
+        _ = try? model.prediction(from: input)
+    }
+
+    /// The model's square input size.
+    static func side(of model: MLModel) -> Int {
+        model.modelDescription.inputDescriptionsByName["image"]?.imageConstraint?.pixelsWide ?? 512
+    }
+
+    /// The image squeezed to the model's size (with the seed choosing a mirror image and a slight zoom, so Refresh
     /// gives another fill), filled, and scaled back over the hole.
     func fill(_ image: PatchInpainter.Image, hole: [Bool], seed: UInt64) -> PatchInpainter.Image? {
         guard isAvailable, let model = loadedModel() else { return nil }
-        let side = Self.side
+        let side = Self.side(of: model)
         let mirrored = seed & 1 == 1
         let zoom = 1 + Double((seed >> 1) % 8) * 0.0125
         // Model pixel → image pixel (rows from the bottom in both).

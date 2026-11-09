@@ -185,6 +185,25 @@ struct RemoveTests {
         #expect(abs(value - 0.8) < 0.03, "scaled up to match: \(value)")
     }
 
+    @Test("A downloaded model that isn't the one expected isn't installed")
+    func checksum() async throws {
+        let directory = try TemporaryDirectory()
+        let file = directory.url.appending(path: "Inpainting.zip")
+        try Data("not a model".utf8).write(to: file)
+        let store = InpaintingModelStore(downloadURL: file, checksum: String(repeating: "0", count: 64), directory: directory.url.appending(path: "Models"))
+        #expect(store.state == .notDownloaded && !store.isAvailable)
+        store.download()
+        let start = Date()
+        while Date().timeIntervalSince(start) < 20 {
+            if case .failed = store.state { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        guard case .failed = store.state else { Issue.record("refused: \(store.state)"); return }
+        #expect(!FileManager.default.fileExists(atPath: store.compiledURL.path))
+        // Nowhere to download from and nothing installed: not offered.
+        #expect(InpaintingModelStore(downloadURL: nil, checksum: nil, directory: directory.url.appending(path: "None")).state == .unavailable)
+    }
+
     // MARK: Helpers
 
     private func stroke(_ points: [(Double, Double)], size: Double) -> PhotoAdjustments.BrushStroke {
@@ -224,5 +243,16 @@ struct RemoveTests {
         context.render(image, toBitmap: &data, rowBytes: 16, bounds: CGRect(x: extent.minX + CGFloat(x), y: extent.minY + CGFloat(y), width: 1, height: 1),
                        format: .RGBAf, colorSpace: nil)
         return data
+    }
+
+    @Test("A server's error page is reported as the server's error, not as the wrong model")
+    func downloadErrorMessage() throws {
+        let url = URL(string: "https://example.com/model.zip")!
+        func response(_ code: Int) -> HTTPURLResponse { HTTPURLResponse(url: url, statusCode: code, httpVersion: nil, headerFields: nil)! }
+        #expect(InpaintingModelStore.failureMessage(for: response(200)) == nil)
+        #expect(InpaintingModelStore.failureMessage(for: response(404)) == "The model isn't on the server (HTTP 404).")
+        #expect(InpaintingModelStore.failureMessage(for: response(503))?.contains("HTTP 503") == true)
+        // A file URL (the tests' downloads) has no status to check.
+        #expect(InpaintingModelStore.failureMessage(for: URLResponse(url: url, mimeType: nil, expectedContentLength: 0, textEncodingName: nil)) == nil)
     }
 }

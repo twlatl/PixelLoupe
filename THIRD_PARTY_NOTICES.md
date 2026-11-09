@@ -55,6 +55,20 @@ material from others.
 - **Changes:** ported into PixelLoupe's pipeline as a non-destructive adjustment. It lights the subject PixelLoupe already
   finds, works in sRGB values inside the linear pipeline, and keeps highlights above white instead of clipping them.
 
+## Downloaded by the app
+
+### LaMa inpainting model
+
+- **What:** the model Develop's Remove fills with when Use generative AI is on (RAW-260). It isn't in the app: it's
+  downloaded the first time Use generative AI is turned on, from the `models-lama-800-v1` release of this repository
+  (`Inpainting-LaMa-800-v1.zip`, checked against the SHA-256 in `Config/Info.plist`), and kept in Application Support.
+- **From:** [LaMa](https://github.com/advimman/lama) (Big LaMa), "Resolution-robust Large Mask Inpainting with Fourier
+  Convolutions", © Samsung AI Center and the LaMa authors; converted to Core ML by
+  [john-rocky](https://github.com/john-rocky/CoreML-Models), published as
+  [mlboydaisuke/LaMa-CoreML](https://huggingface.co/mlboydaisuke/LaMa-CoreML) (revision `5ed76e37`).
+- **License:** [Apache License 2.0](https://github.com/advimman/lama/blob/main/LICENSE).
+- **Changes:** none to the model; the `.mlpackage` is re-zipped as published.
+
 ## Used but not bundled
 
 - **Adobe camera profiles and presets:** PixelLoupe reads profiles and Lightroom / Camera Raw presets that the user
