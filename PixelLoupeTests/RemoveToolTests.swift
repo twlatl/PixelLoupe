@@ -283,4 +283,32 @@ struct RemoveToolTests {
         overlay.isOptionDown = false
         #expect(picker.selectedSegment == 1)
     }
+
+    @Test("While a spot's fill is being made its pin pulses and its ring turns; when it's done they stop")
+    func busyPinAnimates() throws {
+        // The pulse: the pin as it is at the start of each beat, red and 150 % halfway through.
+        #expect(abs(RemoveOverlayView.pulse(at: 0)) < 1e-9)
+        #expect(abs(RemoveOverlayView.pulse(at: RemoveOverlayView.pulsePeriod / 2) - 1) < 1e-9)
+        #expect(abs(RemoveOverlayView.pulse(at: RemoveOverlayView.pulsePeriod)) < 1e-9)
+
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        defer { window.close() }
+        let overlay = RemoveOverlayView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        overlay.previewFrame = PreviewFrame(rect: CGRect(x: 0, y: 0, width: 400, height: 300))
+        var spot = PhotoAdjustments.Spot()
+        spot.kind = .remove
+        spot.area = PhotoAdjustments.RemoveArea(brush: PhotoAdjustments.BrushMask(strokes: [stroke([(0.5, 0.5)], size: 0.05)]))
+        spot.fitCircleToArea(aspect: 400.0 / 300)
+        overlay.spots = [spot]
+        overlay.selectedID = spot.id
+        overlay.unfilledIDs = [spot.id]
+        #expect(!overlay.isAnimatingFill, "not in a window yet")
+        window.contentView = overlay
+        #expect(overlay.isAnimatingFill, "Remove is working")
+        overlay.unfilledIDs = []
+        #expect(!overlay.isAnimatingFill, "done")
+        overlay.unfilledIDs = [spot.id]
+        overlay.removeFromSuperview()
+        #expect(!overlay.isAnimatingFill, "stops when the overlay goes away")
+    }
 }

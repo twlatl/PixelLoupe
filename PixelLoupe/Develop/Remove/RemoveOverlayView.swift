@@ -34,7 +34,41 @@ final class RemoveOverlayView: NSView {
     /// What painting does to the pending area now: Subtract (or Add with Option) takes away from it.
     var paintSubtracts: Bool { pendingArea != nil && subtracts != isOptionDown }
     /// Spots whose fills are still being made: their pins show it.
-    var unfilledIDs: Set<UUID> = [] { didSet { needsDisplay = true } }
+    var unfilledIDs: Set<UUID> = [] {
+        didSet {
+            needsDisplay = true
+            updateFillAnimation()
+        }
+    }
+
+    // MARK: Fill animation
+
+    /// While a fill is being made its pin pulses (its color toward red, its size up to half as big again) and the
+    /// dashed ring around it turns clockwise, so it's clear Remove is working; when the fill is done it stops.
+    private var fillAnimation: Timer?
+    var isAnimatingFill: Bool { fillAnimation != nil }
+    /// Seconds for one pulse, out and back.
+    nonisolated static let pulsePeriod: TimeInterval = 1.2
+
+    /// How far into the pulse `time` is: 0 (the pin as it is) to 1 (red, 150 %), easing in and out.
+    nonisolated static func pulse(at time: TimeInterval) -> CGFloat {
+        CGFloat(1 - cos(2 * .pi * time / pulsePeriod)) / 2
+    }
+
+    private func updateFillAnimation() {
+        let wanted = !unfilledIDs.isEmpty && window != nil
+        if wanted, fillAnimation == nil {
+            let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.needsDisplay = true }
+            }
+            // Common modes, so it keeps going while the mouse is down.
+            RunLoop.main.add(timer, forMode: .common)
+            fillAnimation = timer
+        } else if !wanted, let fillAnimation {
+            fillAnimation.invalidate()
+            self.fillAnimation = nil
+        }
+    }
 
     /// A finished stroke (unit coordinates, origin bottom-left; size a fraction of the long edge).
     var onStroke: ((PhotoAdjustments.BrushStroke) -> Void)?
@@ -290,17 +324,28 @@ final class RemoveOverlayView: NSView {
     }
 
     private func pin(at point: CGPoint, selected: Bool, hollow: Bool, busy: Bool) {
-        let path = NSBezierPath(ovalIn: circle(point, Self.pinRadius))
-        (hollow ? NSColor.clear : (selected ? Accent.color : NSColor.white)).setFill()
+        let now = CACurrentMediaTime()
+        // Busy: pulsing toward red and up to 150 %.
+        let pulse = busy ? Self.pulse(at: now) : 0
+        let radius = Self.pinRadius * (1 + 0.5 * pulse)
+        let base = hollow ? NSColor.clear : (selected ? Accent.color : NSColor.white)
+        let path = NSBezierPath(ovalIn: circle(point, radius))
+        (busy && !hollow ? (base.blended(withFraction: pulse, of: .systemRed) ?? base) : base).setFill()
         path.fill()
         path.lineWidth = 2
         NSColor.black.withAlphaComponent(0.6).setStroke()
         path.stroke()
         if busy {
-            // A dashed ring while the fill is being made.
-            let ring = NSBezierPath(ovalIn: circle(point, Self.pinRadius + 4))
+            // A dashed ring that turns clockwise while the fill is being made. The ring is drawn counterclockwise (the
+            // view isn't flipped, so angles go up counterclockwise), and a growing dash phase carries the dashes back
+            // along it: clockwise.
+            let ring = NSBezierPath()
+            ring.appendArc(withCenter: point, radius: radius + 4, startAngle: 0, endAngle: 360, clockwise: false)
+            ring.setLineDash([3, 3], count: 2, phase: CGFloat((now * 12).truncatingRemainder(dividingBy: 6)))
+            ring.lineWidth = 3
+            NSColor.black.withAlphaComponent(0.45).setStroke()
+            ring.stroke()
             ring.lineWidth = 1.5
-            ring.setLineDash([3, 3], count: 2, phase: 0)
             NSColor.white.setStroke()
             ring.stroke()
         }
@@ -357,6 +402,7 @@ final class RemoveOverlayView: NSView {
         super.viewDidMoveToWindow()
         if let flagsMonitor { NSEvent.removeMonitor(flagsMonitor) }
         flagsMonitor = nil
+        updateFillAnimation()
         guard window != nil else { return }
         // Watched in the window, not just when this view has the keyboard: Option shows on the Selected card at once.
         flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
