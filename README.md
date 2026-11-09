@@ -128,6 +128,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `M` / `⇧M` / `K` | Develop Masking: add a linear gradient / radial gradient / brush mask (`O` shows the selected mask in red) |
 | `Q` | Develop Remove: paint to remove, heal or clone (with Detect Objects, Return removes the area found and Esc cancels; Delete removes the selected spot) |
 | `⇧Q` | Develop Spot Removal: click heal and clone spots, and red eyes |
+| `⌥`-drag | In Remove, while a detected area waits for Remove: paint with the opposite of the Selected card's Add / Subtract (the brush shows a minus while it takes away) |
 | `P` / `U` / `X` | Flagged / Unflagged / Rejected |
 | `6` / `7` / `8` / `9` | Color label red / yellow / green / blue; press the same key again to clear it (purple has no key, as in Lightroom: Photo ▸ Set Color Label) |
 | Shift-click | Select every photo between the last one clicked and this one (grid and filmstrip); `⌘⇧`-click adds the range |
@@ -625,7 +626,7 @@ The **Remove** tool (**Q**, the eraser in the Develop sidebar) takes things out 
 
 - **Remove** fills what you paint with new pixels made to fit around it. With **Detect objects** on, paint roughly
   around something (or over it): the object is found and shown in red, waiting. Paint more with **Add**, take some
-  away with **Subtract**, then click **Remove** (or press Return); Esc cancels. With it off, what you paint is removed
+  away with **Subtract** (or hold Option to paint the other way), then click **Remove** (or press Return); Esc cancels. With it off, what you paint is removed
   as soon as you let go. **Use generative AI** fills with an on-device model, downloaded the first time it's turned
   on; until it's there, spots are filled from the photo's own patches.
 - **Heal** and **Clone** copy from beside the spot (Heal matching the colors around it): click for a round spot the

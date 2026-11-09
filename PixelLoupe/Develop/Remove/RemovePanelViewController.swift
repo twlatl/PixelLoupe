@@ -432,7 +432,7 @@ final class RemovePanelViewController: NSViewController {
         }
 
         hint.stringValue = switch mode {
-        case .remove where pending != nil: "Paint to add to the area (or subtract with Subtract), then click Remove (Return). Esc cancels."
+        case .remove where pending != nil: "Paint to add to the area (or subtract with Subtract; Option paints the other way), then click Remove (Return). Esc cancels."
         case .remove: detectsObjects
             ? "Paint roughly around something to select it. Scroll to resize the brush."
             : "Paint over what to remove. Scroll to resize the brush."

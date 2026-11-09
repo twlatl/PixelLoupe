@@ -231,4 +231,31 @@ struct RemoveToolTests {
         let ring = stride(from: 54.0, through: 62.0, by: 1).map { alpha(200 + $0, 150) }.max() ?? 0
         #expect(ring > 0.5, "the edge is outlined: \(ring)")
     }
+
+    @Test("Holding Option while painting a waiting area flips Add and Subtract")
+    func optionFlipsSubtract() throws {
+        let overlay = RemoveOverlayView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        overlay.previewFrame = PreviewFrame(rect: CGRect(x: 0, y: 0, width: 400, height: 300))
+        var strokes: [PhotoAdjustments.BrushStroke] = []
+        overlay.onStroke = { strokes.append($0) }
+        func drag(option: Bool) {
+            let flags: NSEvent.ModifierFlags = option ? .option : []
+            func mouse(_ type: NSEvent.EventType, _ x: CGFloat) -> NSEvent {
+                NSEvent.mouseEvent(with: type, location: CGPoint(x: x, y: 150), modifierFlags: flags, timestamp: 0,
+                                   windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+            }
+            overlay.mouseDown(with: mouse(.leftMouseDown, 100))
+            overlay.mouseDragged(with: mouse(.leftMouseDragged, 200))
+            overlay.mouseUp(with: mouse(.leftMouseUp, 300))
+        }
+        // Nothing waiting: there's nothing to take away from, so Option doesn't erase.
+        drag(option: true)
+        overlay.pendingArea = PhotoAdjustments.RemoveArea(brush: PhotoAdjustments.BrushMask(strokes: [stroke([(0.5, 0.5)])]))
+        drag(option: false)
+        drag(option: true)
+        overlay.subtracts = true
+        drag(option: false)
+        drag(option: true)
+        #expect(strokes.map(\.isErasing) == [false, false, true, true, false])
+    }
 }

@@ -20,6 +20,10 @@ final class RemoveOverlayView: NSView {
     var brushSize = 0.02 { didSet { needsDisplay = true } }
     /// Painting takes away from the pending area (the Selected card's Subtract).
     var subtracts = false { didSet { needsDisplay = true } }
+    /// Option is held: the brush does the opposite of the Selected card's Add or Subtract, as in Lightroom.
+    private(set) var isOptionDown = false { didSet { if isOptionDown != oldValue { needsDisplay = true } } }
+    /// What painting does to the pending area now: Subtract (or Add with Option) takes away from it.
+    var paintSubtracts: Bool { pendingArea != nil && subtracts != isOptionDown }
     /// Spots whose fills are still being made: their pins show it.
     var unfilledIDs: Set<UUID> = [] { didSet { needsDisplay = true } }
 
@@ -238,7 +242,7 @@ final class RemoveOverlayView: NSView {
             path.lineCapStyle = .round
             path.lineJoinStyle = .round
             path.lineWidth = max(2, brushSize * longEdge * 2)
-            (subtracts && pendingArea != nil ? NSColor.black : NSColor.systemRed).withAlphaComponent(0.35).setStroke()
+            (paintSubtracts ? NSColor.black : NSColor.systemRed).withAlphaComponent(0.35).setStroke()
             path.stroke()
         }
         // Pins.
@@ -259,6 +263,20 @@ final class RemoveOverlayView: NSView {
             path.lineWidth = 1
             NSColor.white.setStroke()
             path.stroke()
+            // A minus in the middle while the brush takes away.
+            if paintSubtracts {
+                let bar = NSBezierPath()
+                let half = min(radius * 0.5, 6)
+                bar.move(to: CGPoint(x: pointer.x - half, y: pointer.y))
+                bar.line(to: CGPoint(x: pointer.x + half, y: pointer.y))
+                bar.lineCapStyle = .round
+                bar.lineWidth = 3
+                NSColor.black.withAlphaComponent(0.45).setStroke()
+                bar.stroke()
+                bar.lineWidth = 1.2
+                NSColor.white.setStroke()
+                bar.stroke()
+            }
         }
     }
 
@@ -312,6 +330,7 @@ final class RemoveOverlayView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         pointer = convert(event.locationInWindow, from: nil)
+        isOptionDown = event.modifierFlags.contains(.option)
         if case .pin(let spot)? = target(at: pointer!) { hoveredID = spot.id } else { hoveredID = nil }
         cursor(at: pointer!).set()
         needsDisplay = true
@@ -325,9 +344,15 @@ final class RemoveOverlayView: NSView {
 
     // MARK: Mouse
 
+    override func flagsChanged(with event: NSEvent) {
+        isOptionDown = event.modifierFlags.contains(.option)
+        super.flagsChanged(with: event)
+    }
+
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         moved = false
+        isOptionDown = event.modifierFlags.contains(.option)
         if isHandHeld, !isSpaceDown() { isHandHeld = false }
         if isHandHeld {
             drag = .hand(last: point)
@@ -362,6 +387,7 @@ final class RemoveOverlayView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         pointer = point
         moved = true
+        isOptionDown = event.modifierFlags.contains(.option)
         guard let drag else { return }
         switch drag {
         case .paint(var points):
@@ -379,6 +405,7 @@ final class RemoveOverlayView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        isOptionDown = event.modifierFlags.contains(.option)
         defer {
             drag = nil
             needsDisplay = true
@@ -392,7 +419,7 @@ final class RemoveOverlayView: NSView {
                 onPlace?(points[0])
             } else {
                 onStroke?(PhotoAdjustments.BrushStroke(points: points, size: brushSize, feather: mode == .remove ? 0.1 : 0.3, flow: 1, density: 1,
-                                                       isErasing: subtracts && pendingArea != nil))
+                                                       isErasing: paintSubtracts))
             }
         case .spot, .source, .customSource:
             if moved { update(to: point, isFinal: true) }
