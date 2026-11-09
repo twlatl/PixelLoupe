@@ -372,7 +372,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         ] {
             button.image = symbol.isEmpty
                 ? Self.rimLightIcon(title)
-                : NSImage(systemSymbolName: symbol, accessibilityDescription: title)?.withSymbolConfiguration(.init(pointSize: 24, weight: .regular))
+                : NSImage(systemSymbolName: symbol, accessibilityDescription: title)?.withSymbolConfiguration(.init(pointSize: 28, weight: .regular))
             button.isBordered = false
             button.imagePosition = .imageOnly
             button.toolTip = title
@@ -382,12 +382,13 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             button.setAccessibilityIdentifier(identifier)
         }
         let header = NSStackView(views: [adjustToolButton, rimLightToolButton, cropToolButton, maskToolButton, removeToolButton, retouchToolButton, historyToolButton])
-        // Up to eight tools fit the narrowest inspector (366 pt) at this spacing.
-        header.spacing = 12
+        // Adjust flush left, History flush right, and the same space between each pair of icons.
+        header.distribution = .equalSpacing
+        header.spacing = 8
         // Exactly as tall as the tallest icon, so the line sits 10pt below the icons and the
         // panels get the rest of the sidebar.
         header.setHuggingPriority(.required, for: .vertical)
-        header.edgeInsets = NSEdgeInsets(top: 10, left: 14, bottom: 0, right: 0)
+        header.edgeInsets = NSEdgeInsets(top: 10, left: 14, bottom: 0, right: 14)
         let headerLine = NSBox()
         headerLine.boxType = .separator
 
@@ -397,7 +398,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         panel.addEmbeddedSection("Presets", symbol: "photo.on.rectangle.angled", content: presetsPanel.view, atTop: true)
         panel.addEmbeddedSection("Lens Corrections", symbol: "camera", content: lensPanel.view, atTop: false)
         let content = [panel.view, rimLightPanel.view, cropPanel.view, maskPanel.view, removePanel.view, retouchPanel.view, historyPanel.view]
-        for view in [histogramView, header, headerLine] + content {
+        for view in [histogramView, header, activeToolDot, headerLine] + content {
             view.translatesAutoresizingMaskIntoConstraints = false
             sidebar.addSubview(view)
         }
@@ -407,8 +408,12 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             histogramView.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -14),
             header.topAnchor.constraint(equalTo: histogramView.bottomAnchor, constant: 2),
             header.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor),
-            // 10pt between the icons and the separator below them.
-            headerLine.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 10),
+            header.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor),
+            // The active tool's dot under the icons, then the separator below it.
+            activeToolDot.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 5),
+            activeToolDot.widthAnchor.constraint(equalToConstant: ToolDot.diameter),
+            activeToolDot.heightAnchor.constraint(equalToConstant: ToolDot.diameter),
+            headerLine.topAnchor.constraint(equalTo: activeToolDot.bottomAnchor, constant: 7),
             headerLine.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 12),
             headerLine.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -12),
             headerLine.heightAnchor.constraint(equalToConstant: 1),
@@ -445,13 +450,32 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             let active = state.developTool == tool
             button.contentTintColor = active ? Accent.color : .systemGray
             button.setAccessibilityValue(active ? "active" : "inactive")
+            if active, activeToolDot.superview != nil, button.superview != nil {
+                activeToolDotCenter?.isActive = false
+                activeToolDotCenter = activeToolDot.centerXAnchor.constraint(equalTo: button.centerXAnchor)
+                activeToolDotCenter?.isActive = true
+            }
+        }
+    }
+
+    /// The dot under the active tool's icon.
+    private let activeToolDot = ToolDot()
+    private var activeToolDotCenter: NSLayoutConstraint?
+
+    /// A small accent-colored dot (drawn, so a change to Monochrome Mode redraws it in the new accent).
+    final class ToolDot: NSView {
+        static let diameter: CGFloat = 5
+
+        override func draw(_ dirtyRect: NSRect) {
+            Accent.color.setFill()
+            NSBezierPath(ovalIn: bounds).fill()
         }
     }
 
     /// The softbox (Design/RimLight-Softbox.svg), a template so it's tinted like the symbols beside it, at their size.
     private static func rimLightIcon(_ title: String) -> NSImage? {
         guard let image = NSImage(named: "RimLight")?.copy() as? NSImage else { return nil }
-        image.size = NSSize(width: 26, height: 26)
+        image.size = NSSize(width: 30, height: 30)
         image.isTemplate = true
         image.accessibilityDescription = title
         return image
