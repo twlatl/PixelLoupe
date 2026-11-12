@@ -2,10 +2,10 @@
 # Stacks a folder of focus-bracketed photos, as Photo Merge ▸ Focus Stack does: a preview-size stack
 # with its depth maps, then the full-resolution one.
 #
-#   Scripts/focus-stack.sh [samples folder] [output folder] [average]
+#   Scripts/focus-stack.sh [samples folder] [output folder] [average | pyramid]
 #
-# The samples folder holds the frames (default ~/Desktop/Battery Stack Images). "average" as the third
-# argument stacks with Weighted Average instead of Depth Map. The output folder gets
+# The samples folder holds the frames (default ~/Desktop/Battery Stack Images). "average" or "pyramid"
+# as the third argument stacks with Weighted Average or Pyramid instead of Depth Map (Pyramid has no depth maps). The output folder gets
 # preview.dng (.tif when the frames aren't RAW), preview-depth.png, preview-depth-unsmoothed.png, the full-resolution <first>-Focus.dng
 # (.tif when the frames aren't RAW) and timings.txt (how each frame was lined up, and how long each step took).
 set -euo pipefail

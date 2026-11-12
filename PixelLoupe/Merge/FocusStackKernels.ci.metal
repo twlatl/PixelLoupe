@@ -145,6 +145,69 @@ float4 focusResolve(sample_t sum, sample_t total) {
     return float4(sum.rgb / max(total.r, 1e-6), 1.0);
 }
 
+/// Pyramid: a frame gamma-encoded, so detail in the shadows is as large as detail in the highlights
+/// when the frames' bands are compared, and back.
+float4 focusEncode(sample_t frame) {
+    return float4(pow(max(frame.rgb, 0.0), float3(1.0 / 2.2)), 1.0);
+}
+
+float4 focusDecode(sample_t encoded) {
+    return float4(pow(max(encoded.rgb, 0.0), float3(2.2)), 1.0);
+}
+
+/// The coarsest level: the frames added up, and their average.
+float4 focusAdd(sample_t sum, sample_t level) {
+    return float4(sum.rgb + level.rgb, 1.0);
+}
+
+float4 focusMean(sample_t sum, float count) {
+    return float4(sum.rgb / max(count, 1.0), 1.0);
+}
+
+/// One band of a frame's detail: its level less the next coarser one, enlarged here (bilinear at each
+/// pixel's center). Signed.
+float4 focusBand(sampler coarser, sampler level, destination dest) {
+    float2 p = dest.coord();
+    return float4(level.sample(level.transform(p)).rgb - coarser.sample(coarser.transform(p * 0.5)).rgb, 1.0);
+}
+
+/// How strong a band is at a pixel: the size of its brightness.
+float4 focusStrength(sample_t band) {
+    return float4(abs(dot(band.rgb, float3(0.2627, 0.6780, 0.0593))), 0.0, 0.0, 1.0);
+}
+
+/// The best band so far, or this frame's where it's stronger.
+float4 focusStronger(sample_t best, sample_t band, sample_t bestStrength, sample_t strength) {
+    return strength.r > bestStrength.r ? float4(band.rgb, 1.0) : float4(best.rgb, 1.0);
+}
+
+float4 focusMost(sample_t a, sample_t b) {
+    return float4(max(a.r, b.r), 0.0, 0.0, 1.0);
+}
+
+/// Collapsing the pyramid: a band plus the level below it enlarged (bilinear at each pixel's center).
+float4 focusCollapse(sampler coarser, sampler band, destination dest) {
+    float2 p = dest.coord();
+    return float4(coarser.sample(coarser.transform(p * 0.5)).rgb + band.sample(band.transform(p)).rgb, 1.0);
+}
+
+/// The darkest and brightest a pixel has been in any frame so far (red, green), by its brightness.
+/// `first` is 1 for the first frame, when there's nothing so far.
+float4 focusRange(sample_t range, sample_t frame, float first) {
+    float brightness = dot(frame.rgb, float3(0.2627, 0.6780, 0.0593));
+    if (first > 0.5) { return float4(brightness, brightness, 0.0, 1.0); }
+    return float4(min(range.r, brightness), max(range.g, brightness), 0.0, 1.0);
+}
+
+/// A pixel made no darker and no brighter than `range` says it is in any frame. The difference is added
+/// to every channel alike: scaling the pixel instead would turn what little color a nearly black one
+/// has into a bright, saturated patch.
+float4 focusWithin(sample_t pixel, sample_t range) {
+    float brightness = dot(pixel.rgb, float3(0.2627, 0.6780, 0.0593));
+    float wanted = clamp(brightness, range.r, range.g);
+    return float4(max(pixel.rgb + (wanted - brightness), 0.0), 1.0);
+}
+
 /// A depth map (frame numbers in red) as gray: the first frame black, frame `last` white.
 float4 focusDepthGray(sample_t depth, float last) {
     float gray = last > 0.0 ? clamp(depth.r / last, 0.0, 1.0) : 0.0;

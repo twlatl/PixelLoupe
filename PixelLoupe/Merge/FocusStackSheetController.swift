@@ -45,9 +45,6 @@ final class FocusStackSheetController: NSWindowController, NSWindowDelegate, NST
     let resetButton = NSButton(title: "Reset", target: nil, action: nil)
     let mergeButton = NSButton(title: "Merge", target: nil, action: nil)
 
-    /// The methods that can be chosen so far.
-    static let availableMethods: Set<FocusStackOptions.Method> = [.weightedAverage, .depthMap]
-
     private var previewer: FocusStackPreviewer?
     private var previewTask: Task<Void, Never>?
     private var detailTask: Task<Void, Never>?
@@ -64,8 +61,6 @@ final class FocusStackSheetController: NSWindowController, NSWindowDelegate, NST
 
     init(sources: [PhotoMergeSource], options: FocusStackOptions) {
         self.sources = FocusStackMerger.ordered(sources)
-        var options = options
-        if !Self.availableMethods.contains(options.method) { options.method = .depthMap }
         self.options = options
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1180, height: 720),
@@ -191,15 +186,13 @@ final class FocusStackSheetController: NSWindowController, NSWindowDelegate, NST
             button.target = self
             button.action = #selector(methodChanged(_:))
             button.tag = method.rawValue
-            if !Self.availableMethods.contains(method) { button.toolTip = "Not available yet." }
         }
         methodButtons[FocusStackOptions.Method.weightedAverage.rawValue].toolTip
             = "Averages the photos by how sharp each is at every point. Natural color and contrast, best on short stacks."
         methodButtons[FocusStackOptions.Method.depthMap.rawValue].toolTip
             = "Takes every point from the photo where it's sharpest. The best choice for most stacks."
         methodButtons[FocusStackOptions.Method.pyramid.rawValue].toolTip
-            = methodButtons[FocusStackOptions.Method.pyramid.rawValue].toolTip
-            ?? "Puts fine and coarse detail together separately. For deep stacks and overlapping detail."
+            = "Puts fine and coarse detail together separately. For deep stacks and overlapping detail such as hairs."
 
         let formatter = NumberFormatter()
         formatter.allowsFloats = false
@@ -300,7 +293,7 @@ final class FocusStackSheetController: NSWindowController, NSWindowDelegate, NST
         sourcesHeading.stringValue = "Source Photos (\(sources.count))"
         for (button, method) in zip(methodButtons, FocusStackOptions.Method.allCases) {
             button.state = options.method == method ? .on : .off
-            button.isEnabled = ready && Self.availableMethods.contains(method)
+            button.isEnabled = ready
         }
         // Pyramid has no Radius or Smoothing: they keep their values, grayed out.
         let hasSliders = options.method != .pyramid
@@ -464,7 +457,7 @@ final class FocusStackSheetController: NSWindowController, NSWindowDelegate, NST
         case .rendered:
             if let rendered { setPreview(NSImage(cgImage: rendered.image, size: .zero)) }
         case .depthMap:
-            if let rendered { setPreview(NSImage(cgImage: rendered.depthMap, size: .zero)) }
+            if let map = rendered?.depthMap { setPreview(NSImage(cgImage: map, size: .zero)) }
         case .original:
             showOriginal()
         }
@@ -578,7 +571,7 @@ final class FocusStackSheetController: NSWindowController, NSWindowDelegate, NST
     }
 
     @objc private func methodChanged(_ sender: NSButton) {
-        guard let method = FocusStackOptions.Method(rawValue: sender.tag), Self.availableMethods.contains(method) else { return }
+        guard let method = FocusStackOptions.Method(rawValue: sender.tag) else { return }
         options.method = method
         if showing == .depthMap, method != .depthMap { showing = .rendered }
         updateControls()
@@ -607,7 +600,6 @@ final class FocusStackSheetController: NSWindowController, NSWindowDelegate, NST
 
     @objc func reset(_ sender: Any?) {
         options.resetRendering()
-        if !Self.availableMethods.contains(options.method) { options.method = .depthMap }
         updateControls()
         refreshPreview()
     }

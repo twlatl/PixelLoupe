@@ -6,8 +6,8 @@ import ImageIO
 nonisolated struct FocusStackPreview: @unchecked Sendable {
     /// The stacked photo as it will first look in PixelLoupe (Display P3).
     let image: CGImage
-    /// The depth map the frames were chosen by: the first frame black, the last one white.
-    let depthMap: CGImage
+    /// Which frame is sharpest where: the first frame black, the last one white.
+    let depthMap: CGImage?
     /// How many frames went into it.
     let mergedCount: Int
 }
@@ -41,7 +41,7 @@ actor FocusStackPreviewer {
         var excluding: Set<URL>
         var maxPixels: CGFloat
     }
-    private var cached: (key: Key, preview: FocusStackPreview, depth: FocusDepthMap)?
+    private var cached: (key: Key, preview: FocusStackPreview, depth: FocusDepthMap?)?
 
     /// The most memory the frames kept for previews may take; the preview is made smaller to fit.
     static let frameBudget: Double = 1_500_000_000
@@ -87,7 +87,7 @@ actor FocusStackPreviewer {
             if let image = Self.image(of: map) { depthProgress(image) }
         })
         try Task.checkCancellation()
-        guard let depth = Self.image(of: result.depthMap) else { throw PhotoMergeError.unreadable(merger.reference.name) }
+        let depth = result.depthMap.flatMap { Self.image(of: $0) }
         let preview = FocusStackPreview(image: try draw(result.image, name: "preview"), depthMap: depth, mergedCount: result.mergedCount)
         cached = (key, preview, result.depthMap)
         return preview

@@ -151,7 +151,7 @@ struct FocusStackTests {
         #expect(abs(result.image.width - fixture.width) <= 4 && abs(result.image.height - fixture.height) <= 4)
 
         // The depth map: black in the first band, mid gray in the second, white in the third.
-        let map = result.depthMap
+        let map = try #require(result.depthMap)
         for (band, expected) in [0, 128, 255].enumerated() {
             var values: [Int] = []
             for y in stride(from: map.height / 4, to: map.height * 3 / 4, by: 7) {
@@ -197,7 +197,7 @@ struct FocusStackTests {
         func row(_ smoothing: Int) throws -> [Int] {
             var options = FocusStackOptions()
             options.smoothing = smoothing
-            let map = try merger.merge(options: options, scale: 1).depthMap
+            let map = try #require(try merger.merge(options: options, scale: 1).depthMap)
             let start = map.height / 2 * map.width
             return map.pixels[start..<(start + map.width)].map { Int($0) }
         }
@@ -275,6 +275,72 @@ struct FocusStackTests {
             #expect(row[row.count / 8] > 0.9 && row[row.count * 7 / 8] < 0.1, "\(row[row.count / 8]) and \(row[row.count * 7 / 8])")
         }
         #expect(steepest(soft) < 0.5 * steepest(hard), "steepest step \(steepest(soft)) with smoothing, \(steepest(hard)) without")
+    }
+
+    @Test func pyramidTakesTheDetailOfWhicheverFrameHasIt() throws {
+        // Two frames, in focus in alternate stripes. (Stripes much narrower than this, which would show
+        // detail at two depths side by side as hairs are, don't line up: where a synthetic frame
+        // switches from sharp to blurred is itself a feature, and there are too many of them.)
+        var fixture = try FocusFixture()
+        func near(_ x: Double) -> Bool { Int(max(0, x) / 120) % 2 == 0 }
+        try fixture.addFrame { x, _ in near(x) }
+        try fixture.addFrame { x, _ in !near(x) }
+        let merger = try FocusStackMerger(sources: fixture.sources)
+        var options = FocusStackOptions()
+        options.method = .pyramid
+        var maps: [FocusDepthMap] = []
+        var fractions: [Double] = []
+        let result = try merger.merge(options: options, scale: 1, progress: { fractions.append($0) }, depthMap: { maps.append($0) })
+        #expect(result.mergedCount == 2 && merger.skipped.isEmpty)
+        // It has no depth map.
+        #expect(maps.isEmpty && result.depthMap == nil)
+        #expect(fractions == fractions.sorted() && fractions.last == 1)
+
+        // As detailed as the scene throughout, which neither frame is.
+        let width = fixture.width, height = fixture.height
+        let scene = (0..<(width * height)).map { fixture.scene($0 % width, $0 / width) }
+        let blurred = PanoramaAligner.gaussianBlur(scene, width: width, height: height, sigma: 3)
+        let x = 30..<(result.image.width - 30), y = 30..<(result.image.height - 30)
+        let ours = FocusFixture.detail(FocusFixture.green(result.image), width: result.image.width, x: x, y: y)
+        let wanted = FocusFixture.detail(scene, width: width, x: x, y: y)
+        #expect(ours > 0.85 * wanted, "\(ours) of \(wanted)")
+        for first in [true, false] {
+            let frame = (0..<(width * height)).map { near(Double($0 % width)) == first ? scene[$0] : blurred[$0] }
+            let single = FocusFixture.detail(frame, width: width, x: x, y: y)
+            #expect(ours > 1.25 * single, "\(ours) against a single frame's \(single)")
+        }
+    }
+
+    @Test func pyramidKeepsBrightnessAndColor() throws {
+        // Three frames, each in focus in its own band.
+        var fixture = try FocusFixture()
+        try fixture.addBands(3)
+        let merger = try FocusStackMerger(sources: fixture.sources)
+        var options = FocusStackOptions()
+        options.method = .pyramid
+        let result = try merger.merge(options: options, scale: 1)
+        let reference = try merger.merge(options: FocusStackOptions(), scale: 1)
+        #expect(result.image.width == reference.image.width && result.image.height == reference.image.height)
+        // Over areas large enough for the texture to average out, every channel is what Depth Map's
+        // stack (pixels taken straight from the frames) has there: no drift from taking the pyramid
+        // apart and putting it back.
+        let width = result.image.width, height = result.image.height
+        func mean(_ image: LinearDNGImage, _ channel: Int, _ column: Int, _ row: Int) -> Float {
+            var total: Float = 0
+            for y in (row * 60 + 20)..<(row * 60 + 80) {
+                for x in (column * 60 + 20)..<(column * 60 + 80) { total += Float(image.pixels[(y * width + x) * 3 + channel]) }
+            }
+            return total / 3600
+        }
+        for row in 0..<((height - 40) / 60) {
+            for column in 0..<((width - 40) / 60) {
+                for channel in 0..<3 {
+                    let ours = mean(result.image, channel, column, row), theirs = mean(reference.image, channel, column, row)
+                    #expect(abs(ours - theirs) < 0.02 * theirs, "block \(column), \(row) channel \(channel): \(ours) against \(theirs)")
+                }
+            }
+        }
+        #expect(result.image.headroom == reference.image.headroom)
     }
 
     @Test func linesUpFramesThatMovedScaledAndTurned() throws {
@@ -425,13 +491,6 @@ struct FocusStackTests {
         var mixed = try FocusFixture()
         try mixed.addFrame { _, _ in true }
         #expect(throws: PhotoMergeError.differentSizes) { try FocusStackMerger(sources: mixed.sources + small.sources) }
-
-        var pair = try FocusFixture()
-        try pair.addBands(2)
-        var options = FocusStackOptions()
-        options.method = .pyramid
-        let merger = try FocusStackMerger(sources: pair.sources)
-        #expect(throws: FocusStackError.methodUnavailable("Pyramid")) { try merger.merge(options: options, scale: 1) }
     }
 
     @Test func ordersFramesByWhenTheyWereTaken() {
@@ -604,7 +663,7 @@ struct FocusStackSampleTests {
             } else {
                 try FocusStackTIFFWriter.write(preview.image, like: merger.reference.url, to: output.appending(path: "preview.tif"))
             }
-            try FocusSamples.write(preview.depthMap, to: output.appending(path: "preview-depth.png"))
+            if let map = preview.depthMap { try FocusSamples.write(map, to: output.appending(path: "preview-depth.png")) }
             if let raw { try FocusSamples.write(raw, to: output.appending(path: "preview-depth-unsmoothed.png")) }
         }
 
@@ -625,7 +684,7 @@ struct FocusStackSampleTests {
                 } else {
                     try FocusStackTIFFWriter.write(part.image, like: merger.reference.url, to: output.appending(path: "\(name).tif"))
                 }
-                try FocusSamples.write(part.depthMap, to: output.appending(path: "\(name)-depth.png"))
+                if let map = part.depthMap { try FocusSamples.write(map, to: output.appending(path: "\(name)-depth.png")) }
                 if maps.count >= 2 { try FocusSamples.write(maps[maps.count - 2], to: output.appending(path: "\(name)-depth-unsmoothed.png")) }
             }
           }
@@ -642,7 +701,7 @@ struct FocusStackSampleTests {
         } else {
             try FocusStackTIFFWriter.write(result.image, like: merger.reference.url, to: destination)
         }
-        try FocusSamples.write(result.depthMap, to: output.appending(path: "full-depth.png"))
+        if let map = result.depthMap { try FocusSamples.write(map, to: output.appending(path: "full-depth.png")) }
         lap("written")
         #expect(result.mergedCount == sources.count)
     }
@@ -673,9 +732,14 @@ nonisolated enum FocusSamples {
         }
     }
 
-    /// `PIXELLOUPE_FOCUS_METHOD`: "average" stacks with Weighted Average; otherwise Depth Map.
+    /// `PIXELLOUPE_FOCUS_METHOD`: "average" stacks with Weighted Average and "pyramid" with Pyramid;
+    /// otherwise Depth Map.
     static var method: FocusStackOptions.Method {
-        ProcessInfo.processInfo.environment["PIXELLOUPE_FOCUS_METHOD"] == "average" ? .weightedAverage : .depthMap
+        switch ProcessInfo.processInfo.environment["PIXELLOUPE_FOCUS_METHOD"] {
+        case "average": .weightedAverage
+        case "pyramid": .pyramid
+        default: .depthMap
+        }
     }
 
     static var full: Bool { ProcessInfo.processInfo.environment["PIXELLOUPE_FOCUS_FULL"] != nil }
@@ -685,6 +749,8 @@ nonisolated enum FocusSamples {
         let folder = try #require(folder)
         let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
             .filter { SupportedImageTypes.isRaw($0) || ["jpg", "jpeg", "heic", "tif", "tiff", "png"].contains($0.pathExtension.lowercased()) }
+            // Not a stack made from them earlier, which the app saves beside them.
+            .filter { !$0.deletingPathExtension().lastPathComponent.contains("-Focus") }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
         return files.enumerated().map { index, url in
             PhotoMergeSource(
