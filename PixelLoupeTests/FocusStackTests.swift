@@ -445,6 +445,32 @@ struct FocusStackTests {
         #expect(difference / count < 0.01, "mean difference \(difference / count)")
     }
 
+    /// What's built up frame by frame stays on the GPU, in textures. Read back to main memory instead
+    /// (as it was first done, and still is where a texture can't be had), the stack is the same.
+    @Test(arguments: FocusStackOptions.Method.allCases)
+    func stacksTheSameOnTheGPUAsThroughMainMemory(method: FocusStackOptions.Method) throws {
+        var fixture = try FocusFixture()
+        try fixture.addBands(3)
+        var options = FocusStackOptions()
+        options.method = method
+        let onGPU = try FocusStackMerger(sources: fixture.sources)
+        let throughMemory = try FocusStackMerger(sources: fixture.sources)
+        throughMemory.staysOnGPU = false
+        let first = try onGPU.merge(options: options, scale: 1), second = try throughMemory.merge(options: options, scale: 1)
+        #expect(first.image.width == second.image.width && first.image.height == second.image.height)
+        #expect(first.depthMap?.pixels == second.depthMap?.pixels)
+        var largest: Float = 0
+        for (a, b) in zip(first.image.pixels, second.image.pixels) { largest = max(largest, abs(Float(a) - Float(b))) }
+        #expect(largest < 0.002, "largest difference \(largest)")
+        // The part of the picture, too: its place in the whole is where a flipped texture would show.
+        let region = CGRect(x: 100, y: 40, width: 200, height: 120)
+        let part = try onGPU.merge(options: options, scale: 1, region: region)
+        let samePart = try throughMemory.merge(options: options, scale: 1, region: region)
+        largest = 0
+        for (a, b) in zip(part.image.pixels, samePart.image.pixels) { largest = max(largest, abs(Float(a) - Float(b))) }
+        #expect(largest < 0.002, "largest difference in a part \(largest)")
+    }
+
     @Test func matchesEachFramesBrightnessToTheFirst() throws {
         var fixture = try FocusFixture()
         try fixture.addFrame { _, _ in true }
