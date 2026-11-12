@@ -1237,6 +1237,11 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
             return mergeTask == nil && bracketTask == nil && window?.attachedSheet == nil
                 && state.selectedPhotoIDs.count >= 2
                 && editing.photos(state.selectedPhotoIDs).filter { SupportedImageTypes.isRaw($0.fileURL) }.count >= 2
+        case #selector(photoMergeFocusStack(_:)), #selector(photoMergeFocusStackWithPreviousSettings(_:)):
+            // Any photos, not only RAW. Not while typing: ⌃F moves the insertion point forward there.
+            return mergeTask == nil && bracketTask == nil && window?.attachedSheet == nil
+                && !(window?.firstResponder is NSText)
+                && editing.photos(state.selectedPhotoIDs).filter { !$0.isVideo }.count >= 2
         case #selector(cancelPhotoMerge(_:)):
             return mergeTask != nil
         case #selector(editInPrimary(_:)):

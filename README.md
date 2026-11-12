@@ -109,7 +109,7 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `PixelLoupe/Library` | Library module: sidebar, filter bar, grid, bottom toolbar |
 | `PixelLoupe/Develop` | Develop module, adjustment model and render pipeline |
 | `PixelLoupe/Develop/Panel` | Adjust panel and its controls |
-| `PixelLoupe/Merge` | Photo Merge: the HDR and panorama merges, their sheets, and the Linear DNG writer |
+| `PixelLoupe/Merge` | Photo Merge: the HDR, panorama and focus stack merges, their sheets, and the Linear DNG writer |
 | `PixelLoupe/ContactSheet` | Contact Sheet: its window, page layout, preview and PDF writer |
 | `PixelLoupe/WebGallery` | Web Gallery: its window, HTML pages and stylesheet, preview and folder writer |
 | `PixelLoupe/Windows` | Welcome, About, new-catalog and catalog windows |
@@ -145,6 +145,8 @@ Developer ID, as notarization requires. The disk image is APFS with LZFSE compre
 | `⌃⇧H` | Photo Merge ▸ HDR with Previous Settings: merges the HDR straight away with the last options, without the preview (hold Shift in the menu) |
 | `⌃M` | Photo Merge ▸ Panorama… (the selected overlapping RAW photos) |
 | `⌃⇧M` | Photo Merge ▸ Panorama with Previous Settings: merges a panorama straight away with the last options, without the preview (hold Shift in the menu) |
+| `⌃F` | Photo Merge ▸ Focus Stack… (the selected photos of one scene focused at different distances) |
+| `⌃⇧F` | Photo Merge ▸ Focus Stack with Previous Settings: stacks straight away with the last settings, without the preview (hold Shift in the menu) |
 | `⌘E` / `⌥⌘E` | Photo ▸ Edit In: edit the selected photos in the primary / additional external editor (Settings ▸ External Editing) |
 | `⌘[` / `⌘]` | Rotate left (counterclockwise) / right (clockwise) |
 | `⇧⌘R` | Revert to Original (selected photos) |
@@ -1028,6 +1030,41 @@ as HDR does (Auto Align on, no deghosting, no tone mapping: the panorama's Auto 
 needs it at each size rather than written out first, and the sets are placed, blended and stored as one panorama, so
 positions metered differently match. The merged photo is `<name>-HDR-Pano.dng`, beside the earliest photo; Create Stack
 stacks every photo under it in the order they were taken.
+
+
+## Photo Merge: Focus Stack
+
+Photo ▸ Photo Merge ▸ Focus Stack… (`⌃F`, also in the grid's right-click menu) merges two or more photos of one scene
+focused at different distances into one that's sharp throughout. Lightroom has no focus stacking; the sheet works like
+the other merges'. The Focus Stack Preview sheet shows the stack on the left, updating as the settings on the right
+change. Click the stack to zoom to 100% (the part shown is stacked at full resolution), drag to look around, and click
+again to fit it:
+
+- **Original / Rendered / Depth Map**, under the preview, chooses what it shows: the photo selected in the list, the
+  stack, or which photo is sharpest where (the first photo black, the last white). While the stack is being worked out
+  the depth map is shown building, a photo at a time.
+- **Source Photos** lists the photos in the order they were taken. Click one to see it; uncheck one to leave it out.
+  A photo that doesn't line up with the others (another picture, or a bumped camera) is marked and left out.
+- **Rendering Method**: Depth Map takes every point from the photo where it's sharpest, and is the best choice for
+  most stacks. Weighted Average and Pyramid aren't available yet.
+- **Radius** (1–50) is the area around each point its sharpness is judged over: smaller keeps fine texture, larger
+  reduces halos around strong edges. **Smoothing** (0–10) is how softly the sharp areas of different photos run into
+  each other: higher hides seams, lower keeps the most crispness. Both are in pixels of the full-size photo.
+- **Create Stack** (on by default) stacks the result on top of its sources, in the order they were taken, collapsed.
+  **Reset** sets the method, Radius and Smoothing back to their defaults.
+
+Focusing changes a lens's magnification, so each photo is moved, scaled and turned onto the one before it, and its
+brightness is matched to the first photo's; the result covers what every photo shows. Merge runs in the background with
+progress and Cancel in the Library's bottom bar, and selects the result when it's done. The photos can be of any kind,
+all the same size, but RAW photos can't be mixed with others. A stack of RAW photos is a Linear DNG, like the other
+merges, made from the photos as shot (their Develop settings play no part) with the first photo's white balance. A
+stack of other photos is a 16-bit TIFF in the first photo's color space, so it looks like the photos it was made from.
+It's saved beside the earliest photo as `<name>-Focus.dng` or `<name>-Focus.tif` (`-Focus-2`… when that name is
+taken), and takes the first photo's capture date, camera and shooting details, and every stacked photo's keywords.
+
+Photo ▸ Photo Merge ▸ Focus Stack with Previous Settings (`⌃⇧F`, or hold Shift in the menu) stacks straight away with
+the last settings, without the sheet. `⌃F` is left to text fields while one is being edited (there it moves the
+insertion point forward).
 
 ## Edit In (external editors)
 
