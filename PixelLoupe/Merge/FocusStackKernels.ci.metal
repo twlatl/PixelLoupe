@@ -121,6 +121,30 @@ float4 focusAccumulate(sample_t sum, sample_t frame, sample_t depth, float index
     return float4(sum.rgb + frame.rgb * weight, 1.0);
 }
 
+/// Weighted Average: a frame's weight at a pixel, from its contrast there as a fraction of the sharpest
+/// frame's (the state's green), raised to `power`. `noise` (a little of what a pixel typically has out of
+/// focus) is added to both, so where no frame has anything at all they weigh the same and the result is
+/// their plain average.
+float4 focusShare(sample_t state, sample_t contrast, float power, float noise) {
+    float fraction = clamp((contrast.r + noise) / (state.g + noise), 0.0, 1.0);
+    return float4(pow(fraction, power), 0.0, 0.0, 1.0);
+}
+
+/// Adds a frame to the running sum by its weight.
+float4 focusBlend(sample_t sum, sample_t frame, sample_t weight) {
+    return float4(sum.rgb + frame.rgb * weight.r, 1.0);
+}
+
+/// Adds a frame's weight to the running total.
+float4 focusTotal(sample_t total, sample_t weight) {
+    return float4(total.r + weight.r, 0.0, 0.0, 1.0);
+}
+
+/// The weighted sum over the total weight: the weighted average.
+float4 focusResolve(sample_t sum, sample_t total) {
+    return float4(sum.rgb / max(total.r, 1e-6), 1.0);
+}
+
 /// A depth map (frame numbers in red) as gray: the first frame black, frame `last` white.
 float4 focusDepthGray(sample_t depth, float last) {
     float gray = last > 0.0 ? clamp(depth.r / last, 0.0, 1.0) : 0.0;

@@ -46,7 +46,7 @@ final class FocusStackSheetController: NSWindowController, NSWindowDelegate, NST
     let mergeButton = NSButton(title: "Merge", target: nil, action: nil)
 
     /// The methods that can be chosen so far.
-    static let availableMethods: Set<FocusStackOptions.Method> = [.depthMap]
+    static let availableMethods: Set<FocusStackOptions.Method> = [.weightedAverage, .depthMap]
 
     private var previewer: FocusStackPreviewer?
     private var previewTask: Task<Void, Never>?
@@ -194,8 +194,7 @@ final class FocusStackSheetController: NSWindowController, NSWindowDelegate, NST
             if !Self.availableMethods.contains(method) { button.toolTip = "Not available yet." }
         }
         methodButtons[FocusStackOptions.Method.weightedAverage.rawValue].toolTip
-            = methodButtons[FocusStackOptions.Method.weightedAverage.rawValue].toolTip
-            ?? "Averages the photos by how sharp each is at every point. Natural color and contrast on short stacks."
+            = "Averages the photos by how sharp each is at every point. Natural color and contrast, best on short stacks."
         methodButtons[FocusStackOptions.Method.depthMap.rawValue].toolTip
             = "Takes every point from the photo where it's sharpest. The best choice for most stacks."
         methodButtons[FocusStackOptions.Method.pyramid.rawValue].toolTip
