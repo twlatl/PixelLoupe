@@ -68,13 +68,11 @@ nonisolated struct FocusStackOptions: Codable, Equatable, Sendable {
 nonisolated enum FocusStackError: LocalizedError, Equatable {
     case mixedKinds
     case tooFewAligned
-    case methodUnavailable(String)
 
     var errorDescription: String? {
         switch self {
         case .mixedKinds: "A focus stack can’t mix RAW photos with other kinds of photo."
         case .tooFewAligned: "Fewer than two of the photos line up with each other."
-        case .methodUnavailable(let title): "The \(title) method isn’t available yet."
         }
     }
 }
@@ -90,7 +88,8 @@ nonisolated struct FocusStackResult: Sendable {
     var image: LinearDNGImage
     /// Which frame is sharpest where, after smoothing: what the Depth Map method chooses the frames by.
     /// Weighted Average doesn't use it, but has it all the same (it says which frames matter where).
-    var depthMap: FocusDepthMap
+    /// Pyramid has it only in a preview (at ``FocusStackMerger/keptScale``); otherwise nil.
+    var depthMap: FocusDepthMap?
     /// How many frames went into the result.
     var mergedCount: Int
 }
@@ -115,6 +114,13 @@ nonisolated struct FocusStackResult: Sendable {
 /// nearly all of it. Smoothing blurs each frame's weights. No frame is chosen outright, so there are no
 /// lines where one frame gives way to another and colors stay as they were, but a deep stack comes out
 /// a little softer than with Depth Map, and edges in front of something far behind keep a faint halo.
+///
+/// Pyramid: every frame is split into bands of detail, fine to coarse (a Laplacian pyramid, on
+/// gamma-encoded pixels), and at every pixel of every band the result takes the frame whose detail is
+/// strongest there; what's left below the coarsest band is the frames' average. So detail at different
+/// depths that overlaps (hairs, crossing branches) all comes through, where the other methods must
+/// choose one depth per pixel. The price is more noise and contrast, and glare around bright edges.
+/// It has no Radius or Smoothing.
 ///
 /// RAW frames are decoded linearly with the first frame's white balance, as the other merges do; the
 /// photos' Develop settings play no part. Frames are read one at a time, twice (once to find the depth
@@ -579,8 +585,7 @@ nonisolated final class FocusStackMerger {
         options: FocusStackOptions, scale: CGFloat, excluding: Set<URL>, region: CGRect?,
         progress: (Double) -> Void, depthMap: ((FocusDepthMap) -> Void)?, weights: ((CIImage) -> Void)?
     ) throws -> FocusStackResult {
-        guard options.method != .pyramid else { throw FocusStackError.methodUnavailable(options.method.title) }
-        // Weighted Average has no depth map to show.
+        // Only Depth Map has a depth map to show.
         let depthMap = options.method == .depthMap ? depthMap : nil
         try align()
         let indices = included(excluding: excluding)
@@ -594,32 +599,48 @@ nonisolated final class FocusStackMerger {
         guard canvas.width >= 1, canvas.height >= 1 else { throw FocusStackError.tooFewAligned }
         let last = Float(indices.count - 1)
 
-        // The depth map: the sharpest frame so far at every pixel, a frame at a time.
-        let key = StateKey(scale: scale, radius: options.radius, indices: indices, canvas: canvas)
-        var state: CIImage
-        if let kept = keptState, kept.key == key {
-            state = kept.state
-            progress(0.5)
-        } else {
-            state = try materialized(Self.blank(canvas), canvas, format: .RGBAh, bytesPerPixel: 8)
-            for (number, index) in indices.enumerated() {
-                try Task.checkCancellation()
-                state = try autoreleasepool {
-                    let contrast = contrast(of: try warped(index, scale: scale, canvas: canvas), radius: options.radius, scale: scale)
-                    let picked = FocusStackKernels.pick.apply(extent: canvas, arguments: [state, contrast, Float(number)]) ?? state
-                    return try materialized(picked, canvas, format: .RGBAh, bytesPerPixel: 8)
+        // Pyramid has no use for a depth map, except in a preview: the 100% view reads only the frames
+        // the map names around the part it shows.
+        let wantsDepth = options.method != .pyramid || (scale == keptScale && region == nil)
+        let depthShare = !wantsDepth ? 0 : options.method == .pyramid ? 0.3 : 0.5
+        var state: CIImage?
+        var depth: CIImage?
+        var finalDepth: FocusDepthMap?
+        if wantsDepth {
+            // The depth map: the sharpest frame so far at every pixel, a frame at a time.
+            let key = StateKey(scale: scale, radius: options.radius, indices: indices, canvas: canvas)
+            var current: CIImage
+            if let kept = keptState, kept.key == key {
+                current = kept.state
+                progress(depthShare)
+            } else {
+                current = try materialized(Self.blank(canvas), canvas, format: .RGBAh, bytesPerPixel: 8)
+                for (number, index) in indices.enumerated() {
+                    try Task.checkCancellation()
+                    current = try autoreleasepool {
+                        let contrast = contrast(of: try warped(index, scale: scale, canvas: canvas), radius: options.radius, scale: scale)
+                        let picked = FocusStackKernels.pick.apply(extent: canvas, arguments: [current, contrast, Float(number)]) ?? current
+                        return try materialized(picked, canvas, format: .RGBAh, bytesPerPixel: 8)
+                    }
+                    progress(depthShare * Double(number + 1) / Double(indices.count))
+                    if let depthMap { depthMap(depthGray(current, last: last)) }
                 }
-                progress(0.5 * Double(number + 1) / Double(indices.count))
-                if let depthMap { depthMap(depthGray(state, last: last)) }
+                if scale == keptScale, region == nil { keptState = (key, current) }
             }
-            if scale == keptScale, region == nil { keptState = (key, state) }
+            let filled = try materialized(filledDepth(current, smoothing: options.smoothing, scale: scale), canvas, format: .Rh, bytesPerPixel: 2)
+            state = current
+            depth = filled
+            finalDepth = depthGray(filled, last: last)
+            if let finalDepth { depthMap?(finalDepth) }
         }
-        let depth = try materialized(filledDepth(state, smoothing: options.smoothing, scale: scale), canvas, format: .Rh, bytesPerPixel: 2)
-        let finalDepth = depthGray(depth, last: last)
-        depthMap?(finalDepth)
+        func pixelProgress(_ number: Int) {
+            progress(depthShare + (0.95 - depthShare) * Double(number + 1) / Double(indices.count))
+        }
 
         var sum = try materialized(Self.blank(canvas), canvas, format: .RGBAh, bytesPerPixel: 8)
-        if options.method == .weightedAverage {
+        if options.method == .pyramid {
+            sum = try pyramid(indices, scale: scale, canvas: canvas, progress: pixelProgress)
+        } else if options.method == .weightedAverage, let state {
             // The pixels: every frame added by its weight, and the weights added up beside them.
             let floor = noiseFloor(state) * Self.shareFloor
             let spread = options.smoothing > 0 ? max(0.5, Self.smoothingStep * CGFloat(options.smoothing) * scale) : 0
@@ -641,11 +662,11 @@ nonisolated final class FocusStackMerger {
                         try materialized(counted, canvas, format: .Rf, bytesPerPixel: 4)
                     )
                 }
-                progress(0.5 + 0.45 * Double(number + 1) / Double(indices.count))
+                pixelProgress(number)
             }
             let resolved = FocusStackKernels.resolve.apply(extent: canvas, arguments: [sum, total]) ?? sum
             sum = try materialized(resolved, canvas, format: .RGBAh, bytesPerPixel: 8)
-        } else {
+        } else if let depth {
             // The pixels: each frame added where the depth map chooses it.
             for (number, index) in indices.enumerated() {
                 try Task.checkCancellation()
@@ -654,7 +675,7 @@ nonisolated final class FocusStackMerger {
                     let added = FocusStackKernels.accumulate.apply(extent: canvas, arguments: [sum, frame, depth, Float(number)]) ?? sum
                     return try materialized(added, canvas, format: .RGBAh, bytesPerPixel: 8)
                 }
-                progress(0.5 + 0.45 * Double(number + 1) / Double(indices.count))
+                pixelProgress(number)
             }
         }
 
@@ -688,6 +709,73 @@ nonisolated final class FocusStackMerger {
         let image = LinearDNGImage(width: width, height: height, pixels: pixels, headroom: LinearDNGWriter.headroom(peak: peak))
         return FocusStackResult(image: image, depthMap: finalDepth, mergedCount: indices.count)
     }
+
+    /// The Pyramid method's stack of `indices`' frames over `canvas`. The best band so far at every level
+    /// is kept, with how strong it is, and each frame is folded into it in turn.
+    private func pyramid(_ indices: [Int], scale: CGFloat, canvas: CGRect, progress: (Int) -> Void) throws -> CIImage {
+        // Worked from the origin, so every level is half the one before it.
+        let toOrigin = CGAffineTransform(translationX: -canvas.minX, y: -canvas.minY)
+        var extents = [CGRect(origin: .zero, size: canvas.size)]
+        // Down to the same coarseness whatever the size: the stack looks the same in the preview.
+        while extents.count <= 12, let last = extents.last, max(last.width, last.height) > Self.pyramidBase {
+            extents.append(CGRect(x: 0, y: 0, width: (last.width / 2).rounded(.up), height: (last.height / 2).rounded(.up)))
+        }
+        let levels = extents.count - 1
+        let up: CIKernelROICallback = { index, rect in
+            index == 0
+                ? CGRect(x: rect.minX / 2, y: rect.minY / 2, width: rect.width / 2, height: rect.height / 2).insetBy(dx: -1, dy: -1)
+                : rect
+        }
+        var bands = try extents.dropLast().map { try materialized(Self.blank($0), $0, format: .RGBAh, bytesPerPixel: 8) }
+        var strengths = try extents.dropLast().map { try materialized(Self.blank($0), $0, format: .Rh, bytesPerPixel: 2) }
+        var base = try materialized(Self.blank(extents[levels]), extents[levels], format: .RGBAf, bytesPerPixel: 16)
+        // The darkest and brightest each pixel is in any frame (red, green).
+        var range: CIImage?
+        for (number, index) in indices.enumerated() {
+            try Task.checkCancellation()
+            try autoreleasepool {
+                let frame = try warped(index, scale: scale, canvas: canvas).transformed(by: toOrigin)
+                let encoded = FocusStackKernels.encode.apply(extent: extents[0], arguments: [frame]) ?? frame
+                var level = try materialized(encoded, extents[0], format: .RGBAh, bytesPerPixel: 8)
+                let widened = FocusStackKernels.range.apply(extent: extents[0], arguments: [range ?? level, level, range == nil ? 1 : 0]) ?? level
+                range = try materialized(widened, extents[0], format: .RGBAh, bytesPerPixel: 8)
+                for l in 0..<levels {
+                    let extent = extents[l]
+                    let coarser = try materialized(PanoramaMerger.halved(level).cropped(to: extents[l + 1]), extents[l + 1], format: .RGBAh, bytesPerPixel: 8)
+                    let detail = FocusStackKernels.band.apply(extent: extent, roiCallback: up, arguments: [coarser.clampedToExtent(), level]) ?? level
+                    let band = try materialized(detail, extent, format: .RGBAh, bytesPerPixel: 8)
+                    // A band's strength is taken over a few pixels, so neighbors come from the same frame
+                    // and a frame isn't chosen for one pixel of noise.
+                    let size = FocusStackKernels.strength.apply(extent: extent, arguments: [band]) ?? band
+                    let strength = try materialized(HDRMerger.filtered(size, "CIGaussianBlur", radius: Self.pyramidSpread), extent, format: .Rh, bytesPerPixel: 2)
+                    let stronger = FocusStackKernels.stronger.apply(extent: extent, arguments: [bands[l], band, strengths[l], strength]) ?? band
+                    let most = FocusStackKernels.most.apply(extent: extent, arguments: [strengths[l], strength]) ?? strength
+                    bands[l] = try materialized(stronger, extent, format: .RGBAh, bytesPerPixel: 8)
+                    strengths[l] = try materialized(most, extent, format: .Rh, bytesPerPixel: 2)
+                    level = coarser
+                }
+                let added = FocusStackKernels.add.apply(extent: extents[levels], arguments: [base, level]) ?? base
+                base = try materialized(added, extents[levels], format: .RGBAf, bytesPerPixel: 16)
+            }
+            progress(number)
+        }
+        // Collapsed: the frames' average at the coarsest level, and each band added on the way up.
+        var result = FocusStackKernels.mean.apply(extent: extents[levels], arguments: [base, Float(indices.count)]) ?? base
+        for l in stride(from: levels - 1, through: 0, by: -1) {
+            let collapsed = FocusStackKernels.collapse.apply(extent: extents[l], roiCallback: up, arguments: [result.clampedToExtent(), bands[l]]) ?? result
+            result = try materialized(collapsed, extents[l], format: .RGBAh, bytesPerPixel: 8)
+        }
+        // Bands taken from different frames don't always fit together: beside a strong edge they can add
+        // up to darker or brighter than the pixel is in any frame. Brought back inside what the frames have.
+        if let range { result = FocusStackKernels.within.apply(extent: extents[0], arguments: [result, range]) ?? result }
+        let decoded = FocusStackKernels.decode.apply(extent: extents[0], arguments: [result]) ?? result
+        return try materialized(decoded.transformed(by: toOrigin.inverted()), canvas, format: .RGBAh, bytesPerPixel: 8)
+    }
+
+    /// The long side of the Pyramid method's coarsest level, below which the frames are just averaged.
+    static let pyramidBase: CGFloat = 24
+    /// How far (pixels of its level) a band's strength is spread before the frames are compared.
+    static let pyramidSpread: CGFloat = 1.5
 
     /// A frame at `scale`, moved onto the first frame and as bright as it, over `canvas`.
     private func warped(_ index: Int, scale: CGFloat, canvas: CGRect) throws -> CIImage {
@@ -946,6 +1034,17 @@ nonisolated enum FocusStackKernels {
     static let blend = color("focusBlend")
     static let total = color("focusTotal")
     static let resolve = color("focusResolve")
+    static let add = color("focusAdd")
+    static let mean = color("focusMean")
+    static let encode = color("focusEncode")
+    static let decode = color("focusDecode")
+    static let band = load(name: "focusBand") { try CIKernel(functionName: $0, fromMetalLibraryData: $1) }
+    static let strength = color("focusStrength")
+    static let stronger = color("focusStronger")
+    static let most = color("focusMost")
+    static let range = color("focusRange")
+    static let within = color("focusWithin")
+    static let collapse = load(name: "focusCollapse") { try CIKernel(functionName: $0, fromMetalLibraryData: $1) }
     static let depthGray = color("focusDepthGray")
 
     private static let library: Data? = Bundle.main.url(forResource: "default", withExtension: "metallib")

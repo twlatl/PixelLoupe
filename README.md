@@ -1049,11 +1049,16 @@ again to fit it:
   most stacks. Weighted Average makes every point the average of all the photos, each counting by how sharp it is
   there: no photo is chosen outright, so color and contrast stay natural and there are no lines where one photo gives
   way to the next, but the result is a little softer, and where something near is in front of something far a patch
-  beside its edge can stay blurred. Pick it for short stacks, and when Depth Map leaves blotches or seams. Pyramid isn't available yet.
+  beside its edge can stay blurred. Pick it for short stacks, and when Depth Map leaves blotches or seams. Pyramid splits every photo into
+  bands of detail, fine to coarse, and takes the strongest of each at every point, so detail at different depths
+  that overlaps (hairs, crossing branches, a mesh over what's behind it) all comes through, where the other two must
+  choose one depth per point. It adds some noise and contrast, and can leave glare around bright edges. Pick it for
+  deep stacks of intricate subjects.
 - **Radius** (1–50) is the area around each point its sharpness is judged over: smaller keeps fine texture, larger
   reduces halos around strong edges. **Smoothing** (0–10) is how softly the sharp areas of different photos run into
   each other (for Weighted Average, how far each photo's weights are blurred): higher hides seams, lower keeps the
-  most crispness. Both are in pixels of the full-size photo.
+  most crispness. Both are in pixels of the full-size photo. Pyramid has neither: they're grayed out, and keep
+  their values.
 - **Create Stack** (on by default) stacks the result on top of its sources, in the order they were taken, collapsed.
   **Reset** sets the method, Radius and Smoothing back to their defaults.
 

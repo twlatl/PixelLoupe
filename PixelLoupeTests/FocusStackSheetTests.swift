@@ -61,8 +61,8 @@ struct FocusStackSheetTests {
         #expect(!sheet.showingControl.isEnabled(forSegment: 0))
         #expect(sheet.showingControl.isEnabled(forSegment: 1) && sheet.showingControl.isEnabled(forSegment: 2))
         #expect(sheet.methodButtons[1].state == .on && sheet.methodButtons[1].isEnabled)
-        // Weighted Average can be chosen too; Pyramid, still to come, can't.
-        #expect(sheet.methodButtons[0].isEnabled && !sheet.methodButtons[2].isEnabled)
+        // The other methods can be chosen too.
+        #expect(sheet.methodButtons[0].isEnabled && sheet.methodButtons[2].isEnabled)
 
         let stack = try #require(sheet.previewView.image)
         // Clicking a photo in the list shows it.
@@ -116,6 +116,44 @@ struct FocusStackSheetTests {
         #expect(finished?.options.method == .weightedAverage)
     }
 
+    @Test func pyramidHasNoSlidersAndNoDepthMapToShow() async throws {
+        var fixture = try FocusFixture()
+        try fixture.addBands(3)
+        var saved = FocusStackOptions()
+        saved.method = .pyramid
+        saved.radius = 20
+        saved.smoothing = 7
+        // The sheet opens on the method last used.
+        let sheet = try makeSheet(fixture, options: saved)
+        await waitUntil("the first preview") { sheet.mergeButton.isEnabled && sheet.hasRenderedPreview }
+        #expect(sheet.options.method == .pyramid && sheet.methodButtons[2].state == .on && sheet.methodButtons[2].isEnabled)
+        #expect(sheet.showing == .rendered && sheet.previewView.image != nil)
+        // Radius and Smoothing keep their values, grayed out; there's no Depth Map to show.
+        #expect(!sheet.radiusSlider.isEnabled && !sheet.radiusField.isEnabled)
+        #expect(!sheet.smoothingSlider.isEnabled && !sheet.smoothingField.isEnabled)
+        #expect(sheet.radiusSlider.integerValue == 20 && sheet.smoothingSlider.integerValue == 7)
+        #expect(sheet.showingControl.isEnabled(forSegment: 1) && !sheet.showingControl.isEnabled(forSegment: 2))
+        let pyramid = try #require(sheet.previewView.image)
+
+        // Depth Map has them again, with the values kept.
+        sheet.methodButtons[1].performClick(nil)
+        #expect(sheet.options.method == .depthMap && sheet.options.radius == 20 && sheet.options.smoothing == 7)
+        #expect(sheet.radiusSlider.isEnabled && sheet.smoothingSlider.isEnabled)
+        #expect(sheet.showingControl.isEnabled(forSegment: 2))
+        await waitUntil("the depth map's stack") { sheet.hasRenderedPreview && sheet.previewView.image !== pyramid }
+
+        // From the depth map back to Pyramid: the stack is shown.
+        sheet.showingControl.selectedSegment = FocusStackSheetController.Showing.depthMap.rawValue
+        _ = sheet.showingControl.sendAction(sheet.showingControl.action, to: sheet.showingControl.target)
+        sheet.methodButtons[2].performClick(nil)
+        #expect(sheet.showing == .rendered && !sheet.radiusSlider.isEnabled)
+
+        var finished: (options: FocusStackOptions, excluding: Set<URL>)?
+        sheet.onFinish = { finished = $0 }
+        sheet.merge(nil)
+        #expect(finished?.options.method == .pyramid && finished?.options.radius == 20)
+    }
+
     @Test func uncheckingPhotosLeavesThemOutAndNeedsTwoToMerge() async throws {
         var fixture = try FocusFixture()
         try fixture.addBands(3)
@@ -149,11 +187,10 @@ struct FocusStackSheetTests {
         saved.radius = 20
         saved.smoothing = 7
         saved.createsStack = false
-        // A method that can't be chosen yet falls back to Depth Map.
-        saved.method = .pyramid
+        saved.method = .weightedAverage
         let sheet = try makeSheet(fixture, options: saved)
         await waitUntil("the photos to be read") { sheet.mergeButton.isEnabled }
-        #expect(sheet.options.method == .depthMap)
+        #expect(sheet.options.method == .weightedAverage && sheet.methodButtons[0].state == .on)
         #expect(sheet.radiusSlider.integerValue == 20 && sheet.radiusField.integerValue == 20)
         #expect(sheet.smoothingSlider.integerValue == 7 && sheet.smoothingField.integerValue == 7)
         #expect(sheet.createStackCheckbox.state == .off)
@@ -211,7 +248,7 @@ struct FocusStackSheetTests {
         let progress = Counter()
         let whole = try await previewer.render(options: FocusStackOptions(), excluding: [], maxPixels: 240) { _ in progress.add() }
         #expect(whole.mergedCount == 3)
-        #expect(abs(whole.image.width - 240) <= 2 && abs(whole.depthMap.width - 240) <= 2)
+        #expect(abs(whole.image.width - 240) <= 2 && abs((whole.depthMap?.width ?? 0) - 240) <= 2)
         // The depth map after each frame, then smoothed.
         #expect(progress.count == 4)
         // The same settings again are the same preview, without stacking again.

@@ -171,9 +171,6 @@ extension CatalogWindowController {
     private func startFocusStack(_ ids: [NSManagedObjectID], options: FocusStackOptions, excluding: Set<URL>) {
         let stacked = editing.photos(ids).filter { !excluding.contains($0.fileURL) }.map(\.objectID)
         let sources = editing.photoMergeSources(stacked)
-        var options = options
-        // A method chosen before it could be: the sheet would have fallen back too.
-        if !FocusStackSheetController.availableMethods.contains(options.method) { options.method = .depthMap }
         startMerge(
             stacked, kind: .focusStack, createsStack: options.createsStack, fileExtension: FocusStackMerger.fileExtension(for: sources)
         ) { [options] destination, thumbnails, progress in
