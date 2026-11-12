@@ -7,14 +7,17 @@ nonisolated enum PhotoMergeKind: Sendable {
     case hdr
     case panorama
     case hdrPanorama
+    case focusStack
 
     /// What the merged file adds to the earliest photo's name, as Lightroom names them:
-    /// `IMG_0001-HDR.dng`, `IMG_0001-Pano.dng`, `IMG_0001-HDR-Pano.dng`.
+    /// `IMG_0001-HDR.dng`, `IMG_0001-Pano.dng`, `IMG_0001-HDR-Pano.dng` (and `IMG_0001-Focus.dng`,
+    /// which Lightroom has no name for).
     var suffix: String {
         switch self {
         case .hdr: "HDR"
         case .panorama: "Pano"
         case .hdrPanorama: "HDR-Pano"
+        case .focusStack: "Focus"
         }
     }
 
@@ -24,6 +27,7 @@ nonisolated enum PhotoMergeKind: Sendable {
         case .hdr: "Merging HDR"
         case .panorama: "Merging Panorama"
         case .hdrPanorama: "Merging HDR Panorama"
+        case .focusStack: "Merging Focus Stack"
         }
     }
 
@@ -32,6 +36,7 @@ nonisolated enum PhotoMergeKind: Sendable {
         case .hdr: "Cancel HDR Merge"
         case .panorama: "Cancel Panorama Merge"
         case .hdrPanorama: "Cancel HDR Panorama Merge"
+        case .focusStack: "Cancel Focus Stack Merge"
         }
     }
 }
@@ -192,6 +197,58 @@ nonisolated enum PanoramaMergeRunner {
     }
 }
 
+/// The full-resolution focus stack, run off the main thread.
+nonisolated enum FocusStackRunner {
+    /// What a focus stack made, and which of the photos went into it.
+    struct Result: Sendable {
+        var output: PhotoMergeOutput
+        var mergedCount: Int
+        var photoCount: Int
+        /// The photos left out because they didn't line up with the others.
+        var skipped: [URL]
+    }
+
+    /// Stacks `sources` (leaving out `excluding`) and writes the result to `destination` and its
+    /// thumbnail: a Linear DNG for RAW photos, a 16-bit TIFF for the rest (see
+    /// ``FocusStackMerger/fileExtension(for:)``, which names the file to match). `progress` gets the
+    /// fraction done. Cancelling stops it before anything is written.
+    @concurrent
+    static func run(
+        sources: [PhotoMergeSource], excluding: Set<URL> = [], options: FocusStackOptions, destination: URL,
+        thumbnailDirectory: URL, progress: @escaping @Sendable (Double) -> Void = { _ in }
+    ) async throws -> Result {
+        let result: FocusStackResult, metadata: DNGMetadata, referenceURL: URL, order: [URL], skipped: [URL], isRaw: Bool
+        do {
+            let merger = try FocusStackMerger(sources: sources)
+            try merger.align { progress($0 * 0.1) }
+            try Task.checkCancellation()
+            result = try merger.merge(options: options, scale: 1, excluding: excluding) { progress(0.1 + $0 * 0.8) }
+            metadata = merger.dngMetadata()
+            referenceURL = merger.reference.url
+            order = merger.frames.map(\.source.url)
+            skipped = merger.skipped.map(\.url)
+            isRaw = merger.isRaw
+        }
+        // The merger (its decoders and Core Image caches) is gone before the file is written.
+        try Task.checkCancellation()
+        if isRaw {
+            try LinearDNGWriter.write(result.image, metadata: metadata, to: destination)
+        } else {
+            try FocusStackTIFFWriter.write(result.image, like: referenceURL, to: destination)
+        }
+
+        let id = UUID()
+        try? ThumbnailStore.generateThumbnail(from: destination, to: ThumbnailStore.url(for: id, in: thumbnailDirectory))
+        let fileSize = (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+        progress(1)
+        let output = PhotoMergeOutput(
+            id: id, url: destination, referenceURL: referenceURL, stackOrder: order,
+            pixelWidth: result.image.width, pixelHeight: result.image.height, fileSize: fileSize
+        )
+        return Result(output: output, mergedCount: result.mergedCount, photoCount: sources.count, skipped: skipped)
+    }
+}
+
 /// Photo ▸ Photo Merge, the catalog side: what to merge, where the result goes, and adding it.
 extension PhotoEditing {
     /// The photos to merge, as given (videos and repeated files left out).
@@ -208,15 +265,16 @@ extension PhotoEditing {
     }
 
     /// Where the merged photo goes: beside the earliest photo, named after it, `IMG_0001-HDR.dng`
-    /// (then `-HDR-2`, `-HDR-3`… when that name is taken).
-    func mergeDestination(for ids: [NSManagedObjectID], kind: PhotoMergeKind) -> URL? {
+    /// (then `-HDR-2`, `-HDR-3`… when that name is taken). A focus stack of photos that aren't RAW is
+    /// a TIFF (`fileExtension`).
+    func mergeDestination(for ids: [NSManagedObjectID], kind: PhotoMergeKind, fileExtension: String = "dng") -> URL? {
         guard let first = photos(ids).min(by: { $0.captureDate < $1.captureDate }) else { return nil }
         let folder = first.fileURL.deletingLastPathComponent()
         let base = first.fileURL.deletingPathExtension().lastPathComponent + "-" + kind.suffix
-        var candidate = folder.appending(path: "\(base).dng")
+        var candidate = folder.appending(path: "\(base).\(fileExtension)")
         var number = 2
         while FileManager.default.fileExists(atPath: candidate.path(percentEncoded: false)) {
-            candidate = folder.appending(path: "\(base)-\(number).dng")
+            candidate = folder.appending(path: "\(base)-\(number).\(fileExtension)")
             number += 1
         }
         return candidate
