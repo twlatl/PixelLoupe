@@ -124,7 +124,8 @@ extension CatalogWindowController {
         case .hdr: startHDRMerge(ids, options: HDRMergeOptions.load())
         case .panorama: startPanoramaMerge(ids, options: PanoramaMergeOptions.load())
         // No headless HDR Panorama, as in Lightroom.
-        case .hdrPanorama: break
+        // Focus Stack starts from its own menu items.
+        case .hdrPanorama, .focusStack: break
         }
     }
 
