@@ -2,6 +2,7 @@ import Accelerate
 import CoreImage
 import Foundation
 import ImageIO
+import Metal
 import simd
 import UniformTypeIdentifiers
 
@@ -123,9 +124,13 @@ nonisolated struct FocusStackResult: Sendable {
 /// It has no Radius or Smoothing.
 ///
 /// RAW frames are decoded linearly with the first frame's white balance, as the other merges do; the
-/// photos' Develop settings play no part. Frames are read one at a time, twice (once to find the depth
+/// photos' Develop settings play no part. Frames are stacked one at a time, twice (once to find the depth
 /// map, once to take the pixels), so a deep stack needs no more memory than a short one. The pixel work
-/// runs on the GPU, in Core Image kernels (FocusStackKernels.ci.metal).
+/// runs on the GPU, in Core Image kernels (FocusStackKernels.ci.metal), and what's built up from frame
+/// to frame stays there, in textures.
+///
+/// The rest is spread over the cores: lining up reads and fits a core's worth of frames at a time, and
+/// while one frame is being stacked the next ones are already being decoded (photos that aren't RAW).
 ///
 /// Not thread-safe: use one instance per task.
 nonisolated final class FocusStackMerger {
@@ -149,9 +154,14 @@ nonisolated final class FocusStackMerger {
     private var cameraBaselineExposure = 0.0
     private var isAligned = false
     // Full floats: the depth map's weights run from faint grain to crisp edges, more than half floats hold.
-    private let context = CIContext(options: [
-        .workingColorSpace: HDRMerger.colorSpace, .workingFormat: CIFormat.RGBAf, .cacheIntermediates: false,
-    ])
+    private let context: CIContext
+    /// The GPU the stacking runs on, when what's built up frame by frame can stay on it (see
+    /// ``materialized(_:_:format:bytesPerPixel:)``); nil keeps it in main memory.
+    private let device: MTLDevice?
+    /// Whether what's built up frame by frame stays on the GPU. Off, it's read back to main memory and
+    /// sent up again for every frame, which gives the same picture several times slower: for tests, and
+    /// for a Mac whose GPU can't hold it.
+    var staysOnGPU = true
 
     /// The long side of the copies frames are lined up at.
     static let alignmentSide: CGFloat = 1536
@@ -196,16 +206,31 @@ nonisolated final class FocusStackMerger {
                     cameraBaselineExposure = Double(filter.baselineExposure)
                 }
             } else {
-                guard let image = CIImage(contentsOf: source.url, options: [.applyOrientationProperty: true]) else {
-                    throw PhotoMergeError.unreadable(source.name)
-                }
-                extent = image.extent
+                // From the file's header: opening it as an image reads far more of it, for every frame.
+                guard let size = Self.orientedSize(of: source.url) else { throw PhotoMergeError.unreadable(source.name) }
+                extent = CGRect(origin: .zero, size: size)
             }
             guard size == nil || size == extent.size else { throw PhotoMergeError.differentSizes }
             size = extent.size
         }
         nativeSize = size ?? .zero
         frames = ordered.map { Frame(source: $0) }
+        let options: [CIContextOption: Any] = [
+            .workingColorSpace: HDRMerger.colorSpace, .workingFormat: CIFormat.RGBAf, .cacheIntermediates: false,
+        ]
+        device = MTLCreateSystemDefaultDevice()
+        context = device.map { CIContext(mtlDevice: $0, options: options) } ?? CIContext(options: options)
+    }
+
+    /// A photo's size in pixels as it's shown (turned as its orientation says), without decoding it.
+    static func orientedSize(of url: URL) -> CGSize? {
+        guard let file = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(file, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int, let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0 else { return nil }
+        // Orientations 5 to 8 lie on their side.
+        let orientation = properties[kCGImagePropertyOrientation] as? Int ?? 1
+        return orientation >= 5 ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
     }
 
     /// The kind of file a stack of `sources` is saved as: a Linear DNG for RAW photos, like the other
@@ -257,15 +282,49 @@ nonisolated final class FocusStackMerger {
     /// A frame at `scale`, scene-linear, with its origin at zero and `scale` times the full size (kept
     /// as pixels when that's the scale being kept).
     private func decoded(_ index: Int, scale: CGFloat) throws -> CIImage {
-        guard scale == keptScale else { return try decodedFromFile(index, scale: scale) }
+        guard scale == keptScale else { return try read(index, scale: scale) }
         if let kept = keptFrames[index] { return kept }
-        let image = try decodedFromFile(index, scale: scale)
+        let image = try read(index, scale: scale)
         let extent = CGRect(x: 0, y: 0, width: image.extent.width.rounded(.down), height: image.extent.height.rounded(.down))
         let kept = try materialized(image, extent, format: .RGBAh, bytesPerPixel: 8)
         keptFrames[index] = kept
         return kept
     }
 
+    /// A frame from its file, or from the frames being read ahead when it's one of those.
+    private func read(_ index: Int, scale: CGFloat) throws -> CIImage {
+        if let ahead, ahead.scale == scale, let image = try ahead.take(index) { return image }
+        return try decodedFromFile(index, scale: scale)
+    }
+
+    /// The frames being read ahead of the stacking, if any.
+    private var ahead: FrameLookahead?
+
+    /// Starts reading `indices`' frames ahead, in the order they'll be asked for: decoding a photo takes
+    /// about as long as stacking it, so the next ones are decoded on other cores meanwhile. Small copies
+    /// (a preview's) are quick to hold, and a core's worth are read at once; full-size frames are big,
+    /// and decode no faster side by side, so only the next two are. RAW frames aren't read ahead:
+    /// Core Image decodes them as it draws them.
+    private func readAhead(_ indices: [Int], scale: CGFloat) {
+        ahead?.finish()
+        ahead = nil
+        let waiting = scale == keptScale ? indices.filter { keptFrames[$0] == nil } : indices
+        guard !isRaw, waiting.count > 1 else { return }
+        let depth = scale < 1 ? max(2, ProcessInfo.processInfo.activeProcessorCount) : 2
+        // The lookahead is stopped (and waited for) before the merger changes or goes away.
+        nonisolated(unsafe) let merger = self
+        ahead = FrameLookahead(order: waiting, scale: scale, depth: depth) { index in
+            try merger.decodedFromFile(index, scale: scale)
+        }
+    }
+
+    /// Stops reading ahead (the frames not yet asked for are dropped).
+    private func stopReadingAhead() {
+        ahead?.finish()
+        ahead = nil
+    }
+
+    /// Safe to call for several frames at once: it changes nothing.
     private func decodedFromFile(_ index: Int, scale: CGFloat) throws -> CIImage {
         let source = frames[index].source
         var image: CIImage?
@@ -282,7 +341,14 @@ nonisolated final class FocusStackMerger {
                 image = filter.outputImage
             }
         } else if scale >= 1 {
-            image = CIImage(contentsOf: source.url, options: [.applyOrientationProperty: true])
+            // Decoded here and now, not when Core Image first draws it: this may be running ahead of the
+            // stacking, on another core (see ``FrameLookahead``).
+            if let file = CGImageSourceCreateWithURL(source.url as CFURL, nil),
+               let whole = CGImageSourceCreateImageAtIndex(file, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) {
+                let properties = CGImageSourceCopyPropertiesAtIndex(file, 0, nil) as? [CFString: Any]
+                let orientation = (properties?[kCGImagePropertyOrientation] as? UInt32).flatMap(CGImagePropertyOrientation.init) ?? .up
+                image = CIImage(cgImage: whole).oriented(orientation)
+            }
         } else if let file = CGImageSourceCreateWithURL(source.url as CFURL, nil) {
             // ImageIO scales a JPEG as it decodes it, far quicker than decoding it whole.
             let options: [CFString: Any] = [
@@ -319,6 +385,12 @@ nonisolated final class FocusStackMerger {
     /// Lines every frame up with the first, and measures the gain that matches its brightness. Each
     /// frame is fitted to the nearest frame before it that lined up. Done once; `progress` gets the
     /// fraction done.
+    ///
+    /// Reading a frame and finding its corners depends on no other frame, and fitting it to the one
+    /// before depends only on those two, so both are done for several frames at a time, on every core.
+    /// Only putting the fits together, one after another, has to go in order. The frames are taken a
+    /// batch at a time: what's worked out for a frame (its corners and detail) is too big to hold for
+    /// every frame of a deep stack at once.
     func align(progress: (Double) -> Void = { _ in }) throws {
         guard !isAligned else { return }
         let scale = min(1, Self.alignmentSide / max(nativeSize.width, nativeSize.height, 1))
@@ -330,38 +402,103 @@ nonisolated final class FocusStackMerger {
         let fromAligner = toAligner.inverted()
         let longSide = Double(max(nativeSize.width, nativeSize.height) * scale)
 
-        var referenceBrightness = 0.0
-        var anchor: (features: PanoramaAligner.Features, detail: Detail, transform: CGAffineTransform)?
-        for index in frames.indices {
-            try Task.checkCancellation()
-            let (image, brightness) = try autoreleasepool { try alignmentImage(index, scale: scale) }
-            let features = PanoramaAligner.detectFeatures(image)
-            let detail = Detail(image)
-            if let previous = anchor {
-                let matches = PanoramaAligner.match(features, previous.features)
-                if let rough = Self.similarity(matches),
-                   case let fit = Self.refined(rough, floating: detail, target: previous.detail),
-                   abs(fit.scale - 1) <= Self.largestScaleChange, abs(fit.turn) <= Self.largestTurn,
-                   simd_length(fit.t) <= Self.largestShift * longSide {
-                    let step = CGAffineTransform(a: fit.a, b: fit.b, c: -fit.b, d: fit.a, tx: fit.t.x, ty: fit.t.y)
-                    let transform = toAligner.concatenating(step).concatenating(fromAligner).concatenating(previous.transform)
-                    frames[index].transform = transform
-                    if brightness > 0 { frames[index].gain = min(max(referenceBrightness / brightness, 0.8), 1.25) }
-                    anchor = (features, detail, transform)
-                }
-            } else {
-                frames[index].transform = .identity
-                referenceBrightness = brightness
-                anchor = (features, detail, .identity)
-            }
-            progress(Double(index + 1) / Double(frames.count))
+        // Two steps a frame: read, and fitted.
+        try withoutActuallyEscaping(progress) { progress in
+            let steps = AlignmentSteps(total: 2 * frames.count, report: progress)
+            try lineUp(scale: scale, toAligner: toAligner, fromAligner: fromAligner, longSide: longSide, steps: steps)
         }
         isAligned = true
     }
 
-    /// A frame as the aligner sees it (gamma-encoded gray), and its mean brightness (linear).
+    private func lineUp(
+        scale: CGFloat, toAligner: CGAffineTransform, fromAligner: CGAffineTransform, longSide: Double, steps: AlignmentSteps
+    ) throws {
+        let count = frames.count
+        // Only read from the other cores, and only until each batch is done.
+        nonisolated(unsafe) let merger = self
+        var referenceBrightness = 0.0
+        var anchor: (index: Int, frame: AlignmentFrame, transform: CGAffineTransform)?
+        var before: AlignmentFrame?
+        var start = 0
+        while start < count {
+            try Task.checkCancellation()
+            let batch = start..<min(start + Self.alignmentBatch, count)
+            let read = Slots<Result<AlignmentFrame, any Error>>(batch.count)
+            DispatchQueue.concurrentPerform(iterations: batch.count) { offset in
+                read.set(offset, Result { try autoreleasepool { try merger.alignmentFrame(batch.lowerBound + offset, scale: scale) } })
+                steps.step()
+            }
+            let ready = try read.values.map { result -> AlignmentFrame in
+                guard let result else { throw CancellationError() }
+                return try result.get()
+            }
+            try Task.checkCancellation()
+
+            // Each frame against the one just before it, which is nearly always the one it's fitted to.
+            let last = before
+            let fitted = Slots<Similarity>(batch.count)
+            DispatchQueue.concurrentPerform(iterations: batch.count) { offset in
+                if let previous = offset > 0 ? ready[offset - 1] : last,
+                   let fit = Self.fit(ready[offset], to: previous, longSide: longSide) {
+                    fitted.set(offset, fit)
+                }
+                steps.step()
+            }
+            let fits = fitted.values
+
+            for (offset, frame) in ready.enumerated() {
+                let index = batch.lowerBound + offset
+                guard let previous = anchor else {
+                    frames[index].transform = .identity
+                    referenceBrightness = frame.brightness
+                    anchor = (index, frame, .identity)
+                    continue
+                }
+                // The frame before didn't line up: fitted to the last one that did.
+                let fit = previous.index == index - 1 ? fits[offset] : Self.fit(frame, to: previous.frame, longSide: longSide)
+                guard let fit else { continue }
+                let step = CGAffineTransform(a: fit.a, b: fit.b, c: -fit.b, d: fit.a, tx: fit.t.x, ty: fit.t.y)
+                let transform = toAligner.concatenating(step).concatenating(fromAligner).concatenating(previous.transform)
+                frames[index].transform = transform
+                if frame.brightness > 0 { frames[index].gain = min(max(referenceBrightness / frame.brightness, 0.8), 1.25) }
+                anchor = (index, frame, transform)
+            }
+            before = ready.last
+            start = batch.upperBound
+        }
+    }
+
+    /// How many frames are read and fitted at a time: one for each core.
+    static let alignmentBatch = max(2, ProcessInfo.processInfo.activeProcessorCount)
+
+    /// What lining a frame up needs of it.
+    private struct AlignmentFrame: @unchecked Sendable {
+        let features: PanoramaAligner.Features
+        let detail: Detail
+        /// Its mean brightness (linear).
+        let brightness: Double
+    }
+
+    private func alignmentFrame(_ index: Int, scale: CGFloat) throws -> AlignmentFrame {
+        let (image, brightness) = try alignmentImage(index, scale: scale)
+        return AlignmentFrame(features: PanoramaAligner.detectFeatures(image), detail: Detail(image), brightness: brightness)
+    }
+
+    /// The similarity that lays `frame` over `previous`, or nil when they don't line up: too few corners
+    /// agree, or the fit is more of a change than focusing makes.
+    private static func fit(_ frame: AlignmentFrame, to previous: AlignmentFrame, longSide: Double) -> Similarity? {
+        let matches = PanoramaAligner.match(frame.features, previous.features)
+        guard let rough = similarity(matches) else { return nil }
+        let fit = refined(rough, floating: frame.detail, target: previous.detail)
+        guard abs(fit.scale - 1) <= largestScaleChange, abs(fit.turn) <= largestTurn,
+              simd_length(fit.t) <= largestShift * longSide else { return nil }
+        return fit
+    }
+
+    /// A frame as the aligner sees it (gamma-encoded gray), and its mean brightness (linear). Safe to
+    /// call for several frames at once: it keeps nothing.
     private func alignmentImage(_ index: Int, scale: CGFloat) throws -> (PanoramaAlignmentImage, Double) {
-        let image = try decoded(index, scale: scale)
+        let image = try decodedFromFile(index, scale: scale)
         let width = Int(image.extent.width.rounded(.down)), height = Int(image.extent.height.rounded(.down))
         var pixels = [Float](repeating: 0, count: width * height * 4)
         context.render(
@@ -474,6 +611,16 @@ nonisolated final class FocusStackMerger {
         }
     }
 
+    /// ``PanoramaAligner/bilinear(_:width:height:x:y:)`` on a pointer to the pixels.
+    private static func bilinear(_ pixels: UnsafeBufferPointer<Float>, width: Int, height: Int, x: Float, y: Float) -> Float {
+        let fx = min(max(x, 0), Float(width - 1) - 0.001), fy = min(max(y, 0), Float(height - 1) - 0.001)
+        let x0 = Int(fx), y0 = Int(fy), tx = fx - Float(x0), ty = fy - Float(y0)
+        let i = y0 * width + x0
+        let top = pixels[i] * (1 - tx) + pixels[i + 1] * tx
+        let bottom = pixels[i + width] * (1 - tx) + pixels[i + width + 1] * tx
+        return top * (1 - ty) + bottom * ty
+    }
+
     /// `start` (from matched corners, good to a pixel or so) made exact: the similarity that best lays
     /// `floating`'s detail over `target`'s, found by Gauss–Newton on the difference between them at a
     /// grid of points. Where the two differ a lot (something sharp in one and not the other) counts for
@@ -486,24 +633,50 @@ nonisolated final class FocusStackMerger {
         var fit = start
         for _ in 0..<20 {
             var ata = [Double](repeating: 0, count: 16), atb = [Double](repeating: 0, count: 4)
+            var slopes = [Double](repeating: 0, count: 4)
+            // Written plainly, for a build that isn't optimized, where this is fitted for several frames
+            // at once. Through pointers, target's too: the frame it belongs to is being fitted to its own
+            // predecessor on another core, and such a build counts a reference to the array for every
+            // point read, the two cores taking turns at the count. And with `while`, not `stride`, whose
+            // every step there looks its types up in a table the cores have to queue for: that alone
+            // made fitting fourteen frames side by side slower than one after another.
             floating.values.withUnsafeBufferPointer { values in
-                for row in stride(from: margin, to: height - margin, by: spacing) {
-                    for column in stride(from: margin, to: width - margin, by: spacing) {
+              target.values.withUnsafeBufferPointer { targetValues in
+              target.slopeX.withUnsafeBufferPointer { targetSlopeX in
+              target.slopeY.withUnsafeBufferPointer { targetSlopeY in
+                var row = margin
+                while row < height - margin {
+                    defer { row += spacing }
+                    var column = margin
+                    while column < width - margin {
+                        defer { column += spacing }
                         let x = Double(column) - centerX, y = Double(row) - centerY
                         let q = fit.apply(SIMD2(x, y))
                         let u = Float(q.x + centerX), v = Float(q.y + centerY)
                         guard u >= 1, v >= 1, u < Float(width - 2), v < Float(height - 2) else { continue }
-                        let difference = Double(PanoramaAligner.bilinear(target.values, width: width, height: height, x: u, y: v) - values[row * width + column])
-                        let gx = Double(PanoramaAligner.bilinear(target.slopeX, width: width, height: height, x: u, y: v))
-                        let gy = Double(PanoramaAligner.bilinear(target.slopeY, width: width, height: height, x: u, y: v))
+                        let difference = Double(Self.bilinear(targetValues, width: width, height: height, x: u, y: v) - values[row * width + column])
+                        let gx = Double(Self.bilinear(targetSlopeX, width: width, height: height, x: u, y: v))
+                        let gy = Double(Self.bilinear(targetSlopeY, width: width, height: height, x: u, y: v))
                         let weight = 1 / (1 + (difference / 0.5) * (difference / 0.5))
-                        let slopes = [gx * x + gy * y, gy * x - gx * y, gx, gy]
-                        for i in 0..<4 {
+                        slopes[0] = gx * x + gy * y
+                        slopes[1] = gy * x - gx * y
+                        slopes[2] = gx
+                        slopes[3] = gy
+                        var i = 0
+                        while i < 4 {
                             atb[i] -= weight * slopes[i] * difference
-                            for j in 0..<4 { ata[i * 4 + j] += weight * slopes[i] * slopes[j] }
+                            var j = 0
+                            while j < 4 {
+                                ata[i * 4 + j] += weight * slopes[i] * slopes[j]
+                                j += 1
+                            }
+                            i += 1
                         }
                     }
                 }
+              }
+              }
+              }
             }
             guard let change = PanoramaAligner.solve(ata, atb, size: 4) else { break }
             fit.a += change[0]
@@ -588,6 +761,7 @@ nonisolated final class FocusStackMerger {
         // Only Depth Map has a depth map to show.
         let depthMap = options.method == .depthMap ? depthMap : nil
         try align()
+        defer { stopReadingAhead() }
         let indices = included(excluding: excluding)
         guard indices.count >= 2 else { throw FocusStackError.tooFewAligned }
         var canvas = commonRect(indices, scale: scale)
@@ -615,10 +789,11 @@ nonisolated final class FocusStackMerger {
                 progress(depthShare)
             } else {
                 current = try materialized(Self.blank(canvas), canvas, format: .RGBAh, bytesPerPixel: 8)
+                readAhead(indices, scale: scale)
                 for (number, index) in indices.enumerated() {
                     try Task.checkCancellation()
                     current = try autoreleasepool {
-                        let contrast = contrast(of: try warped(index, scale: scale, canvas: canvas), radius: options.radius, scale: scale)
+                        let contrast = try contrast(of: try warped(index, scale: scale, canvas: canvas), radius: options.radius, scale: scale)
                         let picked = FocusStackKernels.pick.apply(extent: canvas, arguments: [current, contrast, Float(number)]) ?? current
                         return try materialized(picked, canvas, format: .RGBAh, bytesPerPixel: 8)
                     }
@@ -645,11 +820,13 @@ nonisolated final class FocusStackMerger {
             let floor = noiseFloor(state) * Self.shareFloor
             let spread = options.smoothing > 0 ? max(0.5, Self.smoothingStep * CGFloat(options.smoothing) * scale) : 0
             var total = try materialized(Self.blank(canvas), canvas, format: .Rf, bytesPerPixel: 4)
+            readAhead(indices, scale: scale)
             for (number, index) in indices.enumerated() {
                 try Task.checkCancellation()
                 (sum, total) = try autoreleasepool {
-                    let frame = try warped(index, scale: scale, canvas: canvas)
-                    let contrast = contrast(of: frame, radius: options.radius, scale: scale)
+                    // Kept as pixels: its contrast and the sum both read it.
+                    let frame = try materialized(try warped(index, scale: scale, canvas: canvas), canvas, format: .RGBAh, bytesPerPixel: 8)
+                    let contrast = try contrast(of: frame, radius: options.radius, scale: scale)
                     var weight = FocusStackKernels.share.apply(extent: canvas, arguments: [state, contrast, Self.sharePower, floor]) ?? contrast
                     if spread > 0 { weight = HDRMerger.filtered(weight, "CIGaussianBlur", radius: spread) }
                     // Kept as pixels: both sums read it.
@@ -668,6 +845,7 @@ nonisolated final class FocusStackMerger {
             sum = try materialized(resolved, canvas, format: .RGBAh, bytesPerPixel: 8)
         } else if let depth {
             // The pixels: each frame added where the depth map chooses it.
+            readAhead(indices, scale: scale)
             for (number, index) in indices.enumerated() {
                 try Task.checkCancellation()
                 sum = try autoreleasepool {
@@ -731,6 +909,7 @@ nonisolated final class FocusStackMerger {
         var base = try materialized(Self.blank(extents[levels]), extents[levels], format: .RGBAf, bytesPerPixel: 16)
         // The darkest and brightest each pixel is in any frame (red, green).
         var range: CIImage?
+        readAhead(indices, scale: scale)
         for (number, index) in indices.enumerated() {
             try Task.checkCancellation()
             try autoreleasepool {
@@ -801,9 +980,15 @@ nonisolated final class FocusStackMerger {
     /// that are a little soft in every frame: at the fine size the least soft of them scores next to
     /// nothing, no more than the rim a frame far out of focus leaves around the same edge (a halo), and
     /// at the coarse size it stands well clear of it.
-    private func contrast(of frame: CIImage, radius: Int, scale: CGFloat) -> CIImage {
+    ///
+    /// The brightness and the combined detail are each drawn once and kept (see
+    /// ``materialized(_:_:format:bytesPerPixel:)``): both are read twice by what follows, and left as a
+    /// recipe Core Image works each out again for every reader, the frame's warp and blurs included.
+    /// That made this nearly three times slower at full size.
+    private func contrast(of frame: CIImage, radius: Int, scale: CGFloat) throws -> CIImage {
         let extent = frame.extent
-        let luma = (FocusStackKernels.luma.apply(extent: extent, arguments: [frame]) ?? frame).clampedToExtent()
+        let luma = try materialized(FocusStackKernels.luma.apply(extent: extent, arguments: [frame]) ?? frame, extent, format: .Rf, bytesPerPixel: 4)
+            .clampedToExtent()
         func detail(blur: CGFloat, step: CGFloat) -> CIImage {
             let smooth = luma.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: blur])
             return FocusStackKernels.contrast.apply(extent: extent, roiCallback: { _, rect in
@@ -814,7 +999,9 @@ nonisolated final class FocusStackMerger {
         // frame, which doesn't move, would otherwise win wherever there's nothing but grain.
         let fine = detail(blur: 1, step: max(1, (Self.fineStep * scale).rounded()))
         let coarse = detail(blur: max(1, Self.coarseStep * scale * 0.4), step: max(2, (Self.coarseStep * scale).rounded()))
-        let both = (FocusStackKernels.combine.apply(extent: extent, arguments: [fine, coarse, Self.coarseShare]) ?? fine).clampedToExtent()
+        let both = try materialized(
+            FocusStackKernels.combine.apply(extent: extent, arguments: [fine, coarse, Self.coarseShare]) ?? fine, extent, format: .Rf, bytesPerPixel: 4
+        ).clampedToExtent()
         // Averaged over Radius, and over several times Radius as well. Beside an edge, the frames far out
         // of focus are the only ones with any contrast of their own (the edge's blur spilling over), and
         // on the near average alone they'd be chosen there: a halo. The wide average takes in the edge
@@ -925,12 +1112,47 @@ nonisolated final class FocusStackMerger {
     }
 
     /// `image` drawn once and kept as pixels, so what's built on it doesn't draw every frame before it again.
+    ///
+    /// Drawn into a texture where that's possible, so the pixels never leave the GPU. Read back to main
+    /// memory and sent up again, as it was first done, a full-size frame's worth of pixels crosses twice
+    /// for every frame stacked, which took most of the time of a full-size stack.
     private func materialized(_ image: CIImage, _ extent: CGRect, format: CIFormat, bytesPerPixel: Int) throws -> CIImage {
+        if staysOnGPU, let kept = try texture(of: image, extent, format: format) { return kept }
         let data = try pixelData(image, extent, format: format, bytesPerPixel: bytesPerPixel)
         return CIImage(
             bitmapData: data, bytesPerRow: Int(extent.width) * bytesPerPixel, size: extent.size, format: format, colorSpace: nil
         ).transformed(by: CGAffineTransform(translationX: extent.minX, y: extent.minY))
     }
+
+    /// `image` drawn into a new texture, or nil when it can't be (no GPU, a format or size it doesn't take).
+    private func texture(of image: CIImage, _ extent: CGRect, format: CIFormat) throws -> CIImage? {
+        let pixelFormat: MTLPixelFormat
+        switch format {
+        case .RGBAh: pixelFormat = .rgba16Float
+        case .RGBAf: pixelFormat = .rgba32Float
+        case .Rh: pixelFormat = .r16Float
+        case .Rf: pixelFormat = .r32Float
+        default: return nil
+        }
+        let width = Int(extent.width), height = Int(extent.height)
+        guard let device, width >= 1, height >= 1, max(width, height) <= Self.largestTexture else { return nil }
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: pixelFormat, width: width, height: height, mipmapped: false)
+        descriptor.usage = [.shaderRead, .shaderWrite, .renderTarget]
+        descriptor.storageMode = .private
+        guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
+        let destination = CIRenderDestination(mtlTexture: texture, commandBuffer: nil)
+        // The numbers as they are: no color matching, no clamping to 0...1.
+        destination.colorSpace = nil
+        destination.isClamped = false
+        destination.isDithered = false
+        destination.isFlipped = false
+        _ = try context.startTask(toRender: image, from: extent, to: destination, at: .zero).waitUntilCompleted()
+        guard let kept = CIImage(mtlTexture: texture, options: [.colorSpace: NSNull()]) else { return nil }
+        return kept.transformed(by: CGAffineTransform(translationX: extent.minX, y: extent.minY))
+    }
+
+    /// The longest side a texture can have (Metal's limit on every Mac this runs on).
+    static let largestTexture = 16384
 
     /// The brightest value in any channel, measured at 1024 pixels across, where single hot pixels average out.
     private func peakValue(of image: CIImage) -> Float {
@@ -1015,6 +1237,115 @@ nonisolated extension FocusStackTIFFWriter {
         let context = CIContext(options: [.workingColorSpace: HDRMerger.colorSpace, .cacheIntermediates: false])
         let extent = CGRect(x: 0, y: 0, width: image.width, height: image.height)
         return context.createCGImage(CIImage(cgImage: linear), from: extent, format: format, colorSpace: colorSpace)
+    }
+}
+
+/// Results filled in from several cores at once, each in its own place.
+nonisolated private final class Slots<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var filled: [Value?]
+
+    init(_ count: Int) { filled = Array(repeating: nil, count: count) }
+
+    func set(_ index: Int, _ value: Value) {
+        lock.lock()
+        filled[index] = value
+        lock.unlock()
+    }
+
+    var values: [Value?] {
+        lock.lock()
+        defer { lock.unlock() }
+        return filled
+    }
+}
+
+/// Counts the steps of lining up done on several cores, and reports the fraction done, one at a time.
+nonisolated private final class AlignmentSteps: @unchecked Sendable {
+    private let lock = NSLock()
+    private let total: Int
+    private let report: (Double) -> Void
+    private var done = 0
+
+    init(total: Int, report: @escaping (Double) -> Void) {
+        self.total = total
+        self.report = report
+    }
+
+    func step() {
+        lock.lock()
+        done += 1
+        report(Double(done) / Double(max(total, 1)))
+        lock.unlock()
+    }
+}
+
+/// Decodes frames ahead of the one being stacked, on other cores, and hands them over in order.
+nonisolated private final class FrameLookahead: @unchecked Sendable {
+    let scale: CGFloat
+    private let order: [Int]
+    private let depth: Int
+    private let decode: @Sendable (Int) throws -> CIImage
+    private let condition = NSCondition()
+    private let group = DispatchGroup()
+    private let queue = DispatchQueue(label: "FocusStackMerger.lookahead", qos: .userInitiated, attributes: .concurrent)
+    /// Guarded by `condition`.
+    private var results: [Int: Result<CIImage, any Error>] = [:]
+    private var position: [Int: Int] = [:]
+    private var started = 0
+    private var finished = false
+
+    /// `order` is the frames in the order they'll be taken; `depth` is how many are decoded ahead.
+    init(order: [Int], scale: CGFloat, depth: Int, decode: @escaping @Sendable (Int) throws -> CIImage) {
+        self.order = order
+        self.scale = scale
+        self.depth = depth
+        self.decode = decode
+        for (place, index) in order.enumerated() where position[index] == nil { position[index] = place }
+        condition.lock()
+        start(through: depth - 1)
+        condition.unlock()
+    }
+
+    /// Starts decoding the frames up to place `last` that haven't been started. Called with the lock held.
+    private func start(through last: Int) {
+        while started <= min(last, order.count - 1) {
+            let index = order[started]
+            started += 1
+            queue.async(group: group) { [self] in
+                condition.lock()
+                let skip = finished
+                condition.unlock()
+                let result: Result<CIImage, any Error>? = skip ? nil : Result { try autoreleasepool { try decode(index) } }
+                condition.lock()
+                if let result, !finished { results[index] = result }
+                condition.broadcast()
+                condition.unlock()
+            }
+        }
+    }
+
+    /// Frame `index`, waiting for it if it's still being decoded, and starts the next ones. Nil for a
+    /// frame that isn't being read ahead (or was taken already): the caller reads that one itself.
+    func take(_ index: Int) throws -> CIImage? {
+        condition.lock()
+        defer { condition.unlock() }
+        guard !finished, let place = position.removeValue(forKey: index) else { return nil }
+        start(through: place + depth)
+        while results[index] == nil, place < started, !finished { condition.wait() }
+        guard let result = results.removeValue(forKey: index) else { return nil }
+        return try result.get()
+    }
+
+    /// Drops what's been decoded and waits for the decoding under way to end, so nothing is still
+    /// reading the merger's frames once this returns.
+    func finish() {
+        condition.lock()
+        finished = true
+        results = [:]
+        condition.broadcast()
+        condition.unlock()
+        group.wait()
     }
 }
 
