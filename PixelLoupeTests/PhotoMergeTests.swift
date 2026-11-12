@@ -124,8 +124,16 @@ struct PhotoMergeTests {
     @Test func menusOfferHDRAndPanoramaWithLightroomsShortcuts() async throws {
         let photoMenu = try #require(MainMenu.make().items.first { $0.title == "Photo" }?.submenu)
         let merge = try #require(photoMenu.items.first { $0.title == "Photo Merge" }?.submenu)
-        let titles = ["HDR…", "HDR with Previous Settings", "Panorama…", "Panorama with Previous Settings", "HDR Panorama…"]
+        // Then, below a separator, PixelLoupe's own Focus Stack.
+        let titles = [
+            "HDR…", "HDR with Previous Settings", "Panorama…", "Panorama with Previous Settings", "HDR Panorama…", "",
+            "Focus Stack…", "Focus Stack with Previous Settings",
+        ]
         #expect(merge.items.map(\.title) == titles)
+        #expect(merge.items[5].isSeparatorItem)
+        let focus = merge.items[6], headlessFocus = merge.items[7]
+        #expect(focus.keyEquivalent == "f" && focus.keyEquivalentModifierMask == .control)
+        #expect(headlessFocus.isAlternate && headlessFocus.keyEquivalent == "f" && headlessFocus.keyEquivalentModifierMask == [.control, .shift])
         let hdr = merge.items[0], headlessHDR = merge.items[1], panorama = merge.items[2], headless = merge.items[3]
         let hdrPanorama = merge.items[4]
         // No shortcuts for HDR Panorama, and no headless alternate, as in Lightroom.
@@ -138,7 +146,7 @@ struct PhotoMergeTests {
 
         let setup = try await Setup()
         let controller = CatalogWindowController(store: setup.store)
-        for item in [hdr, headlessHDR, panorama, headless, hdrPanorama] {
+        for item in [hdr, headlessHDR, panorama, headless, hdrPanorama, focus, headlessFocus] {
             controller.state.selectedPhotoIDs = [setup.ids[0]]
             #expect(!controller.validateUserInterfaceItem(item), "\(item.title) needs two photos")
             controller.state.selectedPhotoIDs = setup.ids

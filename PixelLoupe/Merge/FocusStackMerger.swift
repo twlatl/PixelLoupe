@@ -219,8 +219,41 @@ nonisolated final class FocusStackMerger {
 
     // MARK: - Decoding
 
-    /// A frame at `scale`, scene-linear, with its origin at zero and exactly `scale` times the full size.
+    /// The scale whose decoded frames are kept in memory (and the depth map's state at it), so a preview
+    /// redrawn with other settings doesn't read every photo again; nil keeps nothing. For previews only:
+    /// at full size the frames are far too big to keep.
+    var keptScale: CGFloat? {
+        didSet {
+            guard keptScale != oldValue else { return }
+            keptFrames = [:]
+            keptState = nil
+        }
+    }
+
+    private var keptFrames: [Int: CIImage] = [:]
+    private var keptState: (key: StateKey, state: CIImage)?
+
+    /// What the depth map's state depends on.
+    private struct StateKey: Equatable {
+        var scale: CGFloat
+        var radius: Int
+        var indices: [Int]
+        var canvas: CGRect
+    }
+
+    /// A frame at `scale`, scene-linear, with its origin at zero and `scale` times the full size (kept
+    /// as pixels when that's the scale being kept).
     private func decoded(_ index: Int, scale: CGFloat) throws -> CIImage {
+        guard scale == keptScale else { return try decodedFromFile(index, scale: scale) }
+        if let kept = keptFrames[index] { return kept }
+        let image = try decodedFromFile(index, scale: scale)
+        let extent = CGRect(x: 0, y: 0, width: image.extent.width.rounded(.down), height: image.extent.height.rounded(.down))
+        let kept = try materialized(image, extent, format: .RGBAh, bytesPerPixel: 8)
+        keptFrames[index] = kept
+        return kept
+    }
+
+    private func decodedFromFile(_ index: Int, scale: CGFloat) throws -> CIImage {
         let source = frames[index].source
         var image: CIImage?
         if isRaw {
@@ -522,16 +555,24 @@ nonisolated final class FocusStackMerger {
         let last = Float(indices.count - 1)
 
         // The depth map: the sharpest frame so far at every pixel, a frame at a time.
-        var state = try materialized(Self.blank(canvas), canvas, format: .RGBAh, bytesPerPixel: 8)
-        for (number, index) in indices.enumerated() {
-            try Task.checkCancellation()
-            state = try autoreleasepool {
-                let contrast = contrast(of: try warped(index, scale: scale, canvas: canvas), radius: options.radius, scale: scale)
-                let picked = FocusStackKernels.pick.apply(extent: canvas, arguments: [state, contrast, Float(number)]) ?? state
-                return try materialized(picked, canvas, format: .RGBAh, bytesPerPixel: 8)
+        let key = StateKey(scale: scale, radius: options.radius, indices: indices, canvas: canvas)
+        var state: CIImage
+        if let kept = keptState, kept.key == key {
+            state = kept.state
+            progress(0.5)
+        } else {
+            state = try materialized(Self.blank(canvas), canvas, format: .RGBAh, bytesPerPixel: 8)
+            for (number, index) in indices.enumerated() {
+                try Task.checkCancellation()
+                state = try autoreleasepool {
+                    let contrast = contrast(of: try warped(index, scale: scale, canvas: canvas), radius: options.radius, scale: scale)
+                    let picked = FocusStackKernels.pick.apply(extent: canvas, arguments: [state, contrast, Float(number)]) ?? state
+                    return try materialized(picked, canvas, format: .RGBAh, bytesPerPixel: 8)
+                }
+                progress(0.5 * Double(number + 1) / Double(indices.count))
+                if let depthMap { depthMap(depthGray(state, last: last)) }
             }
-            progress(0.5 * Double(number + 1) / Double(indices.count))
-            if let depthMap { depthMap(depthGray(state, last: last)) }
+            if scale == keptScale, region == nil { keptState = (key, state) }
         }
         let depth = try materialized(filledDepth(state, smoothing: options.smoothing, scale: scale), canvas, format: .Rh, bytesPerPixel: 2)
         let finalDepth = depthGray(depth, last: last)
@@ -756,19 +797,7 @@ nonisolated enum FocusStackTIFFWriter {
         var space = file.flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }?.colorSpace
         if space?.model != .rgb { space = CGColorSpace(name: CGColorSpace.sRGB) }
 
-        let data = image.pixels.withUnsafeBufferPointer { Data(buffer: $0) }
-        let info = CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue | CGBitmapInfo.floatComponents.rawValue | CGBitmapInfo.byteOrder16Little.rawValue)
-        guard let space, let provider = CGDataProvider(data: data as CFData),
-              let linear = CGImage(
-                  width: image.width, height: image.height, bitsPerComponent: 16, bitsPerPixel: 48, bytesPerRow: image.width * 6,
-                  space: HDRMerger.colorSpace, bitmapInfo: info, provider: provider, decode: nil, shouldInterpolate: false,
-                  intent: .defaultIntent
-              ) else { throw failure() }
-        let context = CIContext(options: [.workingColorSpace: HDRMerger.colorSpace, .cacheIntermediates: false])
-        let extent = CGRect(x: 0, y: 0, width: image.width, height: image.height)
-        guard let encoded = context.createCGImage(CIImage(cgImage: linear), from: extent, format: .RGBX16, colorSpace: space) else {
-            throw failure()
-        }
+        guard let space, let encoded = encoded(image, format: .RGBX16, colorSpace: space) else { throw failure() }
 
         // The first photo's metadata (camera, lens, exposure, where it was taken), less what's about its own pixels.
         var properties = file.flatMap { CGImageSourceCopyPropertiesAtIndex($0, 0, nil) as? [CFString: Any] } ?? [:]
@@ -804,6 +833,24 @@ nonisolated enum FocusStackTIFFWriter {
             try? FileManager.default.removeItem(at: temporary)
             throw error
         }
+    }
+}
+
+nonisolated extension FocusStackTIFFWriter {
+    /// `image` (linear Rec. 2020, 0…1) encoded in `colorSpace`: for the TIFF, and for showing a stack of
+    /// photos that aren't RAW as it will look.
+    static func encoded(_ image: LinearDNGImage, format: CIFormat, colorSpace: CGColorSpace) -> CGImage? {
+        let data = image.pixels.withUnsafeBufferPointer { Data(buffer: $0) }
+        let info = CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue | CGBitmapInfo.floatComponents.rawValue | CGBitmapInfo.byteOrder16Little.rawValue)
+        guard let provider = CGDataProvider(data: data as CFData),
+              let linear = CGImage(
+                  width: image.width, height: image.height, bitsPerComponent: 16, bitsPerPixel: 48, bytesPerRow: image.width * 6,
+                  space: HDRMerger.colorSpace, bitmapInfo: info, provider: provider, decode: nil, shouldInterpolate: false,
+                  intent: .defaultIntent
+              ) else { return nil }
+        let context = CIContext(options: [.workingColorSpace: HDRMerger.colorSpace, .cacheIntermediates: false])
+        let extent = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        return context.createCGImage(CIImage(cgImage: linear), from: extent, format: format, colorSpace: colorSpace)
     }
 }
 

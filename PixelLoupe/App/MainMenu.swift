@@ -81,6 +81,8 @@ import AppKit
     @objc optional func photoMergePanorama(_ sender: Any?)
     @objc optional func photoMergePanoramaWithPreviousSettings(_ sender: Any?)
     @objc optional func photoMergeHDRPanorama(_ sender: Any?)
+    @objc optional func photoMergeFocusStack(_ sender: Any?)
+    @objc optional func photoMergeFocusStackWithPreviousSettings(_ sender: Any?)
     @objc optional func cancelPhotoMerge(_ sender: Any?)
     @objc optional func editInPrimary(_ sender: Any?)
     @objc optional func editInAdditional(_ sender: Any?)
@@ -176,6 +178,7 @@ enum MainMenu {
     /// Photo ▸ Photo Merge, also in the grid's context menu, with Lightroom's shortcuts: ⌃H for HDR and
     /// ⌃M for Panorama, and ⌃⇧H and ⌃⇧M (their alternates, shown while Shift is held) to merge straight
     /// away with the last settings, without the preview. HDR Panorama… has no shortcuts, as in Lightroom.
+    /// Focus Stack… (⌃F, and ⌃⇧F with the last settings) is PixelLoupe's own: Lightroom has none.
     static func photoMergeItem() -> NSMenuItem {
         let menu = NSMenu(title: "Photo Merge")
         menu.addItem(item("HDR…", #selector(PixelLoupeActions.photoMergeHDR(_:)), "h", modifiers: .control))
@@ -189,6 +192,12 @@ enum MainMenu {
         headlessPanorama.isAlternate = true
         menu.addItem(headlessPanorama)
         menu.addItem(item("HDR Panorama…", #selector(PixelLoupeActions.photoMergeHDRPanorama(_:))))
+        menu.addItem(.separator())
+        menu.addItem(item("Focus Stack…", #selector(PixelLoupeActions.photoMergeFocusStack(_:)), "f", modifiers: .control))
+        let headlessFocus = item("Focus Stack with Previous Settings", #selector(PixelLoupeActions.photoMergeFocusStackWithPreviousSettings(_:)),
+                                 "f", modifiers: [.control, .shift])
+        headlessFocus.isAlternate = true
+        menu.addItem(headlessFocus)
         return submenuItem(menu)
     }
 

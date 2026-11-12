@@ -4,7 +4,9 @@ import CoreData
 /// Photo ▸ Photo Merge, as in Lightroom: HDR… (⌃H), Panorama… (⌃M) and HDR Panorama… show a sheet
 /// previewing the merge of the selected photos with its options, then Merge runs it in the background
 /// with progress (and Cancel) in the Library's bottom bar. HDR and Panorama with Previous Settings (⌃⇧H,
-/// ⌃⇧M) merge straight away. The merged DNG joins the catalog beside its sources.
+/// ⌃⇧M) merge straight away. The merged DNG joins the catalog beside its sources. Focus Stack… (⌃F, ⌃⇧F
+/// with the last settings) works the same way on photos of any kind, and its result is a TIFF when they
+/// aren't RAW.
 extension CatalogWindowController {
     @objc func photoMergeHDR(_ sender: Any?) {
         guard let window, window.attachedSheet == nil, mergeTask == nil else { return }
@@ -129,6 +131,60 @@ extension CatalogWindowController {
         }
     }
 
+    @objc func photoMergeFocusStack(_ sender: Any?) {
+        guard let window, window.attachedSheet == nil, mergeTask == nil else { return }
+        let ids = selectedMergeIDs()
+        let sources = editing.photoMergeSources(ids)
+        guard !showFocusStackProblem(sources) else { return }
+        let sheet = FocusStackSheetController(sources: sources, options: FocusStackOptions.load())
+        sheet.onFinish = { [weak self, weak sheet] result in
+            guard let self, let sheet, let sheetWindow = sheet.window else { return }
+            window.endSheet(sheetWindow)
+            mergeSheet = nil
+            guard let result else { return }
+            result.options.save()
+            startFocusStack(ids, options: result.options, excluding: result.excluding)
+        }
+        mergeSheet = sheet
+        window.beginSheet(sheet.window!)
+    }
+
+    @objc func photoMergeFocusStackWithPreviousSettings(_ sender: Any?) {
+        guard let window, window.attachedSheet == nil, mergeTask == nil else { return }
+        let ids = selectedMergeIDs()
+        guard !showFocusStackProblem(editing.photoMergeSources(ids)) else { return }
+        startFocusStack(ids, options: FocusStackOptions.load(), excluding: [])
+    }
+
+    /// Says why `sources` can't be stacked, if they can't, rather than a stack that fails in the background.
+    private func showFocusStackProblem(_ sources: [PhotoMergeSource]) -> Bool {
+        guard let window, let problem = FocusStackMerger.problem(merging: sources) else { return false }
+        let alert = NSAlert()
+        alert.messageText = "The photos can’t be stacked."
+        alert.informativeText = problem.localizedDescription
+        alert.beginSheetModal(for: window, completionHandler: nil)
+        return true
+    }
+
+    /// Stacks the photos in the background, leaving out `excluding` (the photos unchecked in the sheet,
+    /// which stay out of the result's stack and its keywords too).
+    private func startFocusStack(_ ids: [NSManagedObjectID], options: FocusStackOptions, excluding: Set<URL>) {
+        let stacked = editing.photos(ids).filter { !excluding.contains($0.fileURL) }.map(\.objectID)
+        let sources = editing.photoMergeSources(stacked)
+        var options = options
+        // A method chosen before it could be: the sheet would have fallen back too.
+        if !FocusStackSheetController.availableMethods.contains(options.method) { options.method = .depthMap }
+        startMerge(
+            stacked, kind: .focusStack, createsStack: options.createsStack, fileExtension: FocusStackMerger.fileExtension(for: sources)
+        ) { [options] destination, thumbnails, progress in
+            let result = try await FocusStackRunner.run(
+                sources: sources, options: options, destination: destination, thumbnailDirectory: thumbnails, progress: progress
+            )
+            let note = result.mergedCount < result.photoCount ? "\(result.mergedCount) of \(result.photoCount) photos merged" : nil
+            return (result.output, note)
+        }
+    }
+
     @objc func cancelPhotoMerge(_ sender: Any?) {
         mergeTask?.cancel()
     }
@@ -169,10 +225,10 @@ extension CatalogWindowController {
     /// Runs a merge in the background with progress and Cancel in the bottom bar, then adds the result
     /// to the catalog (and selects it). `run` writes the merged file and says what to note when done.
     private func startMerge(
-        _ ids: [NSManagedObjectID], kind: PhotoMergeKind, createsStack: Bool,
+        _ ids: [NSManagedObjectID], kind: PhotoMergeKind, createsStack: Bool, fileExtension: String = "dng",
         run: @escaping @Sendable (URL, URL, @escaping @Sendable (Double) -> Void) async throws -> (PhotoMergeOutput, String?)
     ) {
-        guard mergeTask == nil, let destination = editing.mergeDestination(for: ids, kind: kind) else { return }
+        guard mergeTask == nil, let destination = editing.mergeDestination(for: ids, kind: kind, fileExtension: fileExtension) else { return }
         let thumbnails = store.thumbnails.directory
         let selectionAtStart = state.selectedPhotoIDs
         let state = state
