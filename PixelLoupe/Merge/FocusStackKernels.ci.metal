@@ -53,7 +53,8 @@ float4 focusContrast(sampler luma, float step, destination dest) {
             around += luma.sample(luma.transform(p + float2(float(i), float(j)) * step)).r;
         }
     }
-    float laplacian = min(abs(around - 8.0 * center), 4.0);
+    // Not capped: frames that all reached a cap would tie, and the first of them, not the sharpest, would win.
+    float laplacian = around - 8.0 * center;
     return float4(laplacian * laplacian * 256.0, 0.0, 0.0, 1.0);
 }
 
@@ -82,14 +83,6 @@ float4 focusWeighted(sample_t state, float noise) {
     return float4(state.r * weight, weight, 0.0, 1.0);
 }
 
-/// Takes the say away from pixels with far less weight than there is around them (`strength`: the
-/// weights blurred). Beside a strong edge, the frames far out of focus are the only ones with any
-/// contrast, the edge's blur spilling over, and they'd be chosen there: a halo.
-float4 focusSuppress(sample_t weighted, sample_t strength) {
-    float keep = smoothstep(0.05, 0.25, weighted.g / max(strength.g, 1e-12));
-    return float4(weighted.rg * keep, 0.0, 1.0);
-}
-
 /// Weighted depth as plain depth (red), with its weight (green): the weighted frame numbers over the
 /// weights.
 float4 focusDepth(sample_t weighted) {
@@ -114,10 +107,10 @@ float4 focusFill(sampler coarser, sampler level, float reach, destination dest) 
     return float4(depth, max(own.g, carried), 0.0, 1.0);
 }
 
-/// The filled-in depth ready for smoothing: weighted again (with a floor, so every pixel counts a
-/// little), so blurring doesn't drag a sharp edge's depth toward its surroundings.
+/// The filled-in depth ready for smoothing: weighted by its weight again, so blurring it leaves a crisp
+/// edge's depth as it is (a few frames off is visibly soft) and smooths what lies between the edges.
 float4 focusSoften(sample_t depth) {
-    float weight = min(depth.g, 1.0) + 0.05;
+    float weight = depth.g + 1e-9;
     return float4(depth.r * weight, weight, 0.0, 1.0);
 }
 

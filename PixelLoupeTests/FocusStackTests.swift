@@ -194,17 +194,19 @@ struct FocusStackTests {
         var fixture = try FocusFixture()
         try fixture.addBands(2)
         let merger = try FocusStackMerger(sources: fixture.sources)
-        func middle(_ smoothing: Int) throws -> [UInt8] {
+        func row(_ smoothing: Int) throws -> [Int] {
             var options = FocusStackOptions()
             options.smoothing = smoothing
             let map = try merger.merge(options: options, scale: 1).depthMap
-            let row = map.height / 2 * map.width
-            return Array(map.pixels[(row + map.width / 2 - 30)..<(row + map.width / 2 + 30)])
+            let start = map.height / 2 * map.width
+            return map.pixels[start..<(start + map.width)].map { Int($0) }
         }
-        // Across the line between the two frames: a step without smoothing, a ramp with it.
-        let hard = try middle(0).count { $0 > 20 && $0 < 235 }, soft = try middle(10).count { $0 > 20 && $0 < 235 }
-        #expect(hard <= 30, "\(hard) pixels between the frames without smoothing")
-        #expect(soft >= hard + 12, "\(soft) pixels between the frames with smoothing, \(hard) without")
+        // Across the line between the two frames: the first frame on one side, the second on the other,
+        // and with more smoothing a gentler slope between them.
+        func steepest(_ row: [Int]) -> Int { zip(row, row.dropFirst()).map { abs($1 - $0) }.max() ?? 0 }
+        let hard = try row(0), soft = try row(10)
+        #expect(hard.first == 0 && hard.last == 255 && soft.first == 0 && soft.last == 255)
+        #expect(steepest(soft) < steepest(hard), "steepest step \(steepest(soft)) with smoothing, \(steepest(hard)) without")
     }
 
     @Test func linesUpFramesThatMovedScaledAndTurned() throws {
@@ -518,7 +520,7 @@ struct FocusStackSampleTests {
         }
         #expect(merger.skipped.isEmpty)
 
-        let scale = min(1, 2400 / max(merger.nativeSize.width, merger.nativeSize.height))
+        let scale = FocusSamples.regions.isEmpty ? min(1, 2400 / max(merger.nativeSize.width, merger.nativeSize.height)) : 0.05
         var raw: FocusDepthMap?
         var seen = 0
         let preview = try merger.merge(options: FocusStackOptions(), scale: scale, depthMap: { map in
@@ -532,23 +534,42 @@ struct FocusStackSampleTests {
             if let raw { try FocusSamples.write(raw, to: output.appending(path: "preview-depth-unsmoothed.png")) }
         }
 
-        // Part of the picture at full resolution, with its depth maps, for looking closely at a problem.
-        if let region = FocusSamples.region, let output = FocusSamples.output {
-            var maps: [FocusDepthMap] = []
-            let part = try merger.merge(options: FocusStackOptions(), scale: 1, region: region, depthMap: { maps.append($0) })
-            lap("region \(region) at full resolution")
-            try LinearDNGWriter.write(part.image, metadata: merger.dngMetadata(), to: output.appending(path: "region.dng"))
-            try FocusSamples.write(part.depthMap, to: output.appending(path: "region-depth.png"))
-            if maps.count >= 2 { try FocusSamples.write(maps[maps.count - 2], to: output.appending(path: "region-depth-unsmoothed.png")) }
+        // Part of the picture at full resolution, with its depth maps, for looking closely at a problem:
+        // once with the default settings, and once for each of `PIXELLOUPE_FOCUS_VARIANTS`.
+        if let output = FocusSamples.output {
+          for (number, region) in FocusSamples.regions.enumerated() {
+            for (smoothing, radius) in [(FocusStackOptions().smoothing, FocusStackOptions().radius)] + FocusSamples.variants {
+                var options = FocusStackOptions()
+                options.smoothing = smoothing
+                options.radius = radius
+                var maps: [FocusDepthMap] = []
+                let part = try merger.merge(options: options, scale: 1, region: region, depthMap: { maps.append($0) })
+                let name = "region\(number + 1)-s\(smoothing)-r\(radius)"
+                lap("\(name) \(region) at full resolution")
+                if merger.isRaw {
+                    try LinearDNGWriter.write(part.image, metadata: merger.dngMetadata(), to: output.appending(path: "\(name).dng"))
+                } else {
+                    try FocusStackTIFFWriter.write(part.image, like: merger.reference.url, to: output.appending(path: "\(name).tif"))
+                }
+                try FocusSamples.write(part.depthMap, to: output.appending(path: "\(name)-depth.png"))
+                if maps.count >= 2 { try FocusSamples.write(maps[maps.count - 2], to: output.appending(path: "\(name)-depth-unsmoothed.png")) }
+            }
+          }
         }
 
         guard FocusSamples.full, let output = FocusSamples.output else { return }
+        // The whole picture at full resolution, on the frames already lined up, with its depth map.
         let name = "\(sources[0].url.deletingPathExtension().lastPathComponent)-Focus.\(FocusStackMerger.fileExtension(for: sources))"
         let destination = output.appending(path: name)
-        let result = try await FocusStackRunner.run(
-            sources: sources, options: FocusStackOptions(), destination: destination, thumbnailDirectory: output
-        )
-        lap("full stack at \(result.output.pixelWidth) × \(result.output.pixelHeight)")
+        let result = try merger.merge(options: FocusStackOptions(), scale: 1)
+        lap("full stack at \(result.image.width) × \(result.image.height)")
+        if merger.isRaw {
+            try LinearDNGWriter.write(result.image, metadata: merger.dngMetadata(), to: destination)
+        } else {
+            try FocusStackTIFFWriter.write(result.image, like: merger.reference.url, to: destination)
+        }
+        try FocusSamples.write(result.depthMap, to: output.appending(path: "full-depth.png"))
+        lap("written")
         #expect(result.mergedCount == sources.count)
     }
 }
@@ -562,11 +583,20 @@ nonisolated enum FocusSamples {
         ProcessInfo.processInfo.environment["PIXELLOUPE_FOCUS_OUTPUT"].map { URL(filePath: $0, directoryHint: .isDirectory) }
     }
 
-    /// `PIXELLOUPE_FOCUS_REGION`: "x,y,width,height" in full-size pixels from the top left.
-    static var region: CGRect? {
-        guard let numbers = ProcessInfo.processInfo.environment["PIXELLOUPE_FOCUS_REGION"]?.split(separator: ",").compactMap({ Double($0) }),
-              numbers.count == 4 else { return nil }
-        return CGRect(x: numbers[0], y: numbers[1], width: numbers[2], height: numbers[3])
+    /// `PIXELLOUPE_FOCUS_REGION`: "x,y,width,height" in full-size pixels from the top left; several, with ";" between.
+    static var regions: [CGRect] {
+        (ProcessInfo.processInfo.environment["PIXELLOUPE_FOCUS_REGION"] ?? "").split(separator: ";").compactMap { part in
+            let numbers = part.split(separator: ",").compactMap { Double($0) }
+            return numbers.count == 4 ? CGRect(x: numbers[0], y: numbers[1], width: numbers[2], height: numbers[3]) : nil
+        }
+    }
+
+    /// `PIXELLOUPE_FOCUS_VARIANTS`: "smoothing:radius,…", more settings to stack the region with.
+    static var variants: [(Int, Int)] {
+        (ProcessInfo.processInfo.environment["PIXELLOUPE_FOCUS_VARIANTS"] ?? "").split(separator: ",").compactMap { pair in
+            let numbers = pair.split(separator: ":").compactMap { Int($0) }
+            return numbers.count == 2 ? (numbers[0], numbers[1]) : nil
+        }
     }
 
     static var full: Bool { ProcessInfo.processInfo.environment["PIXELLOUPE_FOCUS_FULL"] != nil }

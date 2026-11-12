@@ -103,9 +103,9 @@ nonisolated struct FocusStackResult: Sendable {
 /// The result covers what every frame shows.
 ///
 /// Depth Map: every pixel's contrast is measured in each frame (the size of its brightness's Laplacian,
-/// averaged over Radius), and the frame where it's highest is that pixel's depth. Flat areas, where no
-/// frame stands out, and faint detail beside strong edges (where a frame far out of focus would win: a
-/// halo) take their depth from the detail around them. The depth map is smoothed
+/// averaged over Radius and over a wider area, so that beside an edge the frame where the edge is sharp
+/// wins and not one far out of focus: a halo), and the frame where it's highest is that pixel's depth.
+/// Flat areas, where no frame stands out, take their depth from the detail around them. The depth map is smoothed
 /// (Smoothing), and each pixel is taken from the frame its depth names, or from the two frames a depth
 /// falls between.
 ///
@@ -533,7 +533,7 @@ nonisolated final class FocusStackMerger {
             progress(0.5 * Double(number + 1) / Double(indices.count))
             if let depthMap { depthMap(depthGray(state, last: last)) }
         }
-        let depth = try materialized(filledDepth(state, radius: options.radius, smoothing: options.smoothing, scale: scale), canvas, format: .Rh, bytesPerPixel: 2)
+        let depth = try materialized(filledDepth(state, smoothing: options.smoothing, scale: scale), canvas, format: .Rh, bytesPerPixel: 2)
         let finalDepth = depthGray(depth, last: last)
         depthMap?(finalDepth)
 
@@ -599,8 +599,8 @@ nonisolated final class FocusStackMerger {
         return result
     }
 
-    /// How much detail each pixel of `frame` has, averaged over `radius` (full-size pixels), at two
-    /// sizes. The fine one tells the sharpest frame from the nearly sharp. The coarse one is for edges
+    /// How much detail there is at and around each pixel of `frame`, measured at two sizes and averaged
+    /// over `radius` (full-size pixels) and a wider area. The fine one tells the sharpest frame from the nearly sharp. The coarse one is for edges
     /// that are a little soft in every frame: at the fine size the least soft of them scores next to
     /// nothing, no more than the rim a frame far out of focus leaves around the same edge (a halo), and
     /// at the coarse size it stands well clear of it.
@@ -617,9 +617,18 @@ nonisolated final class FocusStackMerger {
         // frame, which doesn't move, would otherwise win wherever there's nothing but grain.
         let fine = detail(blur: 1, step: max(1, (Self.fineStep * scale).rounded()))
         let coarse = detail(blur: max(1, Self.coarseStep * scale * 0.4), step: max(2, (Self.coarseStep * scale).rounded()))
-        let both = FocusStackKernels.combine.apply(extent: extent, arguments: [fine, coarse, Self.coarseShare]) ?? fine
-        return HDRMerger.filtered(both, "CIGaussianBlur", radius: max(0.5, CGFloat(radius) * scale))
+        let both = (FocusStackKernels.combine.apply(extent: extent, arguments: [fine, coarse, Self.coarseShare]) ?? fine).clampedToExtent()
+        // Averaged over Radius, and over several times Radius as well. Beside an edge, the frames far out
+        // of focus are the only ones with any contrast of their own (the edge's blur spilling over), and
+        // on the near average alone they'd be chosen there: a halo. The wide average takes in the edge
+        // itself, which has far more contrast in the frame where it's sharp than its blur has in any other.
+        let near = both.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: max(0.5, CGFloat(radius) * scale)])
+        let wide = both.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: max(1, Self.wideReach * CGFloat(radius) * scale)])
+        return (FocusStackKernels.combine.apply(extent: extent, arguments: [near, wide, 1]) ?? near).cropped(to: extent)
     }
+
+    /// How many times Radius the wide average of contrast reaches.
+    static let wideReach: CGFloat = 6
 
     /// How far apart (full-size pixels) the pixels compared for fine and for coarse detail are, and how
     /// much the coarse detail counts beside the fine (its band around an edge is that much wider).
@@ -631,13 +640,9 @@ nonisolated final class FocusStackMerger {
     /// a pyramid (see `focusFill`): crisp detail keeps its own depth and decides for the weaker detail
     /// and flat areas near it, and the nearest detail decides for flat areas however far away it is.
     /// Then the map is smoothed over `smoothing`.
-    private func filledDepth(_ state: CIImage, radius: Int, smoothing: Int, scale: CGFloat) -> CIImage {
+    private func filledDepth(_ state: CIImage, smoothing: Int, scale: CGFloat) -> CIImage {
         let extent = state.extent
-        var weighted = FocusStackKernels.weighted.apply(extent: extent, arguments: [state, noiseFloor(state)]) ?? state
-        // Halos: weak detail within a few Radius of much stronger detail has no say (see `focusSuppress`).
-        let strength = HDRMerger.filtered(weighted, "CIGaussianBlur", radius: max(1, Self.haloReach * CGFloat(radius) * scale))
-        weighted = FocusStackKernels.suppress.apply(extent: extent, arguments: [weighted, strength]) ?? weighted
-        var levels = [weighted]
+        var levels = [FocusStackKernels.weighted.apply(extent: extent, arguments: [state, noiseFloor(state)]) ?? state]
         while let last = levels.last, max(last.extent.width, last.extent.height) > 8 {
             levels.append(PanoramaMerger.halved(last))
         }
@@ -655,9 +660,6 @@ nonisolated final class FocusStackMerger {
         let blurred = HDRMerger.filtered(softened, "CIGaussianBlur", radius: max(0.5, Self.smoothingStep * CGFloat(smoothing) * scale))
         return FocusStackKernels.depth.apply(extent: extent, arguments: [blurred]) ?? filled
     }
-
-    /// How far, in Radius, strong detail silences much weaker detail around it.
-    static let haloReach: CGFloat = 6
 
     /// How much of a level's weight carries to the next finer one as the depth map is filled in.
     static let fillReach: Float = 0.6
@@ -813,7 +815,6 @@ nonisolated enum FocusStackKernels {
     static let pick = color("focusPick")
     static let combine = color("focusCombine")
     static let weighted = color("focusWeighted")
-    static let suppress = color("focusSuppress")
     static let fill = load(name: "focusFill") { try CIKernel(functionName: $0, fromMetalLibraryData: $1) }
     static let soften = color("focusSoften")
     static let depth = color("focusDepth")
