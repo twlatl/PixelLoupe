@@ -209,6 +209,74 @@ struct FocusStackTests {
         #expect(steepest(soft) < steepest(hard), "steepest step \(steepest(soft)) with smoothing, \(steepest(hard)) without")
     }
 
+    @Test func weightedAverageWeighsEachBandByTheFrameInFocusThere() throws {
+        var fixture = try FocusFixture()
+        try fixture.addBands(3)
+        let merger = try FocusStackMerger(sources: fixture.sources)
+        var options = sharpest
+        options.method = .weightedAverage
+        var maps: [FocusDepthMap] = []
+        let result = try merger.merge(options: options, scale: 1, depthMap: { maps.append($0) })
+        #expect(result.mergedCount == 3)
+        // It has no depth map to show as it builds.
+        #expect(maps.isEmpty)
+
+        // In the middle of each band, most of the weight is the frame that's in focus there.
+        let weights = try merger.weightMaps(options: options, scale: 1)
+        #expect(weights.frames.count == 3)
+        #expect(weights.width == result.image.width && weights.height == result.image.height)
+        for band in 0..<3 {
+            var shares = [Float](repeating: 0, count: 3)
+            var count: Float = 0
+            for y in stride(from: weights.height / 4, to: weights.height * 3 / 4, by: 7) {
+                for x in stride(from: weights.width * (band * 6 + 2) / 18, to: weights.width * (band * 6 + 4) / 18, by: 5) {
+                    for frame in 0..<3 { shares[frame] += weights.frames[frame][y * weights.width + x] }
+                    count += 1
+                }
+            }
+            #expect(abs(shares.reduce(0, +) / count - 1) < 0.01)
+            #expect(shares[band] / count > 0.8, "band \(band): \(shares.map { $0 / count })")
+        }
+
+        // The result is sharper than the frames' plain average (in each band, one sharp frame and two
+        // blurred ones), and close to the scene.
+        let merged = FocusFixture.green(result.image)
+        let scene = (0..<(fixture.width * fixture.height)).map { fixture.scene($0 % fixture.width, $0 / fixture.width) }
+        let blurred = PanoramaAligner.gaussianBlur(scene, width: fixture.width, height: fixture.height, sigma: 3)
+        let plain = zip(scene, blurred).map { ($0 + 2 * $1) / 3 }
+        for band in 0..<3 {
+            let x = (fixture.width * band / 3 + 20)..<(fixture.width * (band + 1) / 3 - 20)
+            let y = 20..<(result.image.height - 20)
+            let ours = FocusFixture.detail(merged, width: result.image.width, x: x, y: y)
+            let wanted = FocusFixture.detail(scene, width: fixture.width, x: x, y: y)
+            let average = FocusFixture.detail(plain, width: fixture.width, x: x, y: y)
+            #expect(ours > 0.8 * wanted && ours > 1.5 * average, "band \(band): \(ours) of \(wanted), plain average \(average)")
+        }
+    }
+
+    @Test func smoothingSoftensTheWeightedAveragesWeights() throws {
+        var fixture = try FocusFixture()
+        try fixture.addBands(2)
+        let merger = try FocusStackMerger(sources: fixture.sources)
+        // The first frame's share along the middle row.
+        func row(_ smoothing: Int) throws -> [Float] {
+            var options = FocusStackOptions()
+            options.method = .weightedAverage
+            options.smoothing = smoothing
+            let weights = try merger.weightMaps(options: options, scale: 1)
+            let start = weights.height / 2 * weights.width
+            return Array(weights.frames[0][start..<(start + weights.width)])
+        }
+        // All the first frame at one end and none of it at the other, and with more smoothing a gentler
+        // slope where the two frames meet.
+        func steepest(_ row: [Float]) -> Float { zip(row, row.dropFirst()).map { abs($1 - $0) }.max() ?? 0 }
+        let hard = try row(0), soft = try row(10)
+        for row in [hard, soft] {
+            #expect(row[row.count / 8] > 0.9 && row[row.count * 7 / 8] < 0.1, "\(row[row.count / 8]) and \(row[row.count * 7 / 8])")
+        }
+        #expect(steepest(soft) < 0.5 * steepest(hard), "steepest step \(steepest(soft)) with smoothing, \(steepest(hard)) without")
+    }
+
     @Test func linesUpFramesThatMovedScaledAndTurned() throws {
         var fixture = try FocusFixture(width: 640, height: 480)
         let placements = [
@@ -523,13 +591,19 @@ struct FocusStackSampleTests {
         let scale = FocusSamples.regions.isEmpty ? min(1, 2400 / max(merger.nativeSize.width, merger.nativeSize.height)) : 0.05
         var raw: FocusDepthMap?
         var seen = 0
-        let preview = try merger.merge(options: FocusStackOptions(), scale: scale, depthMap: { map in
+        var defaults = FocusStackOptions()
+        defaults.method = FocusSamples.method
+        let preview = try merger.merge(options: defaults, scale: scale, depthMap: { map in
             seen += 1
             if seen == merger.frames.count { raw = map }
         })
         lap("preview at \(preview.image.width) × \(preview.image.height)")
         if let output = FocusSamples.output {
-            try LinearDNGWriter.write(preview.image, metadata: merger.dngMetadata(), to: output.appending(path: "preview.dng"))
+            if merger.isRaw {
+                try LinearDNGWriter.write(preview.image, metadata: merger.dngMetadata(), to: output.appending(path: "preview.dng"))
+            } else {
+                try FocusStackTIFFWriter.write(preview.image, like: merger.reference.url, to: output.appending(path: "preview.tif"))
+            }
             try FocusSamples.write(preview.depthMap, to: output.appending(path: "preview-depth.png"))
             if let raw { try FocusSamples.write(raw, to: output.appending(path: "preview-depth-unsmoothed.png")) }
         }
@@ -539,7 +613,7 @@ struct FocusStackSampleTests {
         if let output = FocusSamples.output {
           for (number, region) in FocusSamples.regions.enumerated() {
             for (smoothing, radius) in [(FocusStackOptions().smoothing, FocusStackOptions().radius)] + FocusSamples.variants {
-                var options = FocusStackOptions()
+                var options = defaults
                 options.smoothing = smoothing
                 options.radius = radius
                 var maps: [FocusDepthMap] = []
@@ -561,7 +635,7 @@ struct FocusStackSampleTests {
         // The whole picture at full resolution, on the frames already lined up, with its depth map.
         let name = "\(sources[0].url.deletingPathExtension().lastPathComponent)-Focus.\(FocusStackMerger.fileExtension(for: sources))"
         let destination = output.appending(path: name)
-        let result = try merger.merge(options: FocusStackOptions(), scale: 1)
+        let result = try merger.merge(options: defaults, scale: 1)
         lap("full stack at \(result.image.width) × \(result.image.height)")
         if merger.isRaw {
             try LinearDNGWriter.write(result.image, metadata: merger.dngMetadata(), to: destination)
@@ -597,6 +671,11 @@ nonisolated enum FocusSamples {
             let numbers = pair.split(separator: ":").compactMap { Int($0) }
             return numbers.count == 2 ? (numbers[0], numbers[1]) : nil
         }
+    }
+
+    /// `PIXELLOUPE_FOCUS_METHOD`: "average" stacks with Weighted Average; otherwise Depth Map.
+    static var method: FocusStackOptions.Method {
+        ProcessInfo.processInfo.environment["PIXELLOUPE_FOCUS_METHOD"] == "average" ? .weightedAverage : .depthMap
     }
 
     static var full: Bool { ProcessInfo.processInfo.environment["PIXELLOUPE_FOCUS_FULL"] != nil }

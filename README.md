@@ -1042,14 +1042,18 @@ again to fit it:
 
 - **Original / Rendered / Depth Map**, under the preview, chooses what it shows: the photo selected in the list, the
   stack, or which photo is sharpest where (the first photo black, the last white). While the stack is being worked out
-  the depth map is shown building, a photo at a time.
+  the depth map is shown building, a photo at a time. Depth Map is for the Depth Map method only.
 - **Source Photos** lists the photos in the order they were taken. Click one to see it; uncheck one to leave it out.
   A photo that doesn't line up with the others (another picture, or a bumped camera) is marked and left out.
 - **Rendering Method**: Depth Map takes every point from the photo where it's sharpest, and is the best choice for
-  most stacks. Weighted Average and Pyramid aren't available yet.
+  most stacks. Weighted Average makes every point the average of all the photos, each counting by how sharp it is
+  there: no photo is chosen outright, so color and contrast stay natural and there are no lines where one photo gives
+  way to the next, but the result is a little softer, and where something near is in front of something far a patch
+  beside its edge can stay blurred. Pick it for short stacks, and when Depth Map leaves blotches or seams. Pyramid isn't available yet.
 - **Radius** (1–50) is the area around each point its sharpness is judged over: smaller keeps fine texture, larger
   reduces halos around strong edges. **Smoothing** (0–10) is how softly the sharp areas of different photos run into
-  each other: higher hides seams, lower keeps the most crispness. Both are in pixels of the full-size photo.
+  each other (for Weighted Average, how far each photo's weights are blurred): higher hides seams, lower keeps the
+  most crispness. Both are in pixels of the full-size photo.
 - **Create Stack** (on by default) stacks the result on top of its sources, in the order they were taken, collapsed.
   **Reset** sets the method, Radius and Smoothing back to their defaults.
 

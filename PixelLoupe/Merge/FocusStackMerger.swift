@@ -88,7 +88,8 @@ nonisolated struct FocusDepthMap: Sendable, Equatable {
 
 nonisolated struct FocusStackResult: Sendable {
     var image: LinearDNGImage
-    /// The depth map the frames were chosen by, after smoothing.
+    /// Which frame is sharpest where, after smoothing: what the Depth Map method chooses the frames by.
+    /// Weighted Average doesn't use it, but has it all the same (it says which frames matter where).
     var depthMap: FocusDepthMap
     /// How many frames went into the result.
     var mergedCount: Int
@@ -108,6 +109,12 @@ nonisolated struct FocusStackResult: Sendable {
 /// Flat areas, where no frame stands out, take their depth from the detail around them. The depth map is smoothed
 /// (Smoothing), and each pixel is taken from the frame its depth names, or from the two frames a depth
 /// falls between.
+///
+/// Weighted Average: every pixel is the average of all the frames, each weighted by its contrast there
+/// (the same measure) against the sharpest frame's, raised to a power so the sharp frames count for
+/// nearly all of it. Smoothing blurs each frame's weights. No frame is chosen outright, so there are no
+/// lines where one frame gives way to another and colors stay as they were, but a deep stack comes out
+/// a little softer than with Depth Map, and edges in front of something far behind keep a faint halo.
 ///
 /// RAW frames are decoded linearly with the first frame's white balance, as the other merges do; the
 /// photos' Develop settings play no part. Frames are read one at a time, twice (once to find the depth
@@ -536,12 +543,45 @@ nonisolated final class FocusStackMerger {
     /// that scale, from the top left of the whole result) limits it to part of the picture, for zooming
     /// in; the depth map is then worked out from that part alone. `progress` gets the fraction done.
     /// `depthMap` gets the depth map as it stands after each frame is looked at, then once more
-    /// smoothed. Throws `CancellationError` when the task is cancelled.
+    /// smoothed (the Depth Map method only). Throws `CancellationError` when the task is cancelled.
     func merge(
         options: FocusStackOptions, scale: CGFloat, excluding: Set<URL> = [], region: CGRect? = nil,
         progress: (Double) -> Void = { _ in }, depthMap: ((FocusDepthMap) -> Void)? = nil
     ) throws -> FocusStackResult {
-        guard options.method == .depthMap else { throw FocusStackError.methodUnavailable(options.method.title) }
+        try stack(options: options, scale: scale, excluding: excluding, region: region, progress: progress, depthMap: depthMap, weights: nil)
+    }
+
+    /// Weighted Average's weights: for each stacked frame, its share of every pixel of the result (top
+    /// row first; a pixel's shares add up to 1). For tests and for looking into a result.
+    func weightMaps(
+        options: FocusStackOptions, scale: CGFloat, excluding: Set<URL> = []
+    ) throws -> (width: Int, height: Int, frames: [[Float]]) {
+        var maps: [[Float]] = []
+        var size = (width: 0, height: 0)
+        var options = options
+        options.method = .weightedAverage
+        _ = try stack(options: options, scale: scale, excluding: excluding, region: nil, progress: { _ in }, depthMap: nil) { weight in
+            let extent = weight.extent
+            size = (Int(extent.width), Int(extent.height))
+            var pixels = [Float](repeating: 0, count: size.width * size.height)
+            self.context.render(weight, toBitmap: &pixels, rowBytes: size.width * 4, bounds: extent, format: .Rf, colorSpace: nil)
+            maps.append(pixels)
+        }
+        for i in 0..<(size.width * size.height) {
+            let total = maps.reduce(Float(0)) { $0 + $1[i] }
+            guard total > 0 else { continue }
+            for frame in maps.indices { maps[frame][i] /= total }
+        }
+        return (size.width, size.height, maps)
+    }
+
+    private func stack(
+        options: FocusStackOptions, scale: CGFloat, excluding: Set<URL>, region: CGRect?,
+        progress: (Double) -> Void, depthMap: ((FocusDepthMap) -> Void)?, weights: ((CIImage) -> Void)?
+    ) throws -> FocusStackResult {
+        guard options.method != .pyramid else { throw FocusStackError.methodUnavailable(options.method.title) }
+        // Weighted Average has no depth map to show.
+        let depthMap = options.method == .depthMap ? depthMap : nil
         try align()
         let indices = included(excluding: excluding)
         guard indices.count >= 2 else { throw FocusStackError.tooFewAligned }
@@ -578,16 +618,44 @@ nonisolated final class FocusStackMerger {
         let finalDepth = depthGray(depth, last: last)
         depthMap?(finalDepth)
 
-        // The pixels: each frame added where the depth map chooses it.
         var sum = try materialized(Self.blank(canvas), canvas, format: .RGBAh, bytesPerPixel: 8)
-        for (number, index) in indices.enumerated() {
-            try Task.checkCancellation()
-            sum = try autoreleasepool {
-                let frame = try warped(index, scale: scale, canvas: canvas)
-                let added = FocusStackKernels.accumulate.apply(extent: canvas, arguments: [sum, frame, depth, Float(number)]) ?? sum
-                return try materialized(added, canvas, format: .RGBAh, bytesPerPixel: 8)
+        if options.method == .weightedAverage {
+            // The pixels: every frame added by its weight, and the weights added up beside them.
+            let floor = noiseFloor(state) * Self.shareFloor
+            let spread = options.smoothing > 0 ? max(0.5, Self.smoothingStep * CGFloat(options.smoothing) * scale) : 0
+            var total = try materialized(Self.blank(canvas), canvas, format: .Rf, bytesPerPixel: 4)
+            for (number, index) in indices.enumerated() {
+                try Task.checkCancellation()
+                (sum, total) = try autoreleasepool {
+                    let frame = try warped(index, scale: scale, canvas: canvas)
+                    let contrast = contrast(of: frame, radius: options.radius, scale: scale)
+                    var weight = FocusStackKernels.share.apply(extent: canvas, arguments: [state, contrast, Self.sharePower, floor]) ?? contrast
+                    if spread > 0 { weight = HDRMerger.filtered(weight, "CIGaussianBlur", radius: spread) }
+                    // Kept as pixels: both sums read it.
+                    weight = try materialized(weight, canvas, format: .Rh, bytesPerPixel: 2)
+                    weights?(weight)
+                    let added = FocusStackKernels.blend.apply(extent: canvas, arguments: [sum, frame, weight]) ?? sum
+                    let counted = FocusStackKernels.total.apply(extent: canvas, arguments: [total, weight]) ?? total
+                    return (
+                        try materialized(added, canvas, format: .RGBAh, bytesPerPixel: 8),
+                        try materialized(counted, canvas, format: .Rf, bytesPerPixel: 4)
+                    )
+                }
+                progress(0.5 + 0.45 * Double(number + 1) / Double(indices.count))
             }
-            progress(0.5 + 0.45 * Double(number + 1) / Double(indices.count))
+            let resolved = FocusStackKernels.resolve.apply(extent: canvas, arguments: [sum, total]) ?? sum
+            sum = try materialized(resolved, canvas, format: .RGBAh, bytesPerPixel: 8)
+        } else {
+            // The pixels: each frame added where the depth map chooses it.
+            for (number, index) in indices.enumerated() {
+                try Task.checkCancellation()
+                sum = try autoreleasepool {
+                    let frame = try warped(index, scale: scale, canvas: canvas)
+                    let added = FocusStackKernels.accumulate.apply(extent: canvas, arguments: [sum, frame, depth, Float(number)]) ?? sum
+                    return try materialized(added, canvas, format: .RGBAh, bytesPerPixel: 8)
+                }
+                progress(0.5 + 0.45 * Double(number + 1) / Double(indices.count))
+            }
         }
 
         // Stored with the brightest value at 1; the DNG's BaselineExposure brings it back.
@@ -701,6 +769,14 @@ nonisolated final class FocusStackMerger {
         let blurred = HDRMerger.filtered(softened, "CIGaussianBlur", radius: max(0.5, Self.smoothingStep * CGFloat(smoothing) * scale))
         return FocusStackKernels.depth.apply(extent: extent, arguments: [blurred]) ?? filled
     }
+
+    /// Weighted Average: the power a frame's contrast, as a fraction of the sharpest frame's, is raised
+    /// to for its weight. Higher is crisper and closer to choosing one frame outright; much lower, and a
+    /// deep stack's many nearly sharp frames soften faint texture and leave a haze around bright edges.
+    static let sharePower: Float = 32
+    /// How much of the noise floor is added to both contrasts before they're compared, so frames with
+    /// nothing but noise weigh alike. More than this, and faint texture is averaged away with the noise.
+    static let shareFloor: Float = 0.1
 
     /// How much of a level's weight carries to the next finer one as the depth map is filled in.
     static let fillReach: Float = 0.6
@@ -866,6 +942,10 @@ nonisolated enum FocusStackKernels {
     static let soften = color("focusSoften")
     static let depth = color("focusDepth")
     static let accumulate = color("focusAccumulate")
+    static let share = color("focusShare")
+    static let blend = color("focusBlend")
+    static let total = color("focusTotal")
+    static let resolve = color("focusResolve")
     static let depthGray = color("focusDepthGray")
 
     private static let library: Data? = Bundle.main.url(forResource: "default", withExtension: "metallib")

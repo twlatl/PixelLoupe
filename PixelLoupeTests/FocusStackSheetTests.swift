@@ -61,8 +61,8 @@ struct FocusStackSheetTests {
         #expect(!sheet.showingControl.isEnabled(forSegment: 0))
         #expect(sheet.showingControl.isEnabled(forSegment: 1) && sheet.showingControl.isEnabled(forSegment: 2))
         #expect(sheet.methodButtons[1].state == .on && sheet.methodButtons[1].isEnabled)
-        // The methods still to come can't be chosen.
-        #expect(!sheet.methodButtons[0].isEnabled && !sheet.methodButtons[2].isEnabled)
+        // Weighted Average can be chosen too; Pyramid, still to come, can't.
+        #expect(sheet.methodButtons[0].isEnabled && !sheet.methodButtons[2].isEnabled)
 
         let stack = try #require(sheet.previewView.image)
         // Clicking a photo in the list shows it.
@@ -83,6 +83,37 @@ struct FocusStackSheetTests {
         #expect(sheet.showing == .rendered)
         #expect(sheet.previewView.image != nil)
         sheet.cancel(nil)
+    }
+
+    @Test func weightedAverageHasNoDepthMapToShow() async throws {
+        var fixture = try FocusFixture()
+        try fixture.addBands(3)
+        let sheet = try makeSheet(fixture)
+        await waitUntil("the first preview") { sheet.mergeButton.isEnabled && sheet.hasRenderedPreview }
+        let depthMapStack = try #require(sheet.previewView.image)
+
+        // Looking at the depth map, then choosing Weighted Average: back to the stack, and no Depth Map.
+        sheet.showingControl.selectedSegment = FocusStackSheetController.Showing.depthMap.rawValue
+        _ = sheet.showingControl.sendAction(sheet.showingControl.action, to: sheet.showingControl.target)
+        #expect(sheet.showing == .depthMap)
+        sheet.methodButtons[0].performClick(nil)
+        #expect(sheet.options.method == .weightedAverage)
+        #expect(sheet.methodButtons[0].state == .on && sheet.methodButtons[1].state == .off)
+        #expect(sheet.showing == .rendered)
+        #expect(sheet.showingControl.isEnabled(forSegment: 1) && !sheet.showingControl.isEnabled(forSegment: 2))
+        // It keeps Radius and Smoothing.
+        #expect(sheet.radiusSlider.isEnabled && sheet.smoothingSlider.isEnabled)
+        await waitUntil("the weighted average") { sheet.hasRenderedPreview && sheet.previewView.image !== depthMapStack }
+
+        // Depth Map again has its map.
+        sheet.methodButtons[1].performClick(nil)
+        #expect(sheet.options.method == .depthMap && sheet.showingControl.isEnabled(forSegment: 2))
+
+        sheet.methodButtons[0].performClick(nil)
+        var finished: (options: FocusStackOptions, excluding: Set<URL>)?
+        sheet.onFinish = { finished = $0 }
+        sheet.merge(nil)
+        #expect(finished?.options.method == .weightedAverage)
     }
 
     @Test func uncheckingPhotosLeavesThemOutAndNeedsTwoToMerge() async throws {
