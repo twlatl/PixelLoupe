@@ -1,6 +1,8 @@
 import AppKit
+import CoreData
 
-/// Photo ▸ Locate Missing Photo…, and Find Missing Folder… in the Folders list's context menu.
+/// Photo ▸ Locate Missing Photo… (also in the grid's context menu on a missing photo), and Find Missing
+/// Folder… in the Folders list's context menu.
 extension CatalogWindowController {
     /// The first selected photo whose file can't be found.
     var missingSelectedPhoto: Photo? {
@@ -9,9 +11,17 @@ extension CatalogWindowController {
             .first { store.availability.isMissing($0.id) }
     }
 
+    /// The photo Locate Missing Photo… would locate: the one the grid's context menu was opened on (the
+    /// item's represented object), or else the first missing selected photo. Nil when it isn't missing.
+    func photoToLocate(for sender: Any?) -> Photo? {
+        guard let id = (sender as? NSMenuItem)?.representedObject as? NSManagedObjectID else { return missingSelectedPhoto }
+        guard let photo = try? store.viewContext.existingObject(with: id) as? Photo, store.availability.isMissing(photo.id) else { return nil }
+        return photo
+    }
+
     /// Asks for the photo's file and points the photo at it.
     @objc func locateMissingPhoto(_ sender: Any?) {
-        guard let photo = missingSelectedPhoto, let window, window.attachedSheet == nil else { return }
+        guard let photo = photoToLocate(for: sender), let window, window.attachedSheet == nil else { return }
         let panel = NSOpenPanel()
         panel.message = "Locate “\(photo.fileName)”"
         panel.prompt = "Locate"
