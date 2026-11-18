@@ -631,6 +631,15 @@ final class GridViewController: NSViewController, NSCollectionViewDelegate, NSFe
         let reveal = NSMenuItem(title: "Show in Finder", action: #selector(revealInFinder(_:)), keyEquivalent: "")
         reveal.target = self
         menu.addItem(reveal)
+        // Only on a photo whose file can't be found; handled by the catalog window, like Photo ▸ Locate
+        // Missing Photo…, for the photo clicked rather than the first missing one selected.
+        if let clickedPhoto, let photo = try? store.viewContext.existingObject(with: clickedPhoto) as? Photo,
+           store.availability.isMissing(photo.id) {
+            let locate = NSMenuItem(title: "Locate Missing Photo…", action: #selector(PixelLoupeActions.locateMissingPhoto(_:)), keyEquivalent: "")
+            locate.representedObject = clickedPhoto
+            locate.setAccessibilityIdentifier("contextLocateMissingPhoto")
+            menu.addItem(locate)
+        }
         return menu
     }
 

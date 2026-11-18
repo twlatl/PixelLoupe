@@ -1,3 +1,4 @@
+import AppKit
 import CoreData
 import Foundation
 import Testing
@@ -250,6 +251,35 @@ struct MissingFilesTests {
         #expect(undo.undoActionName == "Locate Photo")
         undo.undo()
         #expect(c.fileName == "C.jpg" && c.filePath.hasSuffix("/Gone/C.jpg"))
+    }
+
+    @Test("The grid's context menu offers Locate Missing Photo… on a missing photo, for the photo clicked")
+    func contextMenuLocatesTheClickedPhoto() async throws {
+        let setup = try makeSetup()
+        let a = setup.photos["A.jpg"]!, b = setup.photos["B.jpg"]!, c = setup.photos["C.jpg"]!
+        setup.store.availability.set(missing: [b.id, c.id], offlineFolders: [])
+        let controller = CatalogWindowController(store: setup.store)
+        controller.showWindow(nil)
+        defer { controller.close() }
+        let grid = controller.rootViewController.main.library.grid
+
+        controller.state.selectedPhotoIDs = [a.objectID]
+        #expect(grid.contextMenu(clickedPhoto: a.objectID).item(withTitle: "Locate Missing Photo…") == nil, "A's file is there")
+
+        // B and C are both missing and selected; the item locates C, the one clicked, not the first missing.
+        controller.state.selectedPhotoIDs = [a.objectID, b.objectID, c.objectID]
+        let item = try #require(grid.contextMenu(clickedPhoto: c.objectID).item(withTitle: "Locate Missing Photo…"))
+        #expect(item.action == #selector(PixelLoupeActions.locateMissingPhoto(_:)))
+        #expect(item.representedObject as? NSManagedObjectID == c.objectID)
+        #expect(controller.validateUserInterfaceItem(item))
+        #expect(controller.photoToLocate(for: item) === c)
+        // Photo ▸ Locate Missing Photo… (no represented object) still takes the first missing selected photo.
+        #expect(controller.photoToLocate(for: nil)?.id == controller.missingSelectedPhoto?.id)
+
+        // Once found, the item from a menu already open does nothing.
+        setup.store.availability.set(missing: [b.id], offlineFolders: [])
+        #expect(!controller.validateUserInterfaceItem(item))
+        #expect(grid.contextMenu(clickedPhoto: c.objectID).item(withTitle: "Locate Missing Photo…") == nil)
     }
 
     @Test("Develop and previews decline a missing file instead of failing")

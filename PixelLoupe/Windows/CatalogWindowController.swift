@@ -1222,7 +1222,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         case #selector(importPhotos(_:)):
             return importTask == nil
         case #selector(locateMissingPhoto(_:)):
-            return missingSelectedPhoto != nil
+            return photoToLocate(for: item) != nil
         case #selector(findMissingFolder(_:)):
             return window?.attachedSheet == nil
         case #selector(showLightroomImportReport(_:)):
