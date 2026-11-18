@@ -1,7 +1,8 @@
 #!/bin/zsh
 # Builds PixelLoupe for distribution: archives a Release build signed with Developer ID, packages it in
-# a disk image with an Applications shortcut, then notarizes and staples the disk image. The release
-# workflow (.github/workflows/release.yml) runs it for each version tag; it runs on a Mac too.
+# a disk image with an Applications shortcut (laid out over a background that says to drag the app onto it),
+# then notarizes and staples the disk image. The release workflow (.github/workflows/release.yml) runs it for
+# each version tag; it runs on a Mac too.
 #
 #   Scripts/release.sh <version> [<name>] [<output folder>]
 #
@@ -114,6 +115,13 @@ sign_flags=()
 (( adhoc )) || sign_flags+=(--timestamp)
 [[ -n "${KEYCHAIN:-}" ]] && sign_flags+=(--keychain "$KEYCHAIN")
 
+# dmgbuild lays out the disk image's Finder window (background, icon positions) by writing its .DS_Store
+# directly, so it works without Finder or a logged-in session. It goes in a virtual environment for this run
+# only, before building, so a failed download doesn't surface after the build.
+step "Installing dmgbuild"
+/usr/bin/python3 -m venv "$work/venv"
+"$work/venv/bin/pip" install --quiet --disable-pip-version-check dmgbuild==1.6.5
+
 step "Archiving PixelLoupe $version ($build) (Release, signed by \"$identity\")"
 xcodebuild archive \
   -project PixelLoupe.xcodeproj -scheme PixelLoupe -configuration Release \
@@ -162,12 +170,12 @@ shipped_build=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$app/Conten
 [[ "$shipped_build" == "$build" ]] || { print -u2 "The app says it's build $shipped_build, not $build."; exit 1 }
 
 step "Making $dmg"
-mkdir "$work/image"
-ditto "$app" "$work/image/PixelLoupe.app"
-ln -s /Applications "$work/image/Applications"
 rm -f "$dmg"
-# APFS with LZFSE compression (ULFO), which Sparkle recommends: quicker to open than zlib's UDZO.
-diskutil image create from --format ULFO --volumeName "PixelLoupe $name" "$work/image" "$dmg" > /dev/null
+# PixelLoupe.app and an Applications shortcut over Scripts/dmg/background.tiff, as APFS with LZFSE
+# compression (ULFO), which Sparkle recommends: quicker to open than zlib's UDZO. See Scripts/dmg/settings.py.
+"$work/venv/bin/dmgbuild" -s Scripts/dmg/settings.py -D app="$app" -D background=Scripts/dmg/background.tiff \
+  "PixelLoupe $name" "$dmg" > "$work/dmgbuild.log" 2>&1 \
+  || { cat "$work/dmgbuild.log" >&2; print -u2 "dmgbuild couldn't make the disk image."; exit 1 }
 (( adhoc )) || codesign --sign "$identity" "${sign_flags[@]}" "$dmg"
 
 if (( ${#credentials} )); then
