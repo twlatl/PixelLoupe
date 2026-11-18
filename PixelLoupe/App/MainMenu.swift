@@ -3,6 +3,7 @@ import AppKit
 /// Selectors handled along the responder chain by the catalog window and Library views.
 @objc protocol PixelLoupeActions {
     @objc optional func showAbout(_ sender: Any?)
+    @objc optional func showSupport(_ sender: Any?)
     @objc optional func newCatalog(_ sender: Any?)
     @objc optional func checkForUpdates(_ sender: Any?)
     @objc optional func openCatalogDocument(_ sender: Any?)
@@ -170,6 +171,7 @@ enum MainMenu {
         mainMenu.addItem(submenuItem(windowMenu))
         NSApp.windowsMenu = windowMenu
         let helpMenu = NSMenu(title: "Help")
+        helpMenu.addItem(item("PixelLoupe Support", #selector(PixelLoupeActions.showSupport(_:))))
         mainMenu.addItem(submenuItem(helpMenu))
         NSApp.helpMenu = helpMenu
         return mainMenu

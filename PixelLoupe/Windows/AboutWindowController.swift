@@ -1,8 +1,8 @@
 import AppKit
 import QuartzCore
 
-/// PixelLoupe ▸ About PixelLoupe: laid out like the welcome window, with the app icon, version and
-/// credits (`Credits.html`) on the left and the featured photo on the right.
+/// PixelLoupe ▸ About PixelLoupe: laid out like the welcome window, with the app icon, version,
+/// credits (`Credits.html`) and a Buy Me a Coffee button on the left and the featured photo on the right.
 ///
 /// Opened with ⌥⌘ held, it shows the build number in place of the version and a secret photo instead, and
 /// the credits roll up from the bottom like a film's, at twice the speed for as long as ⌥⌘ stay held (see
@@ -15,6 +15,10 @@ final class AboutWindowController: NSWindowController, NSWindowDelegate {
     private(set) var versionLabel: NSTextField!
     private(set) var creditsView: NSTextView!
     private(set) var creditsScrollView: NSScrollView!
+    /// Under the credits: opens PixelLoupe's Buy Me a Coffee page.
+    private(set) var buyMeACoffeeButton: NSButton!
+    /// Opens a URL (a stand-in in tests).
+    var openURL: (URL) -> Void = { NSWorkspace.shared.open($0) }
     /// Whether the credits are rolling: About was opened with ⌥⌘ held.
     private(set) var rollsCredits = false
     /// The keys held down, read every frame for the roll's speed (a stand-in in tests).
@@ -96,6 +100,34 @@ final class AboutWindowController: NSWindowController, NSWindowDelegate {
         guard rollsCredits else { return }
         scrollCredits(to: CreditsRoll.offset(after: elapsed, from: creditsOffset, length: creditsLength, holding: modifierFlags()))
     }
+
+    @objc func buyMeACoffee(_ sender: Any?) {
+        openURL(SupportLinks.buyMeACoffee)
+    }
+
+    /// Buy Me a Coffee's own button colors (yellow, with black text and outline), drawn as a native
+    /// push button with a coffee cup, in place of the web button their script draws.
+    static func makeBuyMeACoffeeButton(target: AnyObject?, action: Selector) -> NSButton {
+        let button = NSButton(title: "Buy me a coffee", image: NSImage(systemSymbolName: "cup.and.saucer.fill", accessibilityDescription: nil)!,
+                              target: target, action: action)
+        button.imagePosition = .imageLeading
+        button.bezelStyle = .push
+        button.controlSize = .large
+        button.bezelColor = buyMeACoffeeYellow
+        button.tintProminence = .primary
+        button.contentTintColor = .black
+        button.attributedTitle = NSAttributedString(string: button.title, attributes: [
+            .foregroundColor: NSColor.black, .font: NSFont.systemFont(ofSize: NSFont.systemFontSize(for: .large), weight: .semibold),
+        ])
+        button.toolTip = SupportLinks.buyMeACoffee.absoluteString
+        button.setAccessibilityLabel("Buy Me a Coffee")
+        button.setAccessibilityHelp("Support the continued development of PixelLoupe")
+        button.setAccessibilityIdentifier("aboutBuyMeACoffee")
+        return button
+    }
+
+    /// #FFDD00, Buy Me a Coffee's yellow, the same in light and dark appearance (as on their site).
+    static let buyMeACoffeeYellow = NSColor(srgbRed: 1, green: 0xDD / 255, blue: 0, alpha: 1)
 
     func windowWillClose(_ notification: Notification) {
         stopRolling()
@@ -182,8 +214,11 @@ final class AboutWindowController: NSWindowController, NSWindowDelegate {
         creditsScrollView = scroll
         creditsView = text
 
+        let coffee = Self.makeBuyMeACoffeeButton(target: self, action: #selector(buyMeACoffee(_:)))
+        buyMeACoffeeButton = coffee
+
         let sidebar = NSView()
-        for view in [header, scroll] {
+        for view in [header, scroll, coffee] {
             view.translatesAutoresizingMaskIntoConstraints = false
             sidebar.addSubview(view)
         }
@@ -193,7 +228,9 @@ final class AboutWindowController: NSWindowController, NSWindowDelegate {
             scroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 22),
             scroll.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 44),
             scroll.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -44),
-            scroll.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor, constant: -32),
+            coffee.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 16),
+            coffee.centerXAnchor.constraint(equalTo: sidebar.centerXAnchor),
+            coffee.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor, constant: -32),
         ])
         return sidebar
     }
