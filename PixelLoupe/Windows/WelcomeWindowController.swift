@@ -10,8 +10,8 @@ final class WelcomeWindowController: NSWindowController {
     /// The featured photo and its caption.
     enum FeaturedPhoto {
         static let title = "Atlanta"
-        static let credit = "Photo by TED · Williams Street Bridge, Atlanta"
-        static let accessibilityDescription = "A long exposure photograph of downtown Atlanta"
+        static let credit = "Photo by TED · Marriott Marquis, Atlanta"
+        static let accessibilityDescription = "A black-and-white photograph looking up the atrium of the Atlanta Marriott Marquis"
     }
 
     private let recentMenu = RecentCatalogsMenu(header: "Recent Catalogs", keepingFirst: 1)
