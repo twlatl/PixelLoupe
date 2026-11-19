@@ -401,30 +401,38 @@ struct DNGCameraProfileRenderingTests {
         func allViews(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(allViews) }
         let popUp = try #require(allViews(panel.view).first { $0.accessibilityIdentifier() == "profilePopUp" } as? NSPopUpButton)
         func group(_ title: String) -> [String]? { popUp.menu?.items.first { $0.submenu?.title == title }?.submenu?.items.map(\.title) }
+        /// The menu itself, a separator as "-".
+        func titles() -> [String] { (popUp.menu?.items ?? []).map { $0.isSeparatorItem ? "-" : $0.title } }
+        let own = ["Default", "Neutral", "Vivid", "Landscape", "Portrait", "Monochrome"]
+        let picked = ["Classic Look (Sony ILCE-7CM2)", "Classic Look (Sony ILCE-7M4)", "Soft Look"]
 
-        // Whatever the camera; profiles of one name are told apart by theirs.
+        // In the menu itself, after PixelLoupe's own looks and a separator, whatever the camera; profiles of one name
+        // are told apart by theirs.
         for camera in ["ILCE-7CR", "NIKON Z 9"] {
             panel.cameraModel = camera
-            #expect(group("Profiles") == ["Classic Look (Sony ILCE-7CM2)", "Classic Look (Sony ILCE-7M4)", "Soft Look"])
-            #expect(group("Camera Matching") == nil)
+            #expect(titles() == own + ["-"] + picked)
+            #expect(group("Profiles") == nil && group("Camera Matching") == nil)
         }
-        // One kept to its camera shows for that camera only.
+        // One kept to its camera shows for that camera only, in its group after another separator.
         panel.cameraModel = "NIKON Z 8"
+        #expect(titles() == own + ["-"] + picked + ["-", "Camera Matching"])
         #expect(group("Camera Matching") == ["Camera Standard"])
 
         // Choosing one names it in the photo's settings.
         var changed: PhotoAdjustments?
         panel.onChange = { adjustments, _, _ in changed = adjustments }
-        let item = try #require(popUp.menu?.items.first { $0.submenu?.title == "Profiles" }?.submenu?.items.first)
+        let item = try #require(popUp.menu?.item(withTitle: picked[0]))
         _ = item.target?.perform(item.action, with: item)
         #expect(changed?.profile.adobeID == classic.id && changed?.profile.importedName == "Classic Look")
         #expect(popUp.toolTip == "Camera profile, rendered from its own tables and tone curve")
+        // The pop-up shows it where it's listed, not as an extra item at the end.
+        #expect(popUp.titleOfSelectedItem == picked[0] && titles() == own + ["-"] + picked + ["-", "Camera Matching"])
 
         // Not for photos that aren't RAW.
         panel.display(PhotoAdjustments(), asShotWhiteBalance: (6500, 0), isRaw: false)
-        #expect(group("Profiles") == nil)
+        #expect(titles() == own)
         panel.display(PhotoAdjustments(), asShotWhiteBalance: (5200, 4), isRaw: true)
-        #expect(group("Profiles")?.count == 3)
+        #expect(titles() == own + ["-"] + picked + ["-", "Camera Matching"])
     }
 
     // MARK: - Lightroom's own camera profiles (RAW-305)
@@ -470,7 +478,7 @@ struct DNGCameraProfileRenderingTests {
         let popUp = try #require(allViews(panel.view).first { $0.accessibilityIdentifier() == "profilePopUp" } as? NSPopUpButton)
         func group(_ title: String) -> [String]? { popUp.menu?.items.first { $0.submenu?.title == title }?.submenu?.items.map(\.title) }
         panel.cameraModel = "ILCE-7CM2"
-        #expect(group("Camera Matching") == ["Adobe Standard", "Camera Standard", "Camera Vivid"] && group("Profiles") == nil)
+        #expect(group("Camera Matching") == ["Adobe Standard", "Camera Standard", "Camera Vivid"])
         panel.cameraModel = "ILCE-7M4"
         #expect(group("Camera Matching") == nil)
     }

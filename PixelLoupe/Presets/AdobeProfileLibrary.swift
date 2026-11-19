@@ -27,7 +27,8 @@ nonisolated final class AdobeProfileLibrary: @unchecked Sendable {
         var isCameraProfile: Bool { cameraProfileModel != nil }
     }
 
-    /// The group of the Profile menu that camera profiles the user picked are listed in, as in Lightroom.
+    /// The group camera profiles the user picked are indexed under. The Profile menu lists them in the menu itself,
+    /// not in a submenu of this name.
     static let cameraProfileGroup = "Profiles"
 
     let directory: URL

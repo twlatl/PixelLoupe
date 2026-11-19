@@ -810,8 +810,8 @@ Adobe's, so results are close to Lightroom's rather than identical.
 **Import Profiles & Presets…** (the Presets panel's options menu) also takes DNG camera profiles, `.dcp` files: the
 format of Lightroom's camera profiles, of custom ones (ColorChecker Camera Calibration, Lumariver, dcamprof) and of the
 film looks people publish for cameras that never had them. They're copied into
-`~/Library/Application Support/Pixegen/PixelLoupe/Profiles/Camera Profiles`, and the Profile pop-up lists them in a
-**Profiles** group, under the name in the file, for every RAW photo: a profile made for one camera can be used on
+`~/Library/Application Support/Pixegen/PixelLoupe/Profiles/Camera Profiles`, and the Profile pop-up lists them in the
+menu itself, after PixelLoupe's own looks and a separator, under the name in the file, for every RAW photo: a profile made for one camera can be used on
 another's photos. (Two profiles of the same name show their cameras.) They aren't offered for JPEGs and other photos
 that aren't RAW. Importing a newer copy of a profile replaces it.
 
