@@ -1,8 +1,8 @@
 import Foundation
 
-/// The Adobe profiles imported into PixelLoupe, in `~/Library/Application Support/Pixegen/PixelLoupe/Profiles`,
-/// with an index (name, UUID, group, camera) so finding one is quick; a profile's tables are decoded
-/// when it's first used. Safe from any thread: the renderer, the catalog import and presets all use it.
+/// The profiles imported into PixelLoupe, in `~/Library/Application Support/Pixegen/PixelLoupe/Profiles`: Adobe
+/// profiles (`.xmp` looks) and DNG camera profiles (`.dcp`, RAW-126), with an index (name, id, group, camera) so
+/// finding one is quick; a profile's tables are decoded when it's first used. Safe from any thread: the renderer, the catalog import and presets all use it.
 nonisolated final class AdobeProfileLibrary: @unchecked Sendable {
     static let shared = AdobeProfileLibrary(directory: defaultDirectory)
 
@@ -20,7 +20,15 @@ nonisolated final class AdobeProfileLibrary: @unchecked Sendable {
         var isMonochrome: Bool
         /// The file, relative to the library folder.
         var file: String
+        /// For a DNG camera profile (`.dcp`), the camera it was made for; nil for Adobe's `.xmp` profiles. A camera
+        /// profile the user picked has no `cameraModel`, so it's offered for every camera (RAW-126).
+        var cameraProfileModel: String?
+
+        var isCameraProfile: Bool { cameraProfileModel != nil }
     }
+
+    /// The group of the Profile menu that camera profiles the user picked are listed in, as in Lightroom.
+    static let cameraProfileGroup = "Profiles"
 
     let directory: URL
     private let lock = NSLock()
@@ -31,6 +39,13 @@ nonisolated final class AdobeProfileLibrary: @unchecked Sendable {
     private var cubeCache: [String: [AdobeProfile.Cube]] = [:]
     private var hiddenCache: [String: PhotoAdjustments] = [:]
     private var cubeOrder: [String] = []
+    private var cameraProfiles: [String: DNGCameraProfile] = [:]
+    /// Whether a camera profile's hue/saturation map is applied to photos from its own camera. Off: the map refines
+    /// the profile's matrices, which Apple's RAW engine doesn't use, and on top of the engine's own colors it
+    /// oversaturates them (measured on Sony profiles, RAW-304). `Scripts/camera-profiles.sh` renders both ways.
+    var appliesHueSaturationMaps = false
+    /// Camera profiles added in memory only (tests).
+    private var registeredCameraProfiles: [String: DNGCameraProfile] = [:]
 
     init(directory: URL) {
         self.directory = directory
@@ -43,9 +58,10 @@ nonisolated final class AdobeProfileLibrary: @unchecked Sendable {
     /// Every profile, sorted by group and name.
     var allEntries: [Entry] {
         withIndex { Array($0.values) }.sorted {
-            $0.group != $1.group
-                ? $0.group.localizedStandardCompare($1.group) == .orderedAscending
-                : $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            if $0.group != $1.group { return $0.group.localizedStandardCompare($1.group) == .orderedAscending }
+            if $0.name != $1.name { return $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            // Camera profiles of one name, for different cameras.
+            return $0.id < $1.id
         }
     }
 
@@ -68,7 +84,7 @@ nonisolated final class AdobeProfileLibrary: @unchecked Sendable {
         lock.lock()
         if let profile = registered[id] ?? loaded[id] { lock.unlock(); return profile }
         lock.unlock()
-        guard let entry = entry(id: id), let profile = AdobeProfile.load(directory.appending(path: entry.file)) else { return nil }
+        guard let entry = entry(id: id), !entry.isCameraProfile, let profile = AdobeProfile.load(directory.appending(path: entry.file)) else { return nil }
         lock.lock()
         loaded[id] = profile
         lock.unlock()
@@ -89,6 +105,95 @@ nonisolated final class AdobeProfileLibrary: @unchecked Sendable {
         if cubeOrder.count > 12 { cubeCache[cubeOrder.removeFirst()] = nil }
         lock.unlock()
         return cubes
+    }
+
+    // MARK: - Camera profiles
+
+    /// A DNG camera profile, read (once).
+    func cameraProfile(id: String) -> DNGCameraProfile? {
+        guard id.hasPrefix(DNGCameraProfile.idPrefix) else { return nil }
+        lock.lock()
+        if let profile = registeredCameraProfiles[id] ?? cameraProfiles[id] { lock.unlock(); return profile }
+        lock.unlock()
+        guard let entry = entry(id: id), entry.isCameraProfile, !entry.file.isEmpty,
+              let profile = DNGCameraProfile.load(directory.appending(path: entry.file)) else { return nil }
+        lock.lock()
+        cameraProfiles[id] = profile
+        lock.unlock()
+        return profile
+    }
+
+    /// The cube for a camera profile on a photo: its look table at an amount, and its tone curve. With
+    /// ``appliesHueSaturationMaps``, also its hue/saturation map when the photo is from the profile's own camera, for
+    /// the light the photo's white balance says (`temperature`, kelvins), taken in steps so dragging Temperature
+    /// doesn't bake a cube for every value on the way. Cached for the last few used.
+    func cameraProfileCube(id: String, amount: Double, temperature: Double, cameraMake: String?, cameraModel: String?) -> AdobeProfile.Cube? {
+        guard let profile = cameraProfile(id: id) else { return nil }
+        let usesCalibration = appliesHueSaturationMaps && profile.isFor(cameraMake: cameraMake, model: cameraModel)
+        let amount = profile.lookTable == nil ? 0 : (amount * 100).rounded() / 100
+        let weight = usesCalibration ? (profile.firstCalibrationWeight(temperature: temperature) * 16).rounded() / 16 : 1
+        let key = "\(id)|\(amount)|\(usesCalibration ? weight : -1)"
+        lock.lock()
+        if let cube = cubeCache[key]?.first { lock.unlock(); return cube }
+        lock.unlock()
+        let cube = profile.cube(amount: amount, firstCalibrationWeight: weight, usesCalibration: usesCalibration)
+        lock.lock()
+        cubeCache[key] = [cube]
+        cubeOrder.append(key)
+        if cubeOrder.count > 12 { cubeCache[cubeOrder.removeFirst()] = nil }
+        lock.unlock()
+        return cube
+    }
+
+    /// Adds a camera profile in memory only, for tests: offered for every camera unless `forItsCameraOnly`.
+    func register(_ profile: DNGCameraProfile, forItsCameraOnly: Bool = false) {
+        lock.lock()
+        registeredCameraProfiles[profile.id] = profile
+        var index = entries ?? [:]
+        index[profile.id] = Self.entry(for: profile, forItsCameraOnly: forItsCameraOnly, file: "")
+        entries = index
+        cubeCache = cubeCache.filter { !$0.key.hasPrefix(profile.id + "|") }
+        lock.unlock()
+    }
+
+    private static func entry(for profile: DNGCameraProfile, forItsCameraOnly: Bool, file: String) -> Entry {
+        Entry(id: profile.id, name: profile.name, group: cameraProfileGroup, cameraModel: forItsCameraOnly ? profile.cameraModel : "",
+              isMonochrome: false, file: file, cameraProfileModel: profile.cameraModel)
+    }
+
+    /// Where a camera profile is kept in the library: picked ones in "Camera Profiles", ones that stay with their
+    /// camera beside the `.xmp` camera-matching profiles in "Camera".
+    private static func file(for profile: DNGCameraProfile, forItsCameraOnly: Bool) -> String {
+        (forItsCameraOnly ? "Camera/" : "Camera Profiles/") + PresetLibrary.safeName(profile.cameraModel.nonEmpty ?? "Any Camera")
+            + "/" + PresetLibrary.safeName(profile.name) + ".dcp"
+    }
+
+    /// Copies a DNG camera profile (`.dcp`) into the library and indexes it. A profile the user picked is offered for
+    /// every camera; `forItsCameraOnly` keeps it to the camera it names. Returns whether it was a camera profile
+    /// (one without a name has nothing to be listed by, and isn't).
+    @discardableResult
+    func importCameraProfile(_ file: URL, forItsCameraOnly: Bool = false) -> Bool {
+        guard let profile = DNGCameraProfile.load(file), !profile.name.isEmpty else { return false }
+        let relative = Self.file(for: profile, forItsCameraOnly: forItsCameraOnly)
+        let destination = directory.appending(path: relative)
+        let fileManager = FileManager.default
+        do {
+            try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if destination.standardizedFileURL != file.standardizedFileURL {
+                if fileManager.fileExists(atPath: destination.path(percentEncoded: false)) { try fileManager.removeItem(at: destination) }
+                try fileManager.copyItem(at: file, to: destination)
+            }
+        } catch {
+            return false
+        }
+        lock.lock()
+        var index = entries ?? readIndexUnlocked()
+        index[profile.id] = Self.entry(for: profile, forItsCameraOnly: forItsCameraOnly, file: relative)
+        entries = index
+        cameraProfiles[profile.id] = nil
+        cubeCache = cubeCache.filter { !$0.key.hasPrefix(profile.id + "|") }
+        lock.unlock()
+        return true
     }
 
     /// The settings that come inside a profile (Adobe Vivid's clarity and curve, a B&W profile's
@@ -148,6 +253,13 @@ nonisolated final class AdobeProfileLibrary: @unchecked Sendable {
             let relative = String(url.standardizedFileURL.path(percentEncoded: false).dropFirst(directory.standardizedFileURL.path(percentEncoded: false).count))
             index[profile.id] = Entry(id: profile.id, name: profile.name, group: profile.group, cameraModel: profile.cameraModel,
                                       isMonochrome: profile.isMonochrome, file: relative.hasPrefix("/") ? String(relative.dropFirst()) : relative)
+        }
+        for (url, _) in PresetLibrary.presetFiles(in: directory, extensions: ["dcp"]) {
+            guard let profile = DNGCameraProfile.load(url), !profile.name.isEmpty else { continue }
+            var relative = String(url.standardizedFileURL.path(percentEncoded: false).dropFirst(directory.standardizedFileURL.path(percentEncoded: false).count))
+            if relative.hasPrefix("/") { relative.removeFirst() }
+            // Where it was filed says how it was imported.
+            index[profile.id] = entry(for: profile, forItsCameraOnly: relative.hasPrefix("Camera/"), file: relative)
         }
         return index
     }

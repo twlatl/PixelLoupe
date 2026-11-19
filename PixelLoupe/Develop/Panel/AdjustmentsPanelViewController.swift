@@ -382,7 +382,11 @@ final class AdjustmentsPanelViewController: NSViewController {
             menu.addItem(withTitle: kind.title, action: nil, keyEquivalent: "").representedObject = ProfileChoice(kind: kind, adobe: nil)
         }
         profileTargets = []
-        let entries = profiles.allEntries.filter { $0.cameraModel.isEmpty || AdobeProfile.normalized($0.cameraModel) == cameraModel.map(AdobeProfile.normalized) }
+        // Camera profiles (.dcp) work in the RAW engine, so they're offered for RAW photos only.
+        let entries = profiles.allEntries.filter {
+            ($0.cameraModel.isEmpty || AdobeProfile.normalized($0.cameraModel) == cameraModel.map(AdobeProfile.normalized))
+                && (isRaw || !$0.isCameraProfile)
+        }
         if !entries.isEmpty {
             menu.addItem(.separator())
             let groups = Dictionary(grouping: entries) { $0.cameraModel.isEmpty ? $0.group : "Camera Matching" }
@@ -390,8 +394,11 @@ final class AdjustmentsPanelViewController: NSViewController {
                 let item = NSMenuItem(title: group, action: nil, keyEquivalent: "")
                 let submenu = NSMenu(title: group)
                 submenu.delegate = profilePreview
+                let names = NSCountedSet(array: (groups[group] ?? []).map(\.name))
                 for entry in groups[group] ?? [] {
-                    let choice = NSMenuItem(title: entry.name, action: #selector(ActionTarget.fire(_:)), keyEquivalent: "")
+                    // Camera profiles of the same name for different cameras are told apart by their camera.
+                    let title = names.count(for: entry.name) > 1 ? entry.cameraProfileModel?.nonEmpty.map { "\(entry.name) (\($0))" } : nil
+                    let choice = NSMenuItem(title: title ?? entry.name, action: #selector(ActionTarget.fire(_:)), keyEquivalent: "")
                     choice.representedObject = ProfileChoice(kind: .standard, adobe: entry)
                     let target = ActionTarget { [weak self] _ in self?.chooseProfile(kind: .standard, adobe: entry) }
                     choice.target = target
@@ -411,8 +418,9 @@ final class AdjustmentsPanelViewController: NSViewController {
         }
         popUp.menu = menu
         popUp.selectItem(at: selected)
-        popUp.toolTip = profile.adobeID != nil
-            ? "Adobe profile, rendered from its own tables"
+        popUp.toolTip = profile.adobeID.flatMap { profiles.entry(id: $0) }?.isCameraProfile == true
+            ? "Camera profile, rendered from its own tables and tone curve"
+            : profile.adobeID != nil ? "Adobe profile, rendered from its own tables"
             : profile.importedName.map { "Imported from Lightroom as “\($0)”" } ?? "PixelLoupe’s own looks; they approximate Adobe’s profiles"
     }
 

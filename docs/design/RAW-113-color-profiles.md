@@ -152,12 +152,17 @@ duplicate of RAW-126, whose description holds these in full:
     CC BY-NC-SA 4.0 that derive from Adobe's Camera Matching profiles, on Adobe Standard's matrices. The user imports
     their own files, as decision 2 says of Adobe's.
 21. **DCP support is built on Apple's engine now**, not held for PixelLoupe's own RAW engine (which sets aside
-    recommendation 4 of the RAW-235 spike). The reader parses the whole profile and keeps the matrices for the engine;
-    rendering uses the hue/saturation map, look table and tone curve over Apple's linear decode, and ignores the
-    matrices.
-22. **A `.dcp` the user picks is offered on every RAW photo**, in a Profiles group, under the name in the file; on a
-    camera other than the one it names, only its look table and tone curve apply. DCPs swept in from Adobe's folders
-    stay tied to their own camera model, under Camera Matching.
+    recommendation 4 of the RAW-235 spike). The reader parses the whole profile and keeps the matrices and
+    hue/saturation maps for the engine; rendering uses the look table and tone curve, in the engine's linear stage
+    (`CIRAWFilter.linearSpaceFilter`, with its own tone curve off when the profile has one), and ignores the rest.
+    *Changed while building RAW-304:* the hue/saturation map was to be applied on the profile's own camera. Measured
+    on the Sony profiles, it oversaturates on top of Apple's colors (Adobe Standard with its map is far more saturated
+    than Default; without it they nearly match), since it refines matrices Apple's engine doesn't use. It's off
+    (`AdobeProfileLibrary.appliesHueSaturationMaps`), and `Scripts/camera-profiles.sh` renders both ways against
+    Lightroom's exports, to settle it by measurement.
+22. **A `.dcp` the user picks is offered on every RAW photo**, in a Profiles group, under the name in the file, and
+    renders the same on every camera. DCPs swept in from Adobe's folders stay tied to their own camera model, under
+    Camera Matching.
 23. **"Import Presets…" becomes "Import Profiles & Presets…"** and accepts `.dcp` files.
 24. **Decision 18 is deferred to the engine.** Adobe Standard is mostly matrices, which this rendering ignores, so
     catalog photos set to Adobe Standard or Adobe Color keep importing as Default. Adobe Standard DCPs are imported and

@@ -74,6 +74,20 @@ material from others.
 - **Adobe camera profiles and presets:** PixelLoupe reads profiles and Lightroom / Camera Raw presets that the user
   imports from their own Adobe installation. None of Adobe's files ship with PixelLoupe. "Adobe", "Lightroom" and
   "Camera Raw" are trademarks of Adobe Inc.; PixelLoupe isn't affiliated with or endorsed by Adobe.
+- **DNG camera profiles (`.dcp`):** PixelLoupe reads camera profiles that the user imports, in the format of Adobe's
+  public DNG specification. None ship with PixelLoupe. The README points to two sets of Fujifilm-style looks as an
+  example of what can be imported:
+  - [abpy/FujifilmCameraProfiles](https://github.com/abpy/FujifilmCameraProfiles), whose look tables and tone curves
+    are licensed [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) (non-commercial, share-alike,
+    with attribution);
+  - [TingfengLuo/Fujifilm-Camera-Profile-for-Sony-a7c2](https://github.com/TingfengLuo/Fujifilm-Camera-Profile-for-Sony-a7c2),
+    profiles for the Sony α7C II built from those tables. The repository states no license of its own; abpy's terms
+    apply to the tables in it.
+
+  Those terms are between the user and the profiles' authors, and are why PixelLoupe (MIT) doesn't bundle them.
+  "Fujifilm", "Provia", "Velvia", "Astia" and "Eterna" are trademarks of FUJIFILM Corporation, and "Sony" and "α" of
+  Sony Group Corporation, used here only to identify the profiles and cameras; PixelLoupe isn't affiliated with or
+  endorsed by either.
 - **Apple frameworks and SF Symbols:** used from the system under Apple's terms; nothing of Apple's is bundled.
 
 ## Keeping this file up to date
