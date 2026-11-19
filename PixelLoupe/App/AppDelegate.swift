@@ -133,6 +133,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         aboutWindowController?.show(modifiers: NSEvent.modifierFlags)
     }
 
+    /// Help ▸ PixelLoupe Support: the project's GitHub issues in the browser.
+    @objc func showSupport(_ sender: Any?) {
+        NSWorkspace.shared.open(SupportLinks.support)
+    }
+
     /// PixelLoupe ▸ Check for Updates… (see ``Updates``).
     @objc func checkForUpdates(_ sender: Any?) {
         Updates.shared.checkForUpdates()

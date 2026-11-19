@@ -53,6 +53,9 @@ struct AboutWindowTests {
         let html = try String(contentsOf: try #require(bundle.url(forResource: "Credits", withExtension: "html")), encoding: .utf8)
         let controller = AboutWindowController()
         let text = controller.creditsView.string
+        // The credits start with who makes PixelLoupe (the <br> between the lines is a line separator).
+        let opening = text.split(whereSeparator: \.isNewline).prefix(2).map(String.init)
+        #expect(opening == ["Created and Maintained by Ted Lee", "Support the continued development of PixelLoupe"])
         #expect(text.contains("Free and open source under the MIT License."))
         #expect(text.contains("LensFun") && text.contains("Sparkle") && text.contains("libjxl"))
         #expect(text.contains("Rim Light comes from Compositor by Robbie Tilton"))
@@ -80,6 +83,36 @@ struct AboutWindowTests {
             alignments.insert(((value as? NSParagraphStyle)?.alignment ?? .natural).rawValue)
         }
         #expect(!alignments.isEmpty && alignments.isSubset(of: [NSTextAlignment.left.rawValue, NSTextAlignment.natural.rawValue]))
+    }
+
+    @Test func aBuyMeACoffeeButtonUnderTheCreditsOpensItsPage() throws {
+        let controller = AboutWindowController()
+        var opened: [URL] = []
+        controller.openURL = { opened.append($0) }
+        let window = try #require(controller.window)
+        window.contentView?.layoutSubtreeIfNeeded()
+        let views = Self.allSubviews(of: try #require(window.contentView))
+        let button = try #require(views.first { $0.accessibilityIdentifier() == "aboutBuyMeACoffee" } as? NSButton)
+        #expect(button === controller.buyMeACoffeeButton)
+        #expect(button.title == "Buy me a coffee" && button.accessibilityLabel() == "Buy Me a Coffee")
+        #expect(button.image != nil && button.bezelColor == AboutWindowController.buyMeACoffeeYellow)
+
+        // Below the credits, in the sidebar, clear of the photo.
+        let buttonFrame = button.convert(button.bounds, to: nil)
+        let creditsFrame = controller.creditsScrollView.convert(controller.creditsScrollView.bounds, to: nil)
+        #expect(buttonFrame.maxY <= creditsFrame.minY && buttonFrame.minY > 0)
+        #expect(buttonFrame.maxX <= WelcomeWindowController.sidebarWidth)
+
+        button.performClick(nil)
+        #expect(opened == [SupportLinks.buyMeACoffee])
+        #expect(SupportLinks.buyMeACoffee.absoluteString == "https://www.buymeacoffee.com/pixegen")
+    }
+
+    @Test func helpHasPixelLoupeSupportForTheGitHubIssues() throws {
+        let item = try #require(NSApp.helpMenu?.item(withTitle: "PixelLoupe Support"))
+        #expect(item.action == #selector(PixelLoupeActions.showSupport(_:)))
+        #expect(NSApp.target(forAction: item.action!, to: nil, from: item) is AppDelegate)
+        #expect(SupportLinks.support.absoluteString == "https://github.com/twlatl/PixelLoupe/issues")
     }
 
     @Test func openedNormallyItShowsTheFeaturedPhotoAndTheCreditsStayPut() {
