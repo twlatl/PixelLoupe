@@ -40,7 +40,8 @@ nonisolated struct TIFFFile: Sendable {
     /// IFD0 and the directories chained after it.
     let directories: [Directory]
 
-    init?(data: Data) {
+    /// `magic` is the number after the byte order: 42 for TIFF and DNG; a DNG camera profile (`.dcp`) has its own.
+    init?(data: Data, magic: Int = 42) {
         guard data.count >= 8 else { return nil }
         self.data = data
         switch (data[data.startIndex], data[data.startIndex + 1]) {
@@ -50,7 +51,7 @@ nonisolated struct TIFFFile: Sendable {
         }
         var directories: [Directory] = []
         let reader = Self.Reader(data: data, isBigEndian: isBigEndian)
-        guard reader.u16(2) == 42, var next = reader.u32(4) else { return nil }
+        guard reader.u16(2) == magic, var next = reader.u32(4) else { return nil }
         var seen = Set<Int>()
         while next != 0, directories.count < 64, seen.insert(next).inserted {
             guard let directory = reader.directory(at: next) else { break }

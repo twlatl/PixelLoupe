@@ -143,6 +143,33 @@ Settled with Ted on 2026-10-20.
 Decisions 18 and 19 were put as recommendations and taken as accepted when Ted approved creating the tickets; say
 if either should change.
 
+### DCP support (RAW-126), settled with Ted on 2026-11-19
+
+RAW-302 asked for community Fuji-style `.dcp` profiles on the Sony A7 IV, A7C II and A7CR. It was closed as a
+duplicate of RAW-126, whose description holds these in full:
+
+20. **Community profiles aren't bundled.** The ones RAW-302 named have no licence and come from tables under
+    CC BY-NC-SA 4.0 that derive from Adobe's Camera Matching profiles, on Adobe Standard's matrices. The user imports
+    their own files, as decision 2 says of Adobe's.
+21. **DCP support is built on Apple's engine now**, not held for PixelLoupe's own RAW engine (which sets aside
+    recommendation 4 of the RAW-235 spike). The reader parses the whole profile and keeps the matrices for the engine;
+    rendering uses the hue/saturation map, look table and tone curve over Apple's linear decode, and ignores the
+    matrices.
+22. **A `.dcp` the user picks is offered on every RAW photo**, in a Profiles group, under the name in the file; on a
+    camera other than the one it names, only its look table and tone curve apply. DCPs swept in from Adobe's folders
+    stay tied to their own camera model, under Camera Matching.
+23. **"Import Presets…" becomes "Import Profiles & Presets…"** and accepts `.dcp` files.
+24. **Decision 18 is deferred to the engine.** Adobe Standard is mostly matrices, which this rendering ignores, so
+    catalog photos set to Adobe Standard or Adobe Color keep importing as Default. Adobe Standard DCPs are imported and
+    can be chosen by hand.
+25. **Done bar:** exact to the specification on a synthetic fixture; on real photos, ΔE2000 mean and p95 against about
+    five of Ted's Lightroom exports with the same DCPs, reported in the PR with side-by-sides, with no hard number.
+26. **A narrow exception to decision 11:** the README may name and link third-party profiles the user installs, with a
+    "Used but not bundled" entry and trademark note in `THIRD_PARTY_NOTICES.md`. Decision 11 still holds for anything
+    PixelLoupe ships or names itself.
+27. **Three PRs:** RAW-303 (reader), RAW-304 (rendering, picked files, the Profiles group: what RAW-302 asked for) and
+    RAW-305 (Adobe's own DCPs, `.xmp` looks on their base, catalog mapping), each blocked by the one before.
+
 ## Samples on this Mac
 
 A survey on 2026-10-20 (Spotlight and ImageIO, read-only; scripts and per-camera counts in the session notes folder,
