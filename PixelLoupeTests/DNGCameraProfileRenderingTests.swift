@@ -401,29 +401,171 @@ struct DNGCameraProfileRenderingTests {
         func allViews(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(allViews) }
         let popUp = try #require(allViews(panel.view).first { $0.accessibilityIdentifier() == "profilePopUp" } as? NSPopUpButton)
         func group(_ title: String) -> [String]? { popUp.menu?.items.first { $0.submenu?.title == title }?.submenu?.items.map(\.title) }
+        /// The menu itself, a separator as "-".
+        func titles() -> [String] { (popUp.menu?.items ?? []).map { $0.isSeparatorItem ? "-" : $0.title } }
+        let own = ["Default", "Neutral", "Vivid", "Landscape", "Portrait", "Monochrome"]
+        let picked = ["Classic Look (Sony ILCE-7CM2)", "Classic Look (Sony ILCE-7M4)", "Soft Look"]
 
-        // Whatever the camera; profiles of one name are told apart by theirs.
+        // In the menu itself, after PixelLoupe's own looks and a separator, whatever the camera; profiles of one name
+        // are told apart by theirs.
         for camera in ["ILCE-7CR", "NIKON Z 9"] {
             panel.cameraModel = camera
-            #expect(group("Profiles") == ["Classic Look (Sony ILCE-7CM2)", "Classic Look (Sony ILCE-7M4)", "Soft Look"])
-            #expect(group("Camera Matching") == nil)
+            #expect(titles() == own + ["-"] + picked)
+            #expect(group("Profiles") == nil && group("Camera Matching") == nil)
         }
-        // One kept to its camera shows for that camera only.
+        // One kept to its camera shows for that camera only, in its group after another separator.
         panel.cameraModel = "NIKON Z 8"
+        #expect(titles() == own + ["-"] + picked + ["-", "Camera Matching"])
         #expect(group("Camera Matching") == ["Camera Standard"])
 
         // Choosing one names it in the photo's settings.
         var changed: PhotoAdjustments?
         panel.onChange = { adjustments, _, _ in changed = adjustments }
-        let item = try #require(popUp.menu?.items.first { $0.submenu?.title == "Profiles" }?.submenu?.items.first)
+        let item = try #require(popUp.menu?.item(withTitle: picked[0]))
         _ = item.target?.perform(item.action, with: item)
         #expect(changed?.profile.adobeID == classic.id && changed?.profile.importedName == "Classic Look")
         #expect(popUp.toolTip == "Camera profile, rendered from its own tables and tone curve")
+        // The pop-up shows it where it's listed, not as an extra item at the end.
+        #expect(popUp.titleOfSelectedItem == picked[0] && titles() == own + ["-"] + picked + ["-", "Camera Matching"])
 
         // Not for photos that aren't RAW.
         panel.display(PhotoAdjustments(), asShotWhiteBalance: (6500, 0), isRaw: false)
-        #expect(group("Profiles") == nil)
+        #expect(titles() == own)
         panel.display(PhotoAdjustments(), asShotWhiteBalance: (5200, 4), isRaw: true)
-        #expect(group("Profiles")?.count == 3)
+        #expect(titles() == own + ["-"] + picked + ["-", "Camera Matching"])
+    }
+
+    // MARK: - Lightroom's own camera profiles (RAW-305)
+
+    @Test func adobesCameraNamesMatchExifModels() {
+        #expect(AdobeProfile.isCamera("Sony ILCE-7CM2", "ILCE-7CM2"))
+        #expect(AdobeProfile.isCamera("Fujifilm X-T4", "X-T4"))
+        #expect(AdobeProfile.isCamera("Nikon Z 8", "NIKON Z 8"))
+        #expect(AdobeProfile.isCamera("Nikon Z 50 2", "NIKON Z 50_2"))
+        #expect(AdobeProfile.isCamera("Canon EOS R5", "Canon EOS R5"))
+        #expect(!AdobeProfile.isCamera("Sony ILCE-7CM2", "ILCE-7M4"))
+        #expect(!AdobeProfile.isCamera("Sony ILCE-7", "ILCE-7CM2"))
+        #expect(!AdobeProfile.isCamera("Nikon Z 8", "Z 9"))
+        #expect(!AdobeProfile.isCamera("Sony ILCE-7CM2", nil) && !AdobeProfile.isCamera("", "ILCE-7CM2"))
+    }
+
+    @Test @MainActor func lightroomsCameraProfilesStayWithTheirCamera() async throws {
+        let directory = try TemporaryDirectory()
+        // Laid out as Camera Raw's CameraProfiles folder is.
+        let adobe = directory.url.appending(path: "CameraProfiles")
+        for (folder, name, camera) in [("Camera/Sony ILCE-7CM2", "Camera Standard", "Sony ILCE-7CM2"), ("Camera/Sony ILCE-7CM2", "Camera Vivid", "Sony ILCE-7CM2"),
+                                       ("Camera/Nikon Z 8", "Camera Standard", "Nikon Z 8"), ("Adobe Standard", "Adobe Standard", "Sony ILCE-7CM2")] {
+            let file = adobe.appending(path: folder).appending(path: "\(camera) \(name).dcp")
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try DCPFixtures.file(DCPFixtures.contents(name: name, cameraModel: camera)).write(to: file)
+        }
+        let library = PresetLibrary(directory: directory.url.appending(path: "Settings"))
+        let profiles = library.profiles
+        #expect(await library.importPresets(from: [adobe], cameraProfilesForTheirCameraOnly: true) == .init(presets: 0, profiles: 4))
+        #expect(profiles.allEntries.allSatisfy { !$0.cameraModel.isEmpty && $0.isCameraProfile && $0.file.hasPrefix("Camera/") })
+
+        // Only the photo's camera's, and only for RAW photos.
+        #expect(profiles.entries(forCameraModel: "ILCE-7CM2", isRaw: true).map(\.name) == ["Adobe Standard", "Camera Standard", "Camera Vivid"])
+        #expect(profiles.entries(forCameraModel: "NIKON Z 8", isRaw: true).map(\.name) == ["Camera Standard"])
+        #expect(profiles.entries(forCameraModel: "ILCE-7M4", isRaw: true).isEmpty)
+        #expect(profiles.entries(forCameraModel: "ILCE-7CM2", isRaw: false).isEmpty)
+        #expect(profiles.entries(forCameraModel: nil, isRaw: true).isEmpty)
+
+        let panel = AdjustmentsPanelViewController()
+        panel.profiles = profiles
+        _ = panel.view
+        func allViews(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(allViews) }
+        let popUp = try #require(allViews(panel.view).first { $0.accessibilityIdentifier() == "profilePopUp" } as? NSPopUpButton)
+        func group(_ title: String) -> [String]? { popUp.menu?.items.first { $0.submenu?.title == title }?.submenu?.items.map(\.title) }
+        panel.cameraModel = "ILCE-7CM2"
+        #expect(group("Camera Matching") == ["Adobe Standard", "Camera Standard", "Camera Vivid"])
+        panel.cameraModel = "ILCE-7M4"
+        #expect(group("Camera Matching") == nil)
+    }
+
+    @Test func theMenusProfilesAreFoundAmongThousands() throws {
+        let directory = try TemporaryDirectory()
+        let library = AdobeProfileLibrary(directory: directory.url)
+        let one = try DCPFixtures.profile()
+        // As many as Lightroom's 395 camera folders hold.
+        for camera in 0..<400 {
+            for name in ["Camera Standard", "Camera Vivid", "Camera Neutral", "Camera Portrait", "Camera Landscape", "Camera Deep", "Camera Light",
+                         "Camera Monochrome", "Camera Flat", "Adobe Standard"] {
+                library.register(DNGCameraProfile(
+                    name: name, cameraModel: "Maker Model \(camera)", calibrationSignature: "", copyright: "", embedPolicy: .allowCopying,
+                    calibrations: one.calibrations, lookTable: nil, toneCurve: nil, baselineExposureOffset: 0, defaultBlackRender: .auto
+                ), forItsCameraOnly: true)
+            }
+        }
+        #expect(library.allEntries.count == 4000)
+        let clock = ContinuousClock.now
+        for _ in 0..<20 { #expect(library.entries(forCameraModel: "Model 123", isRaw: true).count == 10) }
+        let each = clock.duration(to: .now) / 20
+        // Generous, for slow test machines: sorting all 4,000 first took several times this.
+        #expect(each < .milliseconds(100), "the Profile menu is rebuilt on every refresh: \(each) each")
+    }
+
+    @Test func aLookRendersOnTheCameraProfileItNames() throws {
+        let directory = try TemporaryDirectory()
+        let url = try rawFile(in: directory, model: "ILCE-7CM2")
+        // Nikon's Creative Picture Controls and the like: a look that says which camera profile it sits on.
+        let look = try #require(AdobeProfile.parse(ProfileFixtures.xmp(name: "Dream", group: "Camera Matching", uuid: "UUID-DREAM", camera: "Sony ILCE-7CM2",
+                                                                         lookTable: ProfileFixtures.lookTable(hueShift: 0), settings: ["CameraProfile": "Camera Standard"])))
+        let base = try DCPFixtures.profile(name: "Camera Standard", cameraModel: "Sony ILCE-7CM2", toneCurve: DCPFixtures.liftingCurve)
+        let otherCameras = try DCPFixtures.profile(name: "Camera Standard", cameraModel: "Sony ILCE-7M4", toneCurve: [0, 0, 1, 1])
+        var dream = PhotoAdjustments()
+        dream.profile.adobeID = look.id
+
+        // Without the base imported, the look is on Default as before.
+        let source = try source(url, otherCameras)
+        source.profiles.register(look)
+        #expect(source.profiles.baseCameraProfileID(forLook: look.id, cameraModel: "ILCE-7CM2") == nil)
+        let standard = patches(source, PhotoAdjustments())
+        #expect(simd_distance(patches(source, dream).gray, standard.gray) < 1e-4)
+
+        // With it, the base's tone curve is under the look, whatever the look's amount.
+        source.profiles.register(base, forItsCameraOnly: true)
+        #expect(source.profiles.baseCameraProfileID(forLook: look.id, cameraModel: "ILCE-7CM2") == base.id)
+        let onBase = patches(source, adjustments(base))
+        #expect(simd_distance(onBase.gray, standard.gray) > 0.02)
+        #expect(simd_distance(patches(source, dream).gray, onBase.gray) < 1e-4)
+        dream.profile.amount = 0.5
+        #expect(simd_distance(patches(source, dream).gray, onBase.gray) < 1e-4)
+        // A camera profile has no base of its own, and neither has a look that names none.
+        #expect(source.profiles.baseCameraProfileID(forLook: base.id, cameraModel: "ILCE-7CM2") == nil)
+        let plain = try #require(AdobeProfile.parse(ProfileFixtures.xmp(name: "Plain", group: "Looks", uuid: "UUID-PLAIN",
+                                                                          lookTable: ProfileFixtures.lookTable(hueShift: 0))))
+        source.profiles.register(plain)
+        #expect(source.profiles.baseCameraProfileID(forLook: plain.id, cameraModel: "ILCE-7CM2") == nil)
+    }
+
+    @Test func aCatalogsCameraProfileUsesTheImportedOne() throws {
+        let directory = try TemporaryDirectory()
+        let library = AdobeProfileLibrary(directory: directory.url)
+        let standard = try DCPFixtures.profile(name: "Camera Standard", cameraModel: "Sony ILCE-7CM2")
+        let vivid = try DCPFixtures.profile(name: "Camera Vivid", cameraModel: "Sony ILCE-7CM2")
+        let adobeStandard = try DCPFixtures.profile(name: "Adobe Standard", cameraModel: "Sony ILCE-7CM2")
+        for profile in [standard, vivid, adobeStandard] { library.register(profile, forItsCameraOnly: true) }
+        func map(_ text: String, camera: String = "ILCE-7CM2") throws -> (PhotoAdjustments, [LightroomDevelopMapper.Difference]) {
+            var adjustments = PhotoAdjustments()
+            var input = LightroomDevelopMapper.Input(settings: try #require(try LuaTableParser.parse(text).table), processVersion: "11.0",
+                                                     whiteBalance: nil, isRaw: true)
+            input.profiles = library
+            input.cameraModel = camera
+            let differences = LightroomDevelopMapper.apply(input, to: &adjustments)
+            return (adjustments, differences)
+        }
+        // The camera's own profiles, where PixelLoupe had only its Default or its own look.
+        let mappedStandard = try map(#"{ CameraProfile = "Camera Standard" }"#)
+        #expect(mappedStandard.0.profile.adobeID == standard.id && mappedStandard.1.isEmpty)
+        let mappedVivid = try map(#"{ Look = { Name = "Camera Vivid", Amount = 1 } }"#)
+        #expect(mappedVivid.0.profile.adobeID == vivid.id && mappedVivid.0.profile.kind == .standard)
+        // Another camera's photo has no such profile: as before.
+        let other = try map(#"{ Look = { Name = "Camera Vivid", Amount = 1 } }"#, camera: "ILCE-7M4")
+        #expect(other.0.profile.adobeID == nil && other.0.profile.kind == .vivid)
+        #expect(try map(#"{ CameraProfile = "Camera Standard" }"#, camera: "ILCE-7M4").0.profile.adobeID == nil)
+        // Adobe's defaults stay PixelLoupe's own rendering, though the camera's Adobe Standard is imported.
+        #expect(try map(#"{ CameraProfile = "Adobe Standard" }"#).0.profile.adobeID == nil)
+        #expect(try map(#"{ Look = { Name = "Adobe Color", Amount = 1 } }"#).0.profile.adobeID == nil)
     }
 }

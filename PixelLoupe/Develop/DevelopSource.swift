@@ -313,11 +313,16 @@ nonisolated final class DevelopSource {
 
     /// The DNG camera profile `profile` names, ready for the RAW engine: its cube as a filter for the engine's linear
     /// stage, whether its own tone curve replaces the engine's, and its exposure offset in stops. Nil for any other
-    /// profile.
+    /// profile, except an Adobe look that names a camera profile as its base.
     private func cameraProfile(_ profile: PhotoAdjustments.Profile, temperature: Double)
         -> (filter: CIFilter, replacesTone: Bool, exposureOffset: Double)? {
-        guard profile.isEnabled, let id = profile.adobeID, let cameraProfile = profiles.cameraProfile(id: id),
-              let cube = profiles.cameraProfileCube(id: id, amount: profile.amount, temperature: temperature,
+        guard profile.isEnabled, let chosen = profile.adobeID else { return nil }
+        // An Adobe look built on a camera profile ("Camera Standard") renders on it, when it's imported for this
+        // camera: the base whole, then the look at its amount, later in the pipeline.
+        let base = profiles.baseCameraProfileID(forLook: chosen, cameraModel: camera.model)
+        let id = base ?? chosen
+        guard let cameraProfile = profiles.cameraProfile(id: id),
+              let cube = profiles.cameraProfileCube(id: id, amount: base == nil ? profile.amount : 1, temperature: temperature,
                                                     cameraMake: camera.make, cameraModel: camera.model) else { return nil }
         let filter = CIFilter.colorCubeWithColorSpace()
         filter.cubeDimension = Float(cube.dimension)

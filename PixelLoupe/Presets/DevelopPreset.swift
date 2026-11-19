@@ -82,7 +82,7 @@ nonisolated struct DevelopPreset: Identifiable, Equatable, Sendable {
     /// it names is available. PixelLoupe edits in standard dynamic range, so HDR-only presets don't suit.
     func compatibility(with photo: Photo, profiles: AdobeProfileLibrary = .shared) -> Compatibility {
         if let camera = settings["CameraModelRestriction"]?.string, !camera.isEmpty,
-           photo.cameraModel.map(AdobeProfile.normalized) != AdobeProfile.normalized(camera) {
+           !AdobeProfile.isCamera(camera, photo.cameraModel) {
             return .incompatible("Only for the \(camera).")
         }
         if photo.isMonochrome, settings["SupportsMonochrome"]?.bool == false { return .incompatible("Not for monochrome cameras.") }

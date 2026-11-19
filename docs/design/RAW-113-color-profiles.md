@@ -160,7 +160,8 @@ duplicate of RAW-126, whose description holds these in full:
     than Default; without it they nearly match), since it refines matrices Apple's engine doesn't use. It's off
     (`AdobeProfileLibrary.appliesHueSaturationMaps`), and `Scripts/camera-profiles.sh` renders both ways against
     Lightroom's exports, to settle it by measurement.
-22. **A `.dcp` the user picks is offered on every RAW photo**, in a Profiles group, under the name in the file, and
+22. **A `.dcp` the user picks is offered on every RAW photo**, in the Profile menu itself after PixelLoupe's own
+    looks and a separator (first built as a Profiles submenu; Ted asked for this on 2026-11-19), under the name in the file, and
     renders the same on every camera. DCPs swept in from Adobe's folders stay tied to their own camera model, under
     Camera Matching.
 23. **"Import Presets…" becomes "Import Profiles & Presets…"** and accepts `.dcp` files.

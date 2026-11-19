@@ -25,11 +25,9 @@ nonisolated extension DNGCameraProfile {
     /// ("NIKON CORPORATION", "NIKON Z 8").
     func isFor(cameraMake make: String?, model: String?) -> Bool {
         guard let model, !model.isEmpty else { return false }
-        let own = AdobeProfile.normalized(cameraModel), photo = AdobeProfile.normalized(model)
-        guard !own.isEmpty else { return false }
-        if own == photo { return true }
+        if AdobeProfile.isCamera(cameraModel, model) { return true }
         let firstWord = make?.split(separator: " ").first.map(String.init) ?? ""
-        return own == AdobeProfile.normalized(firstWord) + photo
+        return AdobeProfile.normalized(cameraModel) == AdobeProfile.normalized(firstWord) + AdobeProfile.normalized(model)
     }
 
     /// Whether the profile has its own tone curve. One without leaves the tone to the RAW engine.

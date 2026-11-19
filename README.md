@@ -794,7 +794,8 @@ earlier) import too and are saved as `.xmp`; their spot removal and local correc
 
 Importing presets also imports Adobe's profiles (`.xmp` files of looks: Adobe Raw, B&W, Modern, Vintage, Artistic
 and the camera-matching profiles) into `~/Library/Application Support/Pixegen/PixelLoupe/Profiles`. The Profile pop-up
-then lists them by group after PixelLoupe's own looks (camera-matching ones for the photo's camera only). Moving through
+then lists them by group after PixelLoupe's own looks (camera-matching ones for the photo's camera only, matched by
+Adobe's name for it with or without the maker: "Sony ILCE-7CM2" is the camera whose files say "ILCE-7CM2"). Moving through
 the menu previews the highlighted profile on the photo and in the Navigator; closing it without choosing puts the
 photo back. They render from their own tables: the look table (hue, saturation and value changes over ProPhoto RGB) and the RGB table
 (a 3-D lookup in its own color space, usually Adobe RGB), each baked into a color cube at the profile's Amount, under
@@ -809,8 +810,8 @@ Adobe's, so results are close to Lightroom's rather than identical.
 **Import Profiles & Presets…** (the Presets panel's options menu) also takes DNG camera profiles, `.dcp` files: the
 format of Lightroom's camera profiles, of custom ones (ColorChecker Camera Calibration, Lumariver, dcamprof) and of the
 film looks people publish for cameras that never had them. They're copied into
-`~/Library/Application Support/Pixegen/PixelLoupe/Profiles/Camera Profiles`, and the Profile pop-up lists them in a
-**Profiles** group, under the name in the file, for every RAW photo: a profile made for one camera can be used on
+`~/Library/Application Support/Pixegen/PixelLoupe/Profiles/Camera Profiles`, and the Profile pop-up lists them in the
+menu itself, after PixelLoupe's own looks and a separator, under the name in the file, for every RAW photo: a profile made for one camera can be used on
 another's photos. (Two profiles of the same name show their cameras.) They aren't offered for JPEGs and other photos
 that aren't RAW. Importing a newer copy of a profile replaces it.
 
@@ -826,6 +827,17 @@ curve**, in the RAW engine's linear stage: after Exposure and White Balance, bef
 the RAW engine's own tone curve. A profile without a tone curve keeps the engine's. **Amount** (0–200) scales the look
 table; the tone curve always applies. A profile's exposure offset is added to the photo's Exposure without moving the
 slider.
+
+**Lightroom's own camera profiles** (Camera Standard, Camera Vivid and the rest of its Camera Matching set, and
+Adobe Standard) come in with **Import Lightroom's Presets**, from Camera Raw's `CameraProfiles` folders and from inside
+Lightroom Classic. Unlike profiles you pick, each stays with the camera it was made for: the Profile pop-up lists them
+under **Camera Matching** for that camera's RAW photos only. None of Adobe's files ship with PixelLoupe; they're
+copied from your own installation.
+
+- An Adobe look that's built on a camera profile (Nikon's Creative Picture Controls sit on Camera Standard, for
+  instance) renders on that profile when it has been imported for the photo's camera, and on Default otherwise.
+- An imported Lightroom catalog whose photos use one of the camera's own profiles (Camera Standard, Camera Vivid…)
+  gets the imported profile instead of PixelLoupe's stand-in. Adobe Color and Adobe Standard still import as Default.
 
 **The match to Lightroom is approximate.** A profile's color matrices, and the hue/saturation map that refines them,
 describe a camera's colors to Adobe's RAW engine; PixelLoupe renders through Apple's, which has its own and takes

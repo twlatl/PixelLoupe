@@ -33,6 +33,21 @@ final class PresetLibrary {
         ].compactMap { $0 }.filter { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) }
     }
 
+    /// Where Lightroom Classic and Camera Raw keep camera profiles (`.dcp`): the ones installed for every user, the
+    /// user's own, and the ones inside Lightroom Classic itself.
+    nonisolated static var lightroomCameraProfileDirectories: [URL] {
+        let user = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        return [
+            URL(filePath: "/Library/Application Support/Adobe/CameraRaw/CameraProfiles", directoryHint: .isDirectory),
+            user?.appending(path: "Adobe/CameraRaw/CameraProfiles", directoryHint: .isDirectory),
+            URL(filePath: "/Applications/Adobe Lightroom Classic/Adobe Lightroom Classic.app/Contents/Resources/CameraProfiles",
+                directoryHint: .isDirectory),
+        ].compactMap { $0 }.filter { FileManager.default.fileExists(atPath: $0.path(percentEncoded: false)) }
+    }
+
+    /// Everything "Import Lightroom's Presets" brings in: its presets and profiles, and its camera profiles.
+    nonisolated static var lightroomSources: [URL] { lightroomDirectories + lightroomCameraProfileDirectories }
+
     static let didChangeNotification = Notification.Name("PresetLibraryDidChange")
 
     let directory: URL
@@ -107,18 +122,20 @@ final class PresetLibrary {
 
     /// Copies the presets among `sources` (files, or folders searched for presets) into the library,
     /// filed under their group, and reloads. Older `.lrtemplate` presets are converted to `.xmp`.
-    /// Profiles (Adobe's `.xmp` ones and `.dcp` camera profiles) go to the profile library; other files are skipped. A preset already in the library with the same group and name is replaced.
+    /// Profiles (Adobe's `.xmp` ones and `.dcp` camera profiles) go to the profile library; other files are skipped.
+    /// Camera profiles are offered for every camera unless `cameraProfilesForTheirCameraOnly`. A preset already in the library with the same group and name is replaced.
     @discardableResult
-    func importPresets(from sources: [URL]) async -> ImportResult {
+    func importPresets(from sources: [URL], cameraProfilesForTheirCameraOnly: Bool = false) async -> ImportResult {
         let directory = directory
-        let result = await Self.copy(sources, into: directory, profiles: profiles)
+        let result = await Self.copy(sources, into: directory, profiles: profiles, cameraProfilesForTheirCameraOnly: cameraProfilesForTheirCameraOnly)
         await load(force: true)
         if result.profiles > 0 { NotificationCenter.default.post(name: AdobeProfileLibrary.didChangeNotification, object: profiles) }
         return result
     }
 
     @concurrent
-    private nonisolated static func copy(_ sources: [URL], into directory: URL, profiles: AdobeProfileLibrary) async -> ImportResult {
+    private nonisolated static func copy(_ sources: [URL], into directory: URL, profiles: AdobeProfileLibrary,
+                                         cameraProfilesForTheirCameraOnly: Bool) async -> ImportResult {
         let fileManager = FileManager.default
         var result = ImportResult()
         defer { if result.profiles > 0 { profiles.saveIndex() } }
@@ -129,9 +146,10 @@ final class PresetLibrary {
                 ? presetFiles(in: source, extensions: ["xmp", "dcp", LegacyPreset.fileExtension])
                 : [(source, source.deletingLastPathComponent().lastPathComponent)]
             for (file, folder) in files {
-                // A DNG camera profile the user picked, offered for every camera (RAW-126).
+                // A DNG camera profile: one the user picked is offered for every camera; Lightroom's own stay with
+                // theirs (RAW-126).
                 if file.pathExtension.lowercased() == "dcp" {
-                    if profiles.importCameraProfile(file) { result.profiles += 1 }
+                    if profiles.importCameraProfile(file, forItsCameraOnly: cameraProfilesForTheirCameraOnly) { result.profiles += 1 }
                     continue
                 }
                 if file.pathExtension.lowercased() == LegacyPreset.fileExtension {

@@ -371,8 +371,8 @@ final class AdjustmentsPanelViewController: NSViewController {
         rebuildProfileMenu()
     }
 
-    /// PixelLoupe's own looks first (always at the same places), then the imported Adobe profiles by
-    /// group, and the current Adobe profile shown selected at the end.
+    /// PixelLoupe's own looks first (always at the same places), then the camera profiles the user picked, then
+    /// the other imported profiles by group, and the current profile shown selected at the end when it's in a group.
     private func rebuildProfileMenu() {
         guard let popUp = profilePopUp else { return }
         let profile = adjustments.profile
@@ -382,36 +382,54 @@ final class AdjustmentsPanelViewController: NSViewController {
             menu.addItem(withTitle: kind.title, action: nil, keyEquivalent: "").representedObject = ProfileChoice(kind: kind, adobe: nil)
         }
         profileTargets = []
-        // Camera profiles (.dcp) work in the RAW engine, so they're offered for RAW photos only.
-        let entries = profiles.allEntries.filter {
-            ($0.cameraModel.isEmpty || AdobeProfile.normalized($0.cameraModel) == cameraModel.map(AdobeProfile.normalized))
-                && (isRaw || !$0.isCameraProfile)
+        var selected = Adjustments.Profile.Kind.allCases.firstIndex(of: profile.kind) ?? 0
+        var selectedIsListed = false
+        /// The items for a list of profiles; camera profiles of the same name for different cameras are told apart
+        /// by their camera.
+        func choices(_ entries: [AdobeProfileLibrary.Entry]) -> [NSMenuItem] {
+            let names = NSCountedSet(array: entries.map(\.name))
+            return entries.map { entry in
+                let title = names.count(for: entry.name) > 1 ? entry.cameraProfileModel?.nonEmpty.map { "\(entry.name) (\($0))" } : nil
+                let choice = NSMenuItem(title: title ?? entry.name, action: #selector(ActionTarget.fire(_:)), keyEquivalent: "")
+                choice.representedObject = ProfileChoice(kind: .standard, adobe: entry)
+                let target = ActionTarget { [weak self] _ in self?.chooseProfile(kind: .standard, adobe: entry) }
+                choice.target = target
+                choice.state = entry.id == profile.adobeID ? .on : .off
+                profileTargets.append(target)
+                return choice
+            }
         }
-        if !entries.isEmpty {
+        // Camera profiles (.dcp) work in the RAW engine, so they're offered for RAW photos only.
+        let entries = profiles.entries(forCameraModel: cameraModel, isRaw: isRaw)
+        // Camera profiles the user picked go in the menu itself, after PixelLoupe's own looks; the rest by group.
+        let picked = entries.filter { $0.isCameraProfile && $0.cameraModel.isEmpty }
+        if !picked.isEmpty {
             menu.addItem(.separator())
-            let groups = Dictionary(grouping: entries) { $0.cameraModel.isEmpty ? $0.group : "Camera Matching" }
+            for choice in choices(picked) {
+                menu.addItem(choice)
+                if (choice.representedObject as? ProfileChoice)?.adobe?.id == profile.adobeID {
+                    // The pop-up shows the chosen item, so it needs no checkmark of its own.
+                    choice.state = .off
+                    selected = menu.items.count - 1
+                    selectedIsListed = true
+                }
+            }
+        }
+        let grouped = entries.filter { !($0.isCameraProfile && $0.cameraModel.isEmpty) }
+        if !grouped.isEmpty {
+            menu.addItem(.separator())
+            let groups = Dictionary(grouping: grouped) { $0.cameraModel.isEmpty ? $0.group : "Camera Matching" }
             for group in groups.keys.sorted(by: { $0.localizedStandardCompare($1) == .orderedAscending }) {
                 let item = NSMenuItem(title: group, action: nil, keyEquivalent: "")
                 let submenu = NSMenu(title: group)
                 submenu.delegate = profilePreview
-                let names = NSCountedSet(array: (groups[group] ?? []).map(\.name))
-                for entry in groups[group] ?? [] {
-                    // Camera profiles of the same name for different cameras are told apart by their camera.
-                    let title = names.count(for: entry.name) > 1 ? entry.cameraProfileModel?.nonEmpty.map { "\(entry.name) (\($0))" } : nil
-                    let choice = NSMenuItem(title: title ?? entry.name, action: #selector(ActionTarget.fire(_:)), keyEquivalent: "")
-                    choice.representedObject = ProfileChoice(kind: .standard, adobe: entry)
-                    let target = ActionTarget { [weak self] _ in self?.chooseProfile(kind: .standard, adobe: entry) }
-                    choice.target = target
-                    choice.state = entry.id == profile.adobeID ? .on : .off
-                    profileTargets.append(target)
-                    submenu.addItem(choice)
-                }
+                for choice in choices(groups[group] ?? []) { submenu.addItem(choice) }
                 item.submenu = submenu
                 menu.addItem(item)
             }
         }
-        var selected = Adjustments.Profile.Kind.allCases.firstIndex(of: profile.kind) ?? 0
-        if let id = profile.adobeID {
+        // A profile in a group (or one that's gone) is shown selected at the end.
+        if let id = profile.adobeID, !selectedIsListed {
             menu.addItem(.separator())
             menu.addItem(withTitle: profiles.entry(id: id)?.name ?? profile.importedName ?? "Adobe Profile", action: nil, keyEquivalent: "")
             selected = menu.items.count - 1
