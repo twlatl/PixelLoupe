@@ -107,7 +107,7 @@ final class PresetLibrary {
 
     /// Copies the presets among `sources` (files, or folders searched for presets) into the library,
     /// filed under their group, and reloads. Older `.lrtemplate` presets are converted to `.xmp`.
-    /// Profiles go to the profile library; other files are skipped. A preset already in the library with the same group and name is replaced.
+    /// Profiles (Adobe's `.xmp` ones and `.dcp` camera profiles) go to the profile library; other files are skipped. A preset already in the library with the same group and name is replaced.
     @discardableResult
     func importPresets(from sources: [URL]) async -> ImportResult {
         let directory = directory
@@ -126,9 +126,14 @@ final class PresetLibrary {
             var isFolder: ObjCBool = false
             guard fileManager.fileExists(atPath: source.path(percentEncoded: false), isDirectory: &isFolder) else { continue }
             let files = isFolder.boolValue
-                ? presetFiles(in: source, extensions: ["xmp", LegacyPreset.fileExtension])
+                ? presetFiles(in: source, extensions: ["xmp", "dcp", LegacyPreset.fileExtension])
                 : [(source, source.deletingLastPathComponent().lastPathComponent)]
             for (file, folder) in files {
+                // A DNG camera profile the user picked, offered for every camera (RAW-126).
+                if file.pathExtension.lowercased() == "dcp" {
+                    if profiles.importCameraProfile(file) { result.profiles += 1 }
+                    continue
+                }
                 if file.pathExtension.lowercased() == LegacyPreset.fileExtension {
                     guard let data = try? Data(contentsOf: file),
                           let converted = LegacyPreset.convert(data, url: file, defaultGroup: folder) else { continue }

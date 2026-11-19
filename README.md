@@ -764,10 +764,10 @@ preset on the settings clipboard; **Photo ▸ Paste Settings** (`⇧⌘V`) then 
 Develop or in the Library grid. **Photo ▸ Copy Settings** (`⇧⌘C`) copies a photo's own settings instead (pasting them
 keeps each photo's crop, rotation, spots, red eye and masks).
 
-Presets are Lightroom / Camera Raw `.xmp` files. The options menu (…) at the top of the panel imports presets (files or
-folders) into `~/Library/Application Support/Pixegen/PixelLoupe/Settings`, one folder per group; **Import Lightroom's
-Presets** brings in the ones Lightroom installed (`/Library/Application Support/Adobe/CameraRaw/Settings`, and older `.lrtemplate` ones). Profiles
-go to their own library (below). After applying a preset that supports it, an **Amount** slider (0–200%) under the
+Presets are Lightroom / Camera Raw `.xmp` files. **Import Profiles & Presets…** in the options menu (…) at the top of
+the panel imports presets (files or folders) into `~/Library/Application Support/Pixegen/PixelLoupe/Settings`, one folder per group; **Import Lightroom's
+Presets** brings in the ones Lightroom installed (`/Library/Application Support/Adobe/CameraRaw/Settings`, and older `.lrtemplate` ones). Profiles,
+Adobe's `.xmp` ones and `.dcp` camera profiles, go to their own library (below). After applying a preset that supports it, an **Amount** slider (0–200%) under the
 list scales it, from the photo as it was before the preset (0%) to the preset (100%) and beyond: numbers move
 between the two, on/off settings and differently shaped curves switch at 50%. Each drag is one undoable step in History
 ("Preset: Punch 50%"); another edit, or another photo, ends the slider. ISO-adaptive presets (Lightroom's "+ NR" defaults) set their noise
@@ -803,6 +803,35 @@ a B&W profile's contrast) render with it without moving the sliders. Presets and
 name a profile use it when it's been imported, by its UUID or name; a B&W profile makes the photo black and white.
 Adobe's default (Adobe Color / Standard) stays PixelLoupe's own rendering, and PixelLoupe's RAW rendering itself isn't
 Adobe's, so results are close to Lightroom's rather than identical.
+
+## Camera profiles (Develop)
+
+**Import Profiles & Presets…** (the Presets panel's options menu) also takes DNG camera profiles, `.dcp` files: the
+format of Lightroom's camera profiles, of custom ones (ColorChecker Camera Calibration, Lumariver, dcamprof) and of the
+film looks people publish for cameras that never had them. They're copied into
+`~/Library/Application Support/Pixegen/PixelLoupe/Profiles/Camera Profiles`, and the Profile pop-up lists them in a
+**Profiles** group, under the name in the file, for every RAW photo: a profile made for one camera can be used on
+another's photos. (Two profiles of the same name show their cameras.) They aren't offered for JPEGs and other photos
+that aren't RAW. Importing a newer copy of a profile replaces it.
+
+For example, the Fujifilm-style looks for Sony cameras (Provia, Velvia, Astia, Classic Chrome, Pro Neg Std, Pro Neg Hi
+and Eterna) in [TingfengLuo/Fujifilm-Camera-Profile-for-Sony-a7c2](https://github.com/TingfengLuo/Fujifilm-Camera-Profile-for-Sony-a7c2),
+built from the tables of [abpy/FujifilmCameraProfiles](https://github.com/abpy/FujifilmCameraProfiles): download the
+`.dcp` files and import them. They're made for the α7C II, and in PixelLoupe they work on the α7 IV, α7CR and any other
+camera's RAW files too. PixelLoupe doesn't include them; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for
+their terms.
+
+A camera profile renders from its **look table** (hue, saturation and value changes over ProPhoto RGB) and its **tone
+curve**, in the RAW engine's linear stage: after Exposure and White Balance, before every other setting, in place of
+the RAW engine's own tone curve. A profile without a tone curve keeps the engine's. **Amount** (0–200) scales the look
+table; the tone curve always applies. A profile's exposure offset is added to the photo's Exposure without moving the
+slider.
+
+**The match to Lightroom is approximate.** A profile's color matrices, and the hue/saturation map that refines them,
+describe a camera's colors to Adobe's RAW engine; PixelLoupe renders through Apple's, which has its own and takes
+neither, so those parts are read but not used. A look comes out recognisably itself, on colors and brightness that
+are Apple's rather than Adobe's. `Scripts/camera-profiles.sh` renders photos with a folder of profiles and measures
+them against Lightroom exports of the same photos.
 
 ## Profiles and calibration (Develop)
 

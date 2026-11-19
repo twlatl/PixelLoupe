@@ -189,8 +189,8 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
         var amount = 1.0
         /// The Lightroom profile this stands in for, when it came from an import.
         var importedName: String?
-        /// An imported Adobe profile (its `crs:UUID`), rendered from its own tables; `kind` is then
-        /// `.standard`. See ``AdobeProfileLibrary``.
+        /// An imported profile, rendered from its own tables; `kind` is then `.standard`: an Adobe profile (its
+        /// `crs:UUID`) or a DNG camera profile (``DNGCameraProfile/id``). See ``AdobeProfileLibrary``.
         var adobeID: String?
 
         enum Kind: String, Codable, CaseIterable, Sendable {
@@ -206,7 +206,11 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
             }
         }
 
-        var isActive: Bool { isEnabled && (kind != .standard || adobeID != nil) && amount != 0 }
+        /// A DNG camera profile (`.dcp`): `adobeID` is then its id in the library, not an Adobe UUID.
+        var isCameraProfile: Bool { adobeID?.hasPrefix(DNGCameraProfile.idPrefix) == true }
+
+        /// A camera profile's tone curve applies whatever the amount, which scales its look table only.
+        var isActive: Bool { isEnabled && (kind != .standard || adobeID != nil) && (amount != 0 || isCameraProfile) }
     }
 
     /// Camera calibration: how the red, green and blue primaries are rotated and strengthened, and a

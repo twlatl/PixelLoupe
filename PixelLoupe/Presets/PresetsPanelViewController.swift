@@ -179,7 +179,7 @@ final class PresetsPanelViewController: NSViewController, NSOutlineViewDataSourc
         let emptyLabel = NSTextField(wrappingLabelWithString: "No presets yet. Import Lightroom presets (.xmp or .lrtemplate files) to use them here.")
         emptyLabel.textColor = .secondaryLabelColor
         emptyLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        let importFiles = NSButton(title: "Import Presets…", target: self, action: #selector(importFiles(_:)))
+        let importFiles = NSButton(title: "Import Profiles & Presets…", target: self, action: #selector(importFiles(_:)))
         importFiles.controlSize = .small
         importFiles.setAccessibilityIdentifier("importPresetFiles")
         var emptyViews: [NSView] = [emptyLabel, importFiles]
@@ -537,7 +537,7 @@ final class PresetsPanelViewController: NSViewController, NSOutlineViewDataSourc
 
     @objc private func showImportMenu(_ sender: NSButton) {
         let menu = NSMenu()
-        menu.addItem(withTitle: "Import Presets…", action: #selector(importFiles(_:)), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Import Profiles & Presets…", action: #selector(importFiles(_:)), keyEquivalent: "").target = self
         if !PresetLibrary.lightroomDirectories.isEmpty {
             menu.addItem(withTitle: "Import Lightroom’s Presets", action: #selector(importLightroom(_:)), keyEquivalent: "").target = self
         }
@@ -557,10 +557,10 @@ final class PresetsPanelViewController: NSViewController, NSOutlineViewDataSourc
 
     @objc func importFiles(_ sender: Any?) {
         let panel = NSOpenPanel()
-        panel.title = "Import Presets"
-        panel.message = "Choose Lightroom presets (.xmp or .lrtemplate), or folders of them."
+        panel.title = "Import Profiles & Presets"
+        panel.message = "Choose Lightroom presets (.xmp or .lrtemplate), profiles (.xmp or .dcp), or folders of them."
         panel.prompt = "Import"
-        panel.allowedContentTypes = ["xmp", LegacyPreset.fileExtension].map { UTType(filenameExtension: $0) ?? .data }
+        panel.allowedContentTypes = ["xmp", "dcp", LegacyPreset.fileExtension].map { UTType(filenameExtension: $0) ?? .data }
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
         guard panel.runModal() == .OK else { return }
@@ -581,7 +581,7 @@ final class PresetsPanelViewController: NSViewController, NSOutlineViewDataSourc
             let result = await library.importPresets(from: sources)
             guard result == .init(), let window = view.window else { return }
             let alert = NSAlert()
-            alert.messageText = "No presets were imported"
+            alert.messageText = "No profiles or presets were imported"
             alert.informativeText = "The files chosen aren’t Lightroom presets or profiles."
             alert.beginSheetModal(for: window, completionHandler: nil)
         }

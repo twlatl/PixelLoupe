@@ -49,6 +49,8 @@ nonisolated final class DevelopSource {
     var removeFills = RemoveFillStore.shared
     /// Where Portrait Lighting's Studio and Contour find the photo's faces.
     var faces = FaceStore.shared
+    /// Where a DNG camera profile the photo's settings name is found.
+    var profiles = AdobeProfileLibrary.shared
 
     private struct RawDefaults {
         var neutralTemperature: Float
@@ -59,6 +61,8 @@ nonisolated final class DevelopSource {
         var detail: Float
         /// Whether the RAW engine applies the camera's built-in lens profile unless asked to.
         var lensCorrection: Bool
+        /// How much of the engine's own tone curve it applies.
+        var boost: Float
 
         init(_ raw: CIRAWFilter, lensCorrection: Bool) {
             neutralTemperature = raw.neutralTemperature
@@ -68,6 +72,7 @@ nonisolated final class DevelopSource {
             sharpness = raw.sharpnessAmount
             detail = raw.detailAmount
             self.lensCorrection = lensCorrection
+            boost = raw.boostAmount
         }
     }
 
@@ -264,7 +269,13 @@ nonisolated final class DevelopSource {
                 temperature: Double(temperature), tint: Double(tint),
                 asShot: (Double(rawDefaults.neutralTemperature), Double(rawDefaults.neutralTint))
             ) ?? 0
-            rawFilter.exposure = (light.isEnabled ? Float(light.exposure) : 0) + Float(correction)
+            // A DNG camera profile takes the place of the engine's look: its look table and tone curve run in the
+            // engine's linear stage, so Exposure and White Balance come before them and every other setting after,
+            // as they do without one (RAW-126).
+            let cameraProfile = self.cameraProfile(adjustments.profile, temperature: Double(temperature))
+            rawFilter.linearSpaceFilter = cameraProfile?.filter
+            rawFilter.boostAmount = cameraProfile?.replacesTone == true ? 0 : rawDefaults.boost
+            rawFilter.exposure = (light.isEnabled ? Float(light.exposure) : 0) + Float(correction) + Float(cameraProfile?.exposureOffset ?? 0)
 
             let noise = adjustments.noiseReduction
             if rawFilter.isLuminanceNoiseReductionSupported {
@@ -292,6 +303,27 @@ nonisolated final class DevelopSource {
             if let output = rawFilter.outputImage { return Self.enlarged(output, by: enlargement) }
         }
         return Self.enlarged(scaledBaseImage(scale: decodeScale), by: enlargement)
+    }
+
+    /// The camera the file says it's from: a camera profile's hue/saturation map is for its own camera only.
+    private lazy var camera: (make: String?, model: String?) = {
+        let metadata = ImageMetadata.read(from: url)
+        return (metadata?.cameraMake, metadata?.cameraModel)
+    }()
+
+    /// The DNG camera profile `profile` names, ready for the RAW engine: its cube as a filter for the engine's linear
+    /// stage, whether its own tone curve replaces the engine's, and its exposure offset in stops. Nil for any other
+    /// profile.
+    private func cameraProfile(_ profile: PhotoAdjustments.Profile, temperature: Double)
+        -> (filter: CIFilter, replacesTone: Bool, exposureOffset: Double)? {
+        guard profile.isEnabled, let id = profile.adobeID, let cameraProfile = profiles.cameraProfile(id: id),
+              let cube = profiles.cameraProfileCube(id: id, amount: profile.amount, temperature: temperature,
+                                                    cameraMake: camera.make, cameraModel: camera.model) else { return nil }
+        let filter = CIFilter.colorCubeWithColorSpace()
+        filter.cubeDimension = Float(cube.dimension)
+        filter.cubeData = cube.data
+        filter.colorSpace = CGColorSpace(name: cube.colorSpaceName as CFString)
+        return (filter, cameraProfile.hasToneCurve, cameraProfile.baselineExposureOffset)
     }
 
     private static func enlarged(_ image: CIImage, by factor: CGFloat) -> CIImage {
