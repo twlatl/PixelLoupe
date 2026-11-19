@@ -83,7 +83,18 @@ nonisolated struct AdobeProfile: Sendable {
 
     /// Whether the profile is for this photo's camera (profiles for no camera in particular always are).
     func suits(cameraModel model: String?) -> Bool {
-        cameraModel.isEmpty || model.map { Self.normalized($0) == Self.normalized(cameraModel) } ?? false
+        cameraModel.isEmpty || Self.isCamera(cameraModel, model)
+    }
+
+    /// Whether a camera as Adobe names it ("Nikon Z 8", "Sony ILCE-7CM2", "Fujifilm X-T4") is the camera a photo's
+    /// EXIF model names. Some makers put their name in the model ("NIKON Z 8", "Canon EOS R5") and some don't
+    /// ("ILCE-7CM2", "X-T4"), so Adobe's name also matches without its first word.
+    static func isCamera(_ adobeName: String, _ model: String?) -> Bool {
+        guard let model, !model.isEmpty, !adobeName.isEmpty else { return false }
+        let photo = normalized(model)
+        if normalized(adobeName) == photo { return true }
+        let words = adobeName.split(separator: " ")
+        return words.count > 1 && normalized(words.dropFirst().joined(separator: " ")) == photo
     }
 
     /// Camera names written differently (Lightroom's "Nikon Z 50 2", EXIF's "NIKON Z 50_2"): letters and

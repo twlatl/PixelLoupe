@@ -40,6 +40,8 @@ nonisolated final class AdobeProfileLibrary: @unchecked Sendable {
     private var hiddenCache: [String: PhotoAdjustments] = [:]
     private var cubeOrder: [String] = []
     private var cameraProfiles: [String: DNGCameraProfile] = [:]
+    /// The camera profile under a look for a camera ("look id|camera"), or "" for none: asked for on every render.
+    private var baseCache: [String: String] = [:]
     /// Whether a camera profile's hue/saturation map is applied to photos from its own camera. Off: the map refines
     /// the profile's matrices, which Apple's RAW engine doesn't use, and on top of the engine's own colors it
     /// oversaturates them (measured on Sony profiles, RAW-304). `Scripts/camera-profiles.sh` renders both ways.
@@ -57,12 +59,25 @@ nonisolated final class AdobeProfileLibrary: @unchecked Sendable {
 
     /// Every profile, sorted by group and name.
     var allEntries: [Entry] {
-        withIndex { Array($0.values) }.sorted {
+        Self.sorted(withIndex { Array($0.values) })
+    }
+
+    private static func sorted(_ entries: [Entry]) -> [Entry] {
+        entries.sorted {
             if $0.group != $1.group { return $0.group.localizedStandardCompare($1.group) == .orderedAscending }
             if $0.name != $1.name { return $0.name.localizedStandardCompare($1.name) == .orderedAscending }
             // Camera profiles of one name, for different cameras.
             return $0.id < $1.id
         }
+    }
+
+    /// The profiles the Profile menu offers a photo, sorted by group and name: the ones for no camera in particular
+    /// and the ones for this camera, with camera profiles (`.dcp`) for RAW photos only. Filtered before sorting:
+    /// with Lightroom's camera profiles imported the library holds thousands, a handful of them for any one camera.
+    func entries(forCameraModel model: String?, isRaw: Bool) -> [Entry] {
+        Self.sorted(withIndex { index in
+            index.values.filter { ($0.cameraModel.isEmpty || AdobeProfile.isCamera($0.cameraModel, model)) && (isRaw || !$0.isCameraProfile) }
+        })
     }
 
     func entry(id: String) -> Entry? { withIndex { $0[id] } }
@@ -73,8 +88,7 @@ nonisolated final class AdobeProfileLibrary: @unchecked Sendable {
         withIndex { index in
             if let id, let entry = index[id] { return entry }
             let matches = index.values.filter { $0.name.caseInsensitiveCompare(name) == .orderedSame }
-            let model = cameraModel.map(AdobeProfile.normalized)
-            return matches.first { !$0.cameraModel.isEmpty && model == AdobeProfile.normalized($0.cameraModel) }
+            return matches.first { AdobeProfile.isCamera($0.cameraModel, cameraModel) }
                 ?? matches.first { $0.cameraModel.isEmpty }
         }
     }
@@ -145,6 +159,30 @@ nonisolated final class AdobeProfileLibrary: @unchecked Sendable {
         return cube
     }
 
+    /// The camera profile an Adobe look is built on, for a photo from `cameraModel`: the look's `crs:CameraProfile`
+    /// names it ("Camera Standard" for Nikon's Creative Picture Controls), and it has to be imported, for that
+    /// camera. Nil for looks that name none, and when it isn't there, which leaves the look on PixelLoupe's Default.
+    func baseCameraProfileID(forLook id: String, cameraModel: String?) -> String? {
+        guard !id.hasPrefix(DNGCameraProfile.idPrefix), let cameraModel, !cameraModel.isEmpty else { return nil }
+        let key = id + "|" + AdobeProfile.normalized(cameraModel)
+        lock.lock()
+        if let cached = baseCache[key] { lock.unlock(); return cached.nonEmpty }
+        lock.unlock()
+        var found = ""
+        if let name = profile(id: id)?.settings["CameraProfile"]?.string, !name.isEmpty {
+            found = withIndex { index in
+                index.values.first {
+                    $0.isCameraProfile && $0.name.caseInsensitiveCompare(name) == .orderedSame
+                        && AdobeProfile.isCamera($0.cameraProfileModel ?? "", cameraModel)
+                }?.id ?? ""
+            }
+        }
+        lock.lock()
+        baseCache[key] = found
+        lock.unlock()
+        return found.nonEmpty
+    }
+
     /// Adds a camera profile in memory only, for tests: offered for every camera unless `forItsCameraOnly`.
     func register(_ profile: DNGCameraProfile, forItsCameraOnly: Bool = false) {
         lock.lock()
@@ -152,6 +190,7 @@ nonisolated final class AdobeProfileLibrary: @unchecked Sendable {
         var index = entries ?? [:]
         index[profile.id] = Self.entry(for: profile, forItsCameraOnly: forItsCameraOnly, file: "")
         entries = index
+        baseCache = [:]
         cubeCache = cubeCache.filter { !$0.key.hasPrefix(profile.id + "|") }
         lock.unlock()
     }
@@ -190,6 +229,7 @@ nonisolated final class AdobeProfileLibrary: @unchecked Sendable {
         var index = entries ?? readIndexUnlocked()
         index[profile.id] = Self.entry(for: profile, forItsCameraOnly: forItsCameraOnly, file: relative)
         entries = index
+        baseCache = [:]
         cameraProfiles[profile.id] = nil
         cubeCache = cubeCache.filter { !$0.key.hasPrefix(profile.id + "|") }
         lock.unlock()
@@ -224,6 +264,7 @@ nonisolated final class AdobeProfileLibrary: @unchecked Sendable {
         index[profile.id] = Entry(id: profile.id, name: profile.name, group: profile.group, cameraModel: profile.cameraModel,
                                   isMonochrome: profile.isMonochrome, file: "")
         entries = index
+        baseCache = [:]
         lock.unlock()
     }
 
@@ -293,6 +334,7 @@ nonisolated final class AdobeProfileLibrary: @unchecked Sendable {
         index[profile.id] = Entry(id: profile.id, name: profile.name, group: profile.group, cameraModel: profile.cameraModel,
                                   isMonochrome: profile.isMonochrome, file: relative)
         entries = index
+        baseCache = [:]
         loaded[profile.id] = nil
         cubeCache = cubeCache.filter { !$0.key.hasPrefix(profile.id + "|") }
         lock.unlock()

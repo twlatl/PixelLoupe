@@ -383,10 +383,7 @@ final class AdjustmentsPanelViewController: NSViewController {
         }
         profileTargets = []
         // Camera profiles (.dcp) work in the RAW engine, so they're offered for RAW photos only.
-        let entries = profiles.allEntries.filter {
-            ($0.cameraModel.isEmpty || AdobeProfile.normalized($0.cameraModel) == cameraModel.map(AdobeProfile.normalized))
-                && (isRaw || !$0.isCameraProfile)
-        }
+        let entries = profiles.entries(forCameraModel: cameraModel, isRaw: isRaw)
         if !entries.isEmpty {
             menu.addItem(.separator())
             let groups = Dictionary(grouping: entries) { $0.cameraModel.isEmpty ? $0.group : "Camera Matching" }

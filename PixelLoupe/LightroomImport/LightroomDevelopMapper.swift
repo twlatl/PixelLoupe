@@ -525,9 +525,10 @@ nonisolated enum LightroomDevelopMapper {
         guard let name = look?["Name"]?.string ?? settings["CameraProfile"]?.string else { return [] }
         let amount = look?["Amount"]?.number ?? 1
         let mapping = profileMapping(for: name)
-        // The real profile, when it's been imported (Adobe's defaults stay PixelLoupe's own rendering).
-        if mapping != .none, mapping != .defaultLook,
-           let entry = input.profiles.find(id: look?["UUID"]?.string, name: name, cameraModel: input.cameraModel) {
+        // The real profile, when it's been imported. Adobe's defaults (Adobe Color, Adobe Standard) stay PixelLoupe's
+        // own rendering; the camera's own ("Camera Standard") is its camera profile when that's imported.
+        if mapping != .none, let entry = input.profiles.find(id: look?["UUID"]?.string, name: name, cameraModel: input.cameraModel),
+           mapping != .defaultLook || (entry.isCameraProfile && name.lowercased().hasPrefix("camera")) {
             adjustments.profile = .init(kind: .standard, amount: amount.clamped(to: 0...2), importedName: name, adobeID: entry.id)
             if entry.isMonochrome {
                 adjustments.blackAndWhite.isEnabled = true

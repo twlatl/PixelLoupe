@@ -183,7 +183,7 @@ final class PresetsPanelViewController: NSViewController, NSOutlineViewDataSourc
         importFiles.controlSize = .small
         importFiles.setAccessibilityIdentifier("importPresetFiles")
         var emptyViews: [NSView] = [emptyLabel, importFiles]
-        if !PresetLibrary.lightroomDirectories.isEmpty {
+        if !PresetLibrary.lightroomSources.isEmpty {
             let importLightroom = NSButton(title: "Import Lightroom’s Presets", target: self, action: #selector(importLightroom(_:)))
             importLightroom.controlSize = .small
             importLightroom.setAccessibilityIdentifier("importLightroomPresets")
@@ -538,7 +538,7 @@ final class PresetsPanelViewController: NSViewController, NSOutlineViewDataSourc
     @objc private func showImportMenu(_ sender: NSButton) {
         let menu = NSMenu()
         menu.addItem(withTitle: "Import Profiles & Presets…", action: #selector(importFiles(_:)), keyEquivalent: "").target = self
-        if !PresetLibrary.lightroomDirectories.isEmpty {
+        if !PresetLibrary.lightroomSources.isEmpty {
             menu.addItem(withTitle: "Import Lightroom’s Presets", action: #selector(importLightroom(_:)), keyEquivalent: "").target = self
         }
         menu.addItem(.separator())
@@ -568,7 +568,8 @@ final class PresetsPanelViewController: NSViewController, NSOutlineViewDataSourc
     }
 
     @objc func importLightroom(_ sender: Any?) {
-        importPresets(from: PresetLibrary.lightroomDirectories)
+        // Lightroom's camera profiles come too, each kept to its own camera.
+        importPresets(from: PresetLibrary.lightroomSources, cameraProfilesForTheirCameraOnly: true)
     }
 
     @objc private func showFolder(_ sender: Any?) {
@@ -576,9 +577,9 @@ final class PresetsPanelViewController: NSViewController, NSOutlineViewDataSourc
         NSWorkspace.shared.activateFileViewerSelecting([library.directory])
     }
 
-    private func importPresets(from sources: [URL]) {
+    private func importPresets(from sources: [URL], cameraProfilesForTheirCameraOnly: Bool = false) {
         Task {
-            let result = await library.importPresets(from: sources)
+            let result = await library.importPresets(from: sources, cameraProfilesForTheirCameraOnly: cameraProfilesForTheirCameraOnly)
             guard result == .init(), let window = view.window else { return }
             let alert = NSAlert()
             alert.messageText = "No profiles or presets were imported"
