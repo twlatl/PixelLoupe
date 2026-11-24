@@ -19,7 +19,12 @@ nonisolated extension PhotoAdjustments {
 
         /// Whether `candidate` is removed at these settings.
         func removes(_ candidate: BlemishCandidate) -> Bool {
-            guard !excluded.contains(candidate.id), blemishes > 0 else { return false }
+            !excluded.contains(candidate.id) && selects(candidate)
+        }
+
+        /// Whether the sliders choose `candidate`, whether or not the user put it back.
+        func selects(_ candidate: BlemishCandidate) -> Bool {
+            guard blemishes > 0 else { return false }
             guard candidate.blemish >= 1 - blemishes else { return false }
             return candidate.natural < 0.5 || candidate.natural <= naturalMarks
         }

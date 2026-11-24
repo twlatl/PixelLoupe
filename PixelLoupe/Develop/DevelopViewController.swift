@@ -1358,8 +1358,12 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         retouchOverlay.selectedID = retouchPanel.selectedID
     }
 
-    private func retouchChanged(_ spots: [PhotoAdjustments.Spot], _ eyes: [PhotoAdjustments.RedEyeSpot], isFinal: Bool, actionName: String) {
+    private func retouchChanged(
+        _ spots: [PhotoAdjustments.Spot], _ eyes: [PhotoAdjustments.RedEyeSpot],
+        blemishRemoval: PhotoAdjustments.BlemishRemoval? = nil, isFinal: Bool, actionName: String
+    ) {
         var newValue = adjustments
+        if let blemishRemoval { newValue.blemishRemoval = blemishRemoval }
         newValue.spots = spots
         newValue.redEyes = eyes
         if let source { panel.display(newValue, asShotWhiteBalance: source.asShotWhiteBalance, isRaw: source.isRaw) }
@@ -1446,19 +1450,20 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         removePanel.onEditSelected = { [weak self] spot, isFinal, action in self?.editRemoveSpot(spot, isFinal: isFinal, actionName: action) }
         removePanel.onDeleteSelected = { [weak self] in _ = self?.deleteSelectedRemoveSpot() }
         removePanel.onReset = { [weak self] in
-            guard let self, !adjustments.spots.isEmpty else { return }
+            guard let self, !adjustments.spots.isEmpty || adjustments.blemishRemoval != .init() else { return }
             selectRemoveSpot(nil)
-            retouchChanged([], adjustments.redEyes, isFinal: true, actionName: "Clear Spots")
+            retouchChanged([], adjustments.redEyes, blemishRemoval: .init(), isFinal: true, actionName: "Clear Spots")
         }
         removePanel.onClose = { [weak self] in self?.state.developTool = .adjust }
         removePanel.onBlemishApply = { [weak self] on in
-            guard let self, let source else { return }
-            var newValue = adjustments
-            newValue.blemishRemoval.isEnabled = on
-            // Keep the Adjust panel's copy current, or its next edit would undo this one.
-            panel.display(newValue, asShotWhiteBalance: source.asShotWhiteBalance, isRaw: source.isRaw)
-            adjustmentsChanged(newValue, isFinal: true, actionName: "Blemish Removal")
-            refreshBlemishes()
+            self?.changeBlemishRemoval("Blemish Removal") { $0.isEnabled = on }
+        }
+        removeOverlay.onToggleBlemish = { [weak self] id in
+            guard let self else { return }
+            let isExcluded = adjustments.blemishRemoval.excluded.contains(id)
+            changeBlemishRemoval(isExcluded ? "Include Blemish" : "Exclude Blemish") {
+                if isExcluded { $0.excluded.remove(id) } else { $0.excluded.insert(id) }
+            }
         }
         removeOverlay.onStroke = { [weak self] stroke in self?.removeStroke(stroke) }
         removeOverlay.onPlace = { [weak self] point in self?.placeRemoveCircle(at: point) }
@@ -1488,25 +1493,41 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         refreshBlemishes()
     }
 
+    /// Changes Blemish Removal's settings, as one undo step.
+    private func changeBlemishRemoval(_ actionName: String, _ edit: (inout PhotoAdjustments.BlemishRemoval) -> Void) {
+        guard let source else { return }
+        var newValue = adjustments
+        edit(&newValue.blemishRemoval)
+        // Keep the Adjust panel's copy current, or its next edit would undo this one.
+        panel.display(newValue, asShotWhiteBalance: source.asShotWhiteBalance, isRaw: source.isRaw)
+        adjustmentsChanged(newValue, isFinal: true, actionName: actionName)
+        refreshBlemishes()
+    }
+
     /// Shows what Blemish Removal found and removed: the panel's line and the outlines. The blemishes are found when the
     /// preview first draws with it on, which posts `SubjectMatteStore.didFind`; their fills post `RemoveFillStore.didFill`.
     private func refreshBlemishes() {
         let setting = adjustments.blemishRemoval
         guard let source, state.developTool == .remove, setting.isEnabled else {
-            removeOverlay.blemishAreas = []
+            removeOverlay.blemishMarks = []
             removePanel.showBlemishRemoval(setting, status: nil)
             return
         }
         guard let candidates = source.blemishes.knownCandidates(for: source, adjustments: adjustments) else {
-            removeOverlay.blemishAreas = []
+            removeOverlay.blemishMarks = []
             removePanel.showBlemishRemoval(setting, status: "Finding blemishes…")
             return
         }
         let spots = setting.spots(for: candidates)
-        removeOverlay.blemishAreas = spots.compactMap(\.area)
+        let chosen = candidates.filter(setting.selects)
+        removeOverlay.blemishMarks = chosen.compactMap { candidate in
+            candidate.spot.area.map { .init(id: candidate.id, area: $0, isExcluded: setting.excluded.contains(candidate.id)) }
+        }
         let status: String
-        if spots.isEmpty {
+        if chosen.isEmpty {
             status = "No blemishes found."
+        } else if spots.isEmpty {
+            status = "No blemishes removed."
         } else if !source.removeFills.blemishFillsReady(for: source, adjustments: adjustments, spots: spots) {
             status = "Removing \(spots.count) blemish\(spots.count == 1 ? "" : "es")…"
         } else {

@@ -171,9 +171,9 @@ nonisolated final class BlemishStore: @unchecked Sendable {
             }
             let landmarks = observation.landmarks
             var exclusions: [(points: [CGPoint], margin: CGFloat)] = []
-            for eye in [landmarks?.leftEye, landmarks?.rightEye, landmarks?.leftEyebrow, landmarks?.rightEyebrow] {
-                exclusions.append((inFrame(eye), 0.05))
-            }
+            // Lashes and lids reach past the outline Vision gives an eye, most at its outer corner.
+            for eye in [landmarks?.leftEye, landmarks?.rightEye] { exclusions.append((inFrame(eye), 0.08)) }
+            for brow in [landmarks?.leftEyebrow, landmarks?.rightEyebrow] { exclusions.append((inFrame(brow), 0.05)) }
             exclusions.append((inFrame(landmarks?.outerLips), 0.03))
             // The nostrils: the bottom of the nose.
             let nose = inFrame(landmarks?.nose)

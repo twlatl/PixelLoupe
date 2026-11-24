@@ -230,7 +230,7 @@ final class RemovePanelViewController: NSViewController {
 
         let reset = NSButton(title: "Reset", target: nil, action: nil)
         let close = NSButton(title: "Close", target: nil, action: nil)
-        for (button, identifier, tip) in [(reset, "removeReset", "Remove every spot"), (close, "removeClose", "Close the Remove tool")] {
+        for (button, identifier, tip) in [(reset, "removeReset", "Remove every spot and turn off Blemish Removal"), (close, "removeClose", "Close the Remove tool")] {
             button.controlSize = .small
             button.bezelStyle = .rounded
             button.setAccessibilityIdentifier(identifier)
@@ -276,8 +276,10 @@ final class RemovePanelViewController: NSViewController {
 
     /// Blemish Removal: its title and Apply switch, and what it found.
     private func buildBlemishRemoval() {
-        let title = NSTextField(labelWithString: "Blemish Removal")
-        title.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
+        let title = NSTextField(labelWithString: "BLEMISH REMOVAL")
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
+        title.textColor = .secondaryLabelColor
+        title.setAccessibilityLabel("Blemish Removal")
         let apply = small(NSTextField(labelWithString: "Apply"))
         blemishSwitch.controlSize = .mini
         blemishSwitch.setAccessibilityLabel("Apply Blemish Removal")

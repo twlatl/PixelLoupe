@@ -10,7 +10,7 @@ import Foundation
 /// sliders can choose between them. Pure, so it can be tested on made-up skin.
 nonisolated enum BlemishDetector {
     /// Bump when what's found or how it's scored changes: photos are then looked at again.
-    static let version = 1
+    static let version = 2
 
     /// Gamma-encoded RGB, 0…1, rows from the bottom.
     struct Image: Sendable {
@@ -174,9 +174,33 @@ nonisolated enum BlemishDetector {
             }
             stack.removeAll(keepingCapacity: true)
             guard Double(pixels.count) >= minArea, Double(pixels.count) <= maxArea else { continue }
-            if let mark = mark(pixels, width: w, height: h, dark: dark, red: red, signal: signal) { marks.append(mark) }
+            guard let mark = mark(pixels, width: w, height: h, dark: dark, red: red, signal: signal) else { continue }
+            // Beside hair (the hairline, lashes, brows) skin is shaded and reddened by it.
+            let own = Set(pixels)
+            if darkShare(around: mark, own: own, luma: luma, below: toneLuma * 0.5, reach: sizes.maximum, width: w, height: h) > maximumDarkShare { continue }
+            marks.append(mark)
         }
         return marks
+    }
+
+    /// How much of a mark's surroundings can be as dark as hair.
+    static let maximumDarkShare = 0.08
+
+    /// The share of the pixels within `reach` of a mark's edge (not its own) darker than `below`.
+    private static func darkShare(
+        around mark: Mark, own: Set<Int>, luma: [Float], below: Float, reach: Double, width w: Int, height h: Int
+    ) -> Double {
+        let radius = mark.radius + reach, cx = Double(mark.center.x), cy = Double(mark.center.y)
+        var total = 0, dark = 0
+        for y in max(0, Int(cy - radius))...min(h - 1, Int(cy + radius)) {
+            for x in max(0, Int(cx - radius))...min(w - 1, Int(cx + radius)) {
+                let dx = Double(x) + 0.5 - cx, dy = Double(y) + 0.5 - cy
+                guard dx * dx + dy * dy <= radius * radius, !own.contains(y * w + x) else { continue }
+                total += 1
+                if luma[y * w + x] < below { dark += 1 }
+            }
+        }
+        return Double(dark) / Double(max(total, 1))
     }
 
     /// A mark from its pixels, or nil when it's too thin or straggly to be one (a wrinkle, a hair).
