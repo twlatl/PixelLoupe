@@ -19,6 +19,9 @@ final class PhotoViewer: NSView {
     /// The camera's focus points, in red over the photo (Show Focus Points, RAW-308).
     private let focusLayer = CAShapeLayer()
     private var focusPoints: FocusPoints?
+    /// The shown photo's file was read and names no focus point.
+    private var noPointRecorded = false
+    private let focusNote = FocusPointsNoteView()
     private var focusTask: Task<Void, Never>?
     private let clickView = ZoomClickView()
     private let inset: CGFloat
@@ -115,6 +118,7 @@ final class PhotoViewer: NSView {
         playerView.isHidden = true
         playerView.setAccessibilityIdentifier("videoPlayer")
         addSubview(playerView, positioned: .below, relativeTo: missingBanner)
+        focusNote.pin(in: self)
     }
 
     private func makeMissingBanner() {
@@ -201,6 +205,7 @@ final class PhotoViewer: NSView {
         detailLayer.contents = nil
         detailLayer.isHidden = true
         focusPoints = nil
+        noPointRecorded = false
         stopPlayback()
         loadFocusPoints()
         guard let photo else {
@@ -350,6 +355,7 @@ final class PhotoViewer: NSView {
         let url = photo.fileURL
         if let cached = FocusPointsCache.shared.cached(url) {
             focusPoints = cached
+            noPointRecorded = FocusPointsNoteView.applies(to: cached, url: url)
             return
         }
         let id = photoID
@@ -357,6 +363,7 @@ final class PhotoViewer: NSView {
             let points = await FocusPointsCache.shared.points(for: url)
             guard let self, !Task.isCancelled, photoID == id else { return }
             focusPoints = points
+            noPointRecorded = FocusPointsNoteView.applies(to: points, url: url)
             updateFocusLayer()
         }
     }
@@ -367,6 +374,7 @@ final class PhotoViewer: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
+        focusNote.isHidden = !(showsFocusPoints && noPointRecorded && photo?.isVideo == false)
         guard showsFocusPoints, let focusPoints, let photo, !photo.isVideo, imageLayer.contentsGravity == .resize,
               photo.pixelWidth > 0, photo.pixelHeight > 0 else {
             focusLayer.isHidden = true

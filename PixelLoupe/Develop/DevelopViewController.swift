@@ -2033,6 +2033,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     private func loadFocusPoints() {
         focusTask?.cancel()
         focusOverlay.focusPoints = nil
+        focusOverlay.noPointRecorded = false
         guard state.showsFocusPoints, let photo = displayedPhoto, !photo.isVideo else { return }
         let url = photo.fileURL
         let fileOrientation = Int(photo.orientation)
@@ -2041,6 +2042,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             let points = await FocusPointsCache.shared.points(for: url)
             guard let self, !Task.isCancelled, displayedPhotoID == id else { return }
             focusOverlay.focusPoints = points.map { ($0, fileOrientation) }
+            focusOverlay.noPointRecorded = FocusPointsNoteView.applies(to: points, url: url)
         }
     }
 
