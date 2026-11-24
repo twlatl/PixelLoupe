@@ -16,6 +16,13 @@ final class PhotoViewer: NSView {
     private let imageLayer = CALayer()
     /// The sharp render of the visible part while zoomed past the fitted render's resolution.
     private let detailLayer = CALayer()
+    /// The camera's focus points, in red over the photo (Show Focus Points, RAW-308).
+    private let focusLayer = CAShapeLayer()
+    private var focusPoints: FocusPoints?
+    /// The shown photo's file was read and names no focus point.
+    private var noPointRecorded = false
+    private let focusNote = FocusPointsNoteView()
+    private var focusTask: Task<Void, Never>?
     private let clickView = ZoomClickView()
     private let inset: CGFloat
     private var photoID: NSManagedObjectID?
@@ -41,6 +48,15 @@ final class PhotoViewer: NSView {
             let resized = zoom?.isZoomed != oldValue?.isZoomed || zoom?.fit != oldValue?.fit
                 || (zoom?.isZoomed == true && zoom?.ratio != oldValue?.ratio)
             layoutImage(animated: resized && oldValue != nil)
+        }
+    }
+
+    /// Whether the camera's focus points are drawn over the photo.
+    var showsFocusPoints = false {
+        didSet {
+            guard showsFocusPoints != oldValue else { return }
+            loadFocusPoints()
+            updateFocusLayer()
         }
     }
 
@@ -71,6 +87,12 @@ final class PhotoViewer: NSView {
         imageLayer.contentsGravity = .resizeAspect
         detailLayer.contentsGravity = .resize
         detailLayer.isHidden = true
+        focusLayer.fillColor = nil
+        focusLayer.strokeColor = NSColor.systemRed.cgColor
+        focusLayer.lineWidth = 2
+        focusLayer.actions = ["path": NSNull(), "bounds": NSNull(), "position": NSNull(), "hidden": NSNull()]
+        focusLayer.isHidden = true
+        clipLayer.addSublayer(focusLayer)
         layer?.addSublayer(clipLayer)
         clickView.isActive = { [weak self] in
             guard let self, zoom != nil, let photo, !photo.isVideo else { return false }
@@ -96,6 +118,7 @@ final class PhotoViewer: NSView {
         playerView.isHidden = true
         playerView.setAccessibilityIdentifier("videoPlayer")
         addSubview(playerView, positioned: .below, relativeTo: missingBanner)
+        focusNote.pin(in: self)
     }
 
     private func makeMissingBanner() {
@@ -181,7 +204,10 @@ final class PhotoViewer: NSView {
         zoomSource = nil
         detailLayer.contents = nil
         detailLayer.isHidden = true
+        focusPoints = nil
+        noPointRecorded = false
         stopPlayback()
+        loadFocusPoints()
         guard let photo else {
             imageLayer.contents = nil
             setAccessibilityLabel(nil)
@@ -282,7 +308,10 @@ final class PhotoViewer: NSView {
     private func layoutImage(animated: Bool = false) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        defer { CATransaction.commit() }
+        defer {
+            updateFocusLayer()
+            CATransaction.commit()
+        }
         clipLayer.frame = paneRect
         let pane = CGRect(origin: .zero, size: paneRect.size)
         guard let viewport = currentViewport(), let imageSize else {
@@ -316,6 +345,51 @@ final class PhotoViewer: NSView {
             // After the zoom animation, so the sharp render doesn't appear mid-motion.
             scheduleDetailRender(delay: animated ? Self.zoomAnimationDuration + 0.05 : 0.1)
         }
+    }
+
+    // MARK: - Focus points
+
+    private func loadFocusPoints() {
+        focusTask?.cancel()
+        guard showsFocusPoints, let photo, !photo.isVideo else { return }
+        let url = photo.fileURL
+        if let cached = FocusPointsCache.shared.cached(url) {
+            focusPoints = cached
+            noPointRecorded = FocusPointsNoteView.applies(to: cached, url: url)
+            return
+        }
+        let id = photoID
+        focusTask = Task { [weak self] in
+            let points = await FocusPointsCache.shared.points(for: url)
+            guard let self, !Task.isCancelled, photoID == id else { return }
+            focusPoints = points
+            noPointRecorded = FocusPointsNoteView.applies(to: points, url: url)
+            updateFocusLayer()
+        }
+    }
+
+    /// Places the focus points over the photo where it's drawn now: through the camera's orientation, Rotate/Flip,
+    /// straightening and the crop.
+    private func updateFocusLayer() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        focusNote.isHidden = !(showsFocusPoints && noPointRecorded && photo?.isVideo == false)
+        guard showsFocusPoints, let focusPoints, let photo, !photo.isVideo, imageLayer.contentsGravity == .resize,
+              photo.pixelWidth > 0, photo.pixelHeight > 0 else {
+            focusLayer.isHidden = true
+            return
+        }
+        let adjustments = photo.adjustments
+        var frameSize = CGSize(width: Int(photo.pixelWidth), height: Int(photo.pixelHeight))
+        if (photo.orientation >= 5) != adjustments.orientation.swapsDimensions {
+            frameSize = CGSize(width: frameSize.height, height: frameSize.width)
+        }
+        let frame = PreviewFrame.cropped(shown: imageLayer.frame, crop: adjustments.crop, frameSize: frameSize)
+        let areas = focusPoints.frameAreas(fileOrientation: Int(photo.orientation), orientation: adjustments.orientation)
+        focusLayer.frame = CGRect(origin: .zero, size: clipLayer.bounds.size)
+        focusLayer.path = FocusPoints.markerPath(frameAreas: areas, in: frame)
+        focusLayer.isHidden = false
     }
 
     /// Moves the photo to `frame`, animating from where it shows now when asked.
@@ -468,6 +542,7 @@ final class LoupeViewController: NSViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         viewer.zoom = state.zoom
+        viewer.showsFocusPoints = state.showsFocusPoints
         viewer.onZoomChange = { [weak self] zoom in self?.state.zoom = zoom }
         viewer.onVisibleRectChange = { [weak self] rect in
             guard let self, state.presentation == .loupe, state.mode == .library else { return }
@@ -478,6 +553,7 @@ final class LoupeViewController: NSViewController {
             switch change {
             case .selection: refresh()
             case .zoom: viewer.zoom = state.zoom
+            case .focusPoints: viewer.showsFocusPoints = state.showsFocusPoints
             default: break
             }
         }
@@ -550,6 +626,7 @@ final class FullScreenPhotoController: NSWindowController {
         previousPresentationOptions = NSApp.presentationOptions
         NSApp.presentationOptions = [.hideDock, .hideMenuBar]
         window?.makeKeyAndOrderFront(nil)
+        viewer.showsFocusPoints = state.showsFocusPoints
         viewer.show(state.selectedPhotoIDs.first)
         NSCursor.setHiddenUntilMouseMoves(true)
     }

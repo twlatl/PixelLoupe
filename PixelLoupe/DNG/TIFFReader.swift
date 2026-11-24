@@ -84,6 +84,11 @@ nonisolated struct TIFFFile: Sendable {
         return reader.directory(at: offset)
     }
 
+    /// A directory at `offset` from the start of the file, such as a maker note's.
+    func directory(at offset: Int) -> Directory? {
+        Self.Reader(data: data, isBigEndian: isBigEndian).directory(at: offset)
+    }
+
     /// The full-resolution image's directory (`NewSubfileType` 0): IFD0, or one of its sub-directories.
     var mainImage: Directory? {
         let candidates = [ifd0] + subDirectories(of: ifd0) + directories.dropFirst()

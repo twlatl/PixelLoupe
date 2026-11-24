@@ -19,6 +19,16 @@ final class FilmstripViewController: NSViewController, NSCollectionViewDelegate 
     /// Shown while the filter bar's criteria leave photos out; a click shows the bar.
     private let filteredButton = NSButton()
     private var isApplyingSelection = false
+    /// Draws the camera's focus points over the photo on show (RAW-308).
+    private lazy var focusPointsCheckbox: NSButton = {
+        let checkbox = NSButton(checkboxWithTitle: "Show Focus Points", target: self, action: #selector(toggleFocusPoints(_:)))
+        checkbox.controlSize = .small
+        checkbox.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        checkbox.state = state.showsFocusPoints ? .on : .off
+        checkbox.toolTip = "Draw where the camera focused, from the RAW file, in red over the photo"
+        checkbox.setAccessibilityIdentifier("filmstripShowFocusPoints")
+        return checkbox
+    }()
 
     init(store: CatalogStore, state: LibraryState) {
         self.store = store
@@ -56,13 +66,14 @@ final class FilmstripViewController: NSViewController, NSCollectionViewDelegate 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let header = NSStackView(views: [
-            filteredButton, infoLabel, spacer, filterLabel, FlagFilterControl(state: state), divider,
+            filteredButton, infoLabel, spacer, focusPointsCheckbox, filterLabel, FlagFilterControl(state: state), divider,
             ColorLabelFilterControl(state: state, identifierPrefix: "filmstrip."), divider2,
             RatingFilterControl(state: state, identifierPrefix: "filmstrip."),
         ])
         header.spacing = 8
         header.setCustomSpacing(4, after: filteredButton)
         header.setCustomSpacing(16, after: spacer)
+        header.setCustomSpacing(16, after: focusPointsCheckbox)
         // Don't let the header's natural width shrink the window.
         header.setHuggingPriority(.defaultLow, for: .horizontal)
         header.edgeInsets = NSEdgeInsets(top: 4, left: 12, bottom: 0, right: 12)
@@ -181,6 +192,7 @@ final class FilmstripViewController: NSViewController, NSCollectionViewDelegate 
                 restoredSelectionPin.release()
                 updateInfo()
             case .photoCount: updateInfo()
+            case .focusPoints: focusPointsCheckbox.state = state.showsFocusPoints ? .on : .off
             default: break
             }
         }
@@ -282,6 +294,10 @@ final class FilmstripViewController: NSViewController, NSCollectionViewDelegate 
     }
 
     /// Shows the Library Filter bar, switching to Library from Develop (the bar is Library's).
+    @objc private func toggleFocusPoints(_ sender: NSButton) {
+        state.showsFocusPoints = sender.state == .on
+    }
+
     @objc private func showFilterBar(_ sender: Any?) {
         if state.mode != .library {
             state.presentation = .grid

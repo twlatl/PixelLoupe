@@ -76,6 +76,8 @@ final class LibraryState {
         case hover
         /// Whether the grid and filmstrip report the photo under the pointer.
         case hoverTracking
+        /// Show Focus Points was turned on or off (RAW-308).
+        case focusPoints
     }
 
     struct ImportStatus: Equatable {
@@ -174,6 +176,18 @@ final class LibraryState {
             guard isFilmstripVisible != oldValue else { return }
             Defaults.store.set(isFilmstripVisible, forKey: Self.filmstripVisibleKey)
             notify(.filmstrip)
+        }
+    }
+
+    private static let showsFocusPointsKey = "ShowsFocusPoints"
+
+    /// Whether the photo on show has the camera's focus points drawn over it in red (the filmstrip's Show Focus
+    /// Points checkbox, RAW-308).
+    var showsFocusPoints = Defaults.store.bool(forKey: LibraryState.showsFocusPointsKey) {
+        didSet {
+            guard showsFocusPoints != oldValue else { return }
+            Defaults.store.set(showsFocusPoints, forKey: Self.showsFocusPointsKey)
+            notify(.focusPoints)
         }
     }
 

@@ -75,6 +75,9 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
     private let retouchOverlay = RetouchOverlayView()
     private let removePanel = RemovePanelViewController()
     private let removeOverlay = RemoveOverlayView()
+    /// Show Focus Points (RAW-308).
+    private let focusOverlay = FocusPointsOverlayView()
+    private var focusTask: Task<Void, Never>?
     /// The spot selected in Remove.
     private var removeSelectedID: UUID?
     /// Finding the object a stroke went round (Detect Objects).
@@ -195,7 +198,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         maskOverlay.isHidden = true
         retouchOverlay.isHidden = true
         removeOverlay.isHidden = true
-        for view in [metalView!, beforeAfterOverlay, zoomClickView, loupeOverlay, cropOverlay, maskOverlay, retouchOverlay, removeOverlay, fringePicker, whiteBalancePicker, gradingPicker, infoLabel, messageLabel, locateButton, spinner] as [NSView] {
+        for view in [metalView!, beforeAfterOverlay, zoomClickView, loupeOverlay, cropOverlay, focusOverlay, maskOverlay, retouchOverlay, removeOverlay, fringePicker, whiteBalancePicker, gradingPicker, infoLabel, messageLabel, locateButton, spinner] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             previewContainer.addSubview(view)
         }
@@ -232,6 +235,10 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             retouchOverlay.leadingAnchor.constraint(equalTo: metalView.leadingAnchor),
             retouchOverlay.trailingAnchor.constraint(equalTo: metalView.trailingAnchor),
             retouchOverlay.bottomAnchor.constraint(equalTo: metalView.bottomAnchor),
+            focusOverlay.topAnchor.constraint(equalTo: metalView.topAnchor),
+            focusOverlay.leadingAnchor.constraint(equalTo: metalView.leadingAnchor),
+            focusOverlay.trailingAnchor.constraint(equalTo: metalView.trailingAnchor),
+            focusOverlay.bottomAnchor.constraint(equalTo: metalView.bottomAnchor),
             removeOverlay.topAnchor.constraint(equalTo: metalView.topAnchor),
             removeOverlay.leadingAnchor.constraint(equalTo: metalView.leadingAnchor),
             removeOverlay.trailingAnchor.constraint(equalTo: metalView.trailingAnchor),
@@ -326,6 +333,9 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
                 zoomClickView.zoomDidChange()
                 retouchOverlay.zoomDidChange()
             case .beforeAfter:
+                metalView.needsDisplay = true
+            case .focusPoints:
+                loadFocusPoints()
                 metalView.needsDisplay = true
             case .zoom:
                 let zoom = state.zoom
@@ -2019,6 +2029,23 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
 
     // MARK: - Loading
 
+    /// Reads the shown photo's focus points while Show Focus Points is on (RAW-308).
+    private func loadFocusPoints() {
+        focusTask?.cancel()
+        focusOverlay.focusPoints = nil
+        focusOverlay.noPointRecorded = false
+        guard state.showsFocusPoints, let photo = displayedPhoto, !photo.isVideo else { return }
+        let url = photo.fileURL
+        let fileOrientation = Int(photo.orientation)
+        let id = displayedPhotoID
+        focusTask = Task { [weak self] in
+            let points = await FocusPointsCache.shared.points(for: url)
+            guard let self, !Task.isCancelled, displayedPhotoID == id else { return }
+            focusOverlay.focusPoints = points.map { ($0, fileOrientation) }
+            focusOverlay.noPointRecorded = FocusPointsNoteView.applies(to: points, url: url)
+        }
+    }
+
     private func loadSelectedPhoto() {
         guard let id = state.selectedPhotoIDs.first,
               let photo = try? store.viewContext.existingObject(with: id) as? Photo else {
@@ -2026,6 +2053,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             displayedPhotoID = nil
             presetsPanel.photo = nil
             source = nil
+            loadFocusPoints()
             loupeSource = nil
             placeholder = nil
             panel.isEditingEnabled = false
@@ -2054,6 +2082,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         clearMutedWheels()
         closeColorWells()
         displayedPhotoID = id
+        loadFocusPoints()
         historyCursor = nil
         _ = cancelPendingRemove()
         removeSelectedID = nil
@@ -2300,12 +2329,17 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
                 y: ((bounds.height - scaled.extent.height) / 2).rounded()
             )).composited(over: output)
         }
+        // Until the photo decodes, there's no frame to place focus points on.
+        if source == nil { focusOverlay.isHidden = true }
         if let source {
             // Render at display resolution: RAW decoding at a reduced scale keeps slider drags live.
             let cropping = state.developTool == .crop
             // Masks and spots are placed on the whole frame, but shown on the photo as cropped (RAW-202): their
             // overlays map through the crop and its straightening.
             let masking = [.mask, .remove, .retouch].contains(state.developTool)
+            // Not over the whole frame in Crop, nor over two photos in Before/After.
+            let showsFocusPoints = state.showsFocusPoints && !cropping && (masking || state.beforeAfter == nil)
+            focusOverlay.isHidden = !showsFocusPoints
             // A preset under the pointer in the Presets panel is previewed.
             let shownAdjustments = self.shownAdjustments
             // A cropped photo renders at the size it's shown; the crop tool shows the whole frame.
@@ -2486,16 +2520,22 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
                     )
                     cropOverlay.imageSize = source.frameSize(adjustments)
                 } else {
-                    if masking {
+                    if masking || showsFocusPoints {
                         let shown = CGRect(
                             x: rect.minX / backingScale, y: rect.minY / backingScale,
                             width: rect.width / backingScale, height: rect.height / backingScale
                         )
                         let frame = PreviewFrame.cropped(shown: shown, crop: shownAdjustments.crop, frameSize: source.frameSize(adjustments))
-                        maskOverlay.previewFrame = frame
-                        retouchOverlay.previewFrame = frame
-                        removeOverlay.previewFrame = frame
-                        lastFrameScale = previewScale
+                        if masking {
+                            maskOverlay.previewFrame = frame
+                            retouchOverlay.previewFrame = frame
+                            removeOverlay.previewFrame = frame
+                            lastFrameScale = previewScale
+                        }
+                        if showsFocusPoints {
+                            focusOverlay.orientation = shownAdjustments.orientation
+                            focusOverlay.previewFrame = frame
+                        }
                     }
                     newGeometry = PreviewGeometry(
                         imageRect: CGRect(
