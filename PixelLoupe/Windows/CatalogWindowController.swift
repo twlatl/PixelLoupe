@@ -42,6 +42,7 @@ final class CatalogWindowController: NSWindowController, NSWindowDelegate, NSToo
         state.selectionMemory = SelectionMemory(saved: store.viewState.sourceSelections, context: store.viewContext)
         Self.restoreSelection(store.viewState, into: state, context: store.viewContext)
         store.pruneOrphanedPreviews()
+        Task { [store] in await store.clearHistoryIfDue() }
         rootViewController = RootViewController(store: store, state: state)
 
         let window = NSWindow(
