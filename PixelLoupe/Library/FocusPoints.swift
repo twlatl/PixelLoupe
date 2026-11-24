@@ -3,11 +3,17 @@ import Foundation
 
 /// Where the camera focused, read from the RAW file's maker notes (View ▸ Show Focus Points, RAW-308).
 ///
-/// ImageIO doesn't pass AF information through (it has no Sony maker-note dictionary, and its Canon one leaves
-/// AFInfo out), so the maker notes are read directly with ``TIFFFile``. Supported so far:
+/// ImageIO doesn't pass AF information through (it has no Sony, Nikon or Fujifilm maker-note dictionary, and its
+/// Canon one leaves AFInfo out), so the maker notes are read directly with ``TIFFFile``. Supported so far:
 ///
 /// - **Sony** (ARW): `FocusLocation` (0x2027), or `FocusLocation2` (0x204A) on newer bodies: the sensor
 ///   size and the focus point, in the stored image's pixels.
+/// - **Canon** (CR2): `AFInfo2` (0x26), or `AFInfo` (0x12) on older bodies: every AF point's box, centered on
+///   the image with Y up, and which of them were in focus. Only the in-focus points are drawn.
+/// - **Nikon** (NEF) with `AFInfo2` version 3 (Z 5/6/7/30/50/fc, D780, D6): the AF area's center and size.
+///   Older DSLRs only name a point on their AF grid (such as "C6"), with no coordinates.
+/// - **Fujifilm** (RAF): `FocusPixel` (0x1023), in the pixels of the embedded preview's EXIF size; manual
+///   focus still records the selected point, so `FocusMode` (0x1021) is checked first.
 ///
 /// Other makes return `nil` until there are sample files with in-focus AF points to check them against.
 nonisolated struct FocusPoints: Equatable, Sendable {
@@ -17,7 +23,17 @@ nonisolated struct FocusPoints: Equatable, Sendable {
 
     /// Reads the focus points of the RAW file at `url`; `nil` when the file has none we can read.
     static func read(from url: URL) -> FocusPoints? {
-        guard let file = TIFFFile(contentsOf: url) else { return nil }
+        guard let data = try? Data(contentsOf: url, options: .alwaysMapped) else { return nil }
+        return read(from: data)
+    }
+
+    /// Reads the focus points of a RAW file's bytes: a TIFF-based RAW (ARW, CR2, NEF…) or a Fujifilm RAF.
+    static func read(from data: Data) -> FocusPoints? {
+        if data.starts(with: Data("FUJIFILMCCD-RAW".utf8)) {
+            guard let exif = rafExif(data), let file = TIFFFile(data: exif) else { return nil }
+            return read(from: file)
+        }
+        guard let file = TIFFFile(data: data) else { return nil }
         return read(from: file)
     }
 
@@ -25,7 +41,29 @@ nonisolated struct FocusPoints: Equatable, Sendable {
         let make = file.ifd0[271].flatMap(file.string)?.trimmingCharacters(in: .whitespaces).uppercased() ?? ""
         guard let exif = file.exif(of: file.ifd0), let makerNote = exif[0x927C] else { return nil }
         if make.hasPrefix("SONY") { return sony(file, makerNote: makerNote) }
+        if make.hasPrefix("CANON") { return canon(file, makerNote: makerNote) }
+        if make.hasPrefix("NIKON") { return nikon(file, makerNote: makerNote) }
+        if make.hasPrefix("FUJIFILM") { return fujifilm(file, exif: exif, makerNote: makerNote) }
         return nil
+    }
+
+    /// The 16-bit words of `entry`'s value, as signed numbers, whatever type it's tagged with.
+    private static func words(_ file: TIFFFile, _ entry: TIFFFile.Entry) -> [Int] {
+        guard let bytes = file.bytes(entry) else { return [] }
+        return words(bytes, isBigEndian: file.isBigEndian)
+    }
+
+    private static func words(_ bytes: Data, isBigEndian: Bool) -> [Int] {
+        let bytes = [UInt8](bytes)
+        return stride(from: 0, to: bytes.count - 1, by: 2).map { index in
+            let (high, low) = isBigEndian ? (bytes[index], bytes[index + 1]) : (bytes[index + 1], bytes[index])
+            return Int(Int16(bitPattern: UInt16(high) << 8 | UInt16(low)))
+        }
+    }
+
+    /// A box centered at (`x`, `y`) of `width` × `height`, in unit coordinates.
+    private static func area(x: Double, y: Double, width: Double, height: Double) -> CGRect {
+        CGRect(x: x - width / 2, y: y - height / 2, width: width, height: height)
     }
 
     // MARK: - Sony
@@ -48,6 +86,119 @@ nonisolated struct FocusPoints: Equatable, Sendable {
             return FocusPoints(areas: [point])
         }
         return nil
+    }
+
+    // MARK: - Canon
+
+    /// Canon's maker note is a plain directory whose offsets count from the start of the file. Its AF records
+    /// give each point's box with 0,0 at the image center and Y up (on EOS bodies), in an `AFImageWidth` ×
+    /// `AFImageHeight` image, then a bit per point that was in focus.
+    private static func canon(_ file: TIFFFile, makerNote: TIFFFile.Entry) -> FocusPoints? {
+        guard let directory = file.directory(at: makerNote.valueOffset) else { return nil }
+        var points: [(x: Int, y: Int, width: Int, height: Int)] = []
+        var size = (width: 0, height: 0)
+        var inFocus: ArraySlice<Int> = []
+        if let entry = directory[0x26] {
+            // AFInfo2: size, mode, count, valid count, image size, AF image size, then widths, heights, Xs, Ys.
+            let w = words(file, entry)
+            guard w.count >= 8, w[1] != 0 else { return nil } // AFAreaMode 0 is manual focus.
+            let count = w[2], valid = min(w[3], count)
+            guard count > 0, w.count >= 8 + 4 * count + (count + 15) / 16 else { return nil }
+            size = (w[6], w[7])
+            points = (0..<valid).map { (w[8 + 2 * count + $0], w[8 + 3 * count + $0], w[8 + $0], w[8 + count + $0]) }
+            inFocus = w[(8 + 4 * count)..<(8 + 4 * count + (count + 15) / 16)]
+        } else if let entry = directory[0x12] {
+            // AFInfo: count, valid count, image size, AF image size, one area size, then Xs, Ys.
+            let w = words(file, entry)
+            guard w.count >= 8 else { return nil }
+            let count = w[0], valid = min(w[1], count)
+            guard count > 0, w.count >= 8 + 2 * count + (count + 15) / 16 else { return nil }
+            size = (w[4], w[5])
+            points = (0..<valid).map { (w[8 + $0], w[8 + count + $0], w[6], w[7]) }
+            inFocus = w[(8 + 2 * count)..<(8 + 2 * count + (count + 15) / 16)]
+        }
+        guard size.width > 0, size.height > 0 else { return nil }
+        let (width, height) = (Double(size.width), Double(size.height))
+        let areas = points.indices.compactMap { index -> CGRect? in
+            let word = inFocus[inFocus.startIndex + index / 16]
+            guard word & (1 << (index % 16)) != 0 else { return nil }
+            let point = points[index]
+            return area(
+                x: 0.5 + Double(point.x) / width, y: 0.5 - Double(point.y) / height,
+                width: Double(max(point.width, 0)) / width, height: Double(max(point.height, 0)) / height
+            )
+        }
+        return areas.isEmpty ? nil : FocusPoints(areas: areas)
+    }
+
+    // MARK: - Nikon
+
+    /// Nikon's maker note is "Nikon\0", a version, and then a TIFF of its own whose offsets count from its header.
+    /// `AFInfo2` (0xB7) version 3 has the AF area's center and size in an `AFImageWidth` × `AFImageHeight` image,
+    /// origin top-left, when its byte 7 says coordinates are available.
+    private static func nikon(_ file: TIFFFile, makerNote: TIFFFile.Entry) -> FocusPoints? {
+        guard makerNote.count > 18, let bytes = file.bytes(makerNote), bytes.starts(with: Data("Nikon\0".utf8)),
+              let inner = TIFFFile(data: Data(bytes.dropFirst(10))), let entry = inner.ifd0[0xB7],
+              let infoData = inner.bytes(entry), infoData.count >= 0x36
+        else { return nil }
+        let info = [UInt8](infoData)
+        guard info[0] == UInt8(ascii: "0"), info[1] == UInt8(ascii: "3"), info[7] == 1 else { return nil }
+        let w = words(Data(info[0x2A..<0x36]), isBigEndian: inner.isBigEndian).map { $0 & 0xFFFF }
+        let (imageWidth, imageHeight, x, y, width, height) = (w[0], w[1], w[2], w[3], w[4], w[5])
+        guard imageWidth > 0, imageHeight > 0, x > 0 || y > 0, x <= imageWidth, y <= imageHeight else { return nil }
+        let (iw, ih) = (Double(imageWidth), Double(imageHeight))
+        return FocusPoints(areas: [area(x: Double(x) / iw, y: Double(y) / ih, width: Double(width) / iw, height: Double(height) / ih)])
+    }
+
+    // MARK: - Fujifilm
+
+    /// The TIFF inside the EXIF segment of a RAF's embedded JPEG, whose offset and length are at bytes 84 and 88
+    /// of the RAF header (big-endian).
+    private static func rafExif(_ data: Data) -> Data? {
+        let bytes = data
+        func u32(_ at: Int) -> Int? {
+            guard at + 4 <= bytes.count else { return nil }
+            return (0..<4).reduce(0) { $0 << 8 | Int(bytes[bytes.startIndex + at + $1]) }
+        }
+        guard let jpegStart = u32(84), let jpegLength = u32(88), jpegStart + jpegLength <= bytes.count,
+              bytes[bytes.startIndex + jpegStart] == 0xFF, bytes[bytes.startIndex + jpegStart + 1] == 0xD8
+        else { return nil }
+        // Walk the JPEG's segments to APP1 "Exif\0\0".
+        var at = jpegStart + 2
+        let end = jpegStart + jpegLength
+        while at + 4 <= end {
+            let marker = bytes[bytes.startIndex + at + 1]
+            let length = Int(bytes[bytes.startIndex + at + 2]) << 8 | Int(bytes[bytes.startIndex + at + 3])
+            guard bytes[bytes.startIndex + at] == 0xFF, length >= 2, at + 2 + length <= end else { return nil }
+            let body = (bytes.startIndex + at + 4)..<(bytes.startIndex + at + 2 + length)
+            if marker == 0xE1, bytes[body].starts(with: Data("Exif\0\0".utf8)) {
+                return bytes.subdata(in: (body.lowerBound + 6)..<body.upperBound)
+            }
+            if marker == 0xDA { return nil } // Image data: no more metadata.
+            at += 2 + length
+        }
+        return nil
+    }
+
+    /// Fujifilm's maker note is "FUJIFILM", then the offset of its (little-endian) directory, and its offsets
+    /// count from the start of the maker note. `FocusPixel` is in the pixels of the EXIF image size
+    /// (`PixelXDimension` × `PixelYDimension`, the embedded preview's size), in the stored orientation.
+    private static func fujifilm(_ file: TIFFFile, exif: TIFFFile.Directory, makerNote: TIFFFile.Entry) -> FocusPoints? {
+        guard makerNote.count > 12, var bytes = file.bytes(makerNote), bytes.starts(with: Data("FUJIFILM".utf8)),
+              let width = exif[0xA002].flatMap({ file.integers($0).first }),
+              let height = exif[0xA003].flatMap({ file.integers($0).first }), width > 0, height > 0
+        else { return nil }
+        // Turn the header into a TIFF one so the maker note reads as a TIFF with offsets from its start.
+        bytes.replaceSubrange(bytes.startIndex..<(bytes.startIndex + 8), with: [0x49, 0x49, 0x2A, 0x00] + [UInt8](bytes[(bytes.startIndex + 8)..<(bytes.startIndex + 12)]))
+        guard let note = TIFFFile(data: bytes) else { return nil }
+        let directory = note.ifd0
+        // FocusMode: 0 auto, 1 manual, 65535 movie.
+        if let mode = directory[0x1021].flatMap({ note.integers($0).first }), mode != 0 { return nil }
+        guard let entry = directory[0x1023], entry.count == 2 else { return nil }
+        let values = note.integers(entry)
+        guard values.count == 2, values[0] > 0 || values[1] > 0, values[0] <= width, values[1] <= height else { return nil }
+        let point = CGRect(x: Double(values[0]) / Double(width), y: Double(values[1]) / Double(height), width: 0, height: 0)
+        return FocusPoints(areas: [point])
     }
 
     // MARK: - Placing

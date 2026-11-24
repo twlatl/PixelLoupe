@@ -48,8 +48,132 @@ struct FocusPointsTests {
     }
 
     @Test func otherMakesHaveNoPointYet() throws {
-        let file = try #require(TIFFFile(data: Self.sonyFile(make: "Canon", focusLocation: [9504, 6336, 7395, 3141])))
+        let file = try #require(TIFFFile(data: Self.sonyFile(make: "Leica", focusLocation: [9504, 6336, 7395, 3141])))
         #expect(FocusPoints.read(from: file) == nil)
+    }
+
+    /// A little-endian TIFF with IFD0 (Make) and an EXIF directory holding `exif` entries (type, value inline) and
+    /// a maker note, built by `makerNote` from its offset in the file.
+    private static func file(make: String, exif: [(UInt16, Int)] = [], makerNote: (Int) -> Data) -> Data {
+        var data = Data()
+        func u16(_ value: Int) { withUnsafeBytes(of: UInt16(value).littleEndian) { data.append(contentsOf: $0) } }
+        func u32(_ value: Int) { withUnsafeBytes(of: UInt32(value).littleEndian) { data.append(contentsOf: $0) } }
+        func entry(_ tag: Int, _ type: Int, _ count: Int, _ value: Int) { u16(tag); u16(type); u32(count); u32(value) }
+        let makeBytes = Array(make.utf8) + [0]
+        let ifd0 = 8, makeAt = ifd0 + 30, exifAt = (makeAt + makeBytes.count + 1) & ~1
+        let makerNoteAt = exifAt + 2 + 12 * (exif.count + 1) + 4
+        let note = makerNote(makerNoteAt)
+        data.append(contentsOf: [0x49, 0x49]); u16(42); u32(ifd0)
+        u16(2); entry(271, 2, makeBytes.count, makeAt); entry(34665, 4, 1, exifAt); u32(0)
+        data.append(contentsOf: makeBytes)
+        while data.count < exifAt { data.append(0) }
+        u16(exif.count + 1)
+        for (tag, value) in exif { entry(Int(tag), 4, 1, value) }
+        entry(0x927C, 7, note.count, makerNoteAt); u32(0)
+        data.append(note)
+        return data
+    }
+
+    private static func words(_ values: [Int], bigEndian: Bool = false) -> Data {
+        var data = Data()
+        for value in values {
+            let word = UInt16(bitPattern: Int16(value))
+            withUnsafeBytes(of: bigEndian ? word.bigEndian : word.littleEndian) { data.append(contentsOf: $0) }
+        }
+        return data
+    }
+
+    /// A Canon maker note with an `AFInfo2` record for three points, of which `inFocus` (a bit mask) were in focus.
+    private static func canonFile(areaMode: Int = 2, inFocus: Int) -> Data {
+        file(make: "Canon") { at in
+            // AF image 6000×4000; points at the center, 1500 right and 1000 up, and 1500 left and 1000 down.
+            let record = [0, areaMode, 3, 3, 6000, 4000, 6000, 4000, 200, 200, 200, 100, 100, 100, 0, 1500, -1500, 0, 1000, -1000, inFocus, 0]
+            var note = Self.words([1, 0x26, 3, record.count, 0, at + 18, 0, 0, 0])
+            note.append(Self.words(record))
+            return note
+        }
+    }
+
+    @Test func readsCanonPointsInFocus() throws {
+        let file = try #require(TIFFFile(data: Self.canonFile(inFocus: 0b010)))
+        let points = try #require(FocusPoints.read(from: file))
+        #expect(points.areas.count == 1)
+        // 1500 right of center and 1000 up (Y is up), as a 200×100 box.
+        #expect(abs(points.areas[0].midX - 0.75) < 1e-9)
+        #expect(abs(points.areas[0].midY - 0.25) < 1e-9)
+        #expect(abs(points.areas[0].width - 200.0 / 6000) < 1e-9)
+        #expect(abs(points.areas[0].height - 100.0 / 4000) < 1e-9)
+    }
+
+    @Test func canonWithNoPointInFocusHasNone() throws {
+        let noneInFocus = try #require(TIFFFile(data: Self.canonFile(inFocus: 0)))
+        #expect(FocusPoints.read(from: noneInFocus) == nil)
+        let manual = try #require(TIFFFile(data: Self.canonFile(areaMode: 0, inFocus: 1)))
+        #expect(FocusPoints.read(from: manual) == nil)
+    }
+
+    /// A Nikon maker note ("Nikon\0", version, then a big-endian TIFF) with `AFInfo2` version 0300.
+    private static func nikonFile(coordinatesAvailable: Bool = true) -> Data {
+        file(make: "NIKON CORPORATION") { _ in
+            var info = Data("0300".utf8) + Data([0, 0, 8, coordinatesAvailable ? 1 : 0])
+            info.append(Data(count: 0x2A - info.count))
+            info.append(Self.words([8256, 5504, 6744, 2436, 520, 520], bigEndian: true))
+            var inner = Data([0x4D, 0x4D, 0, 42, 0, 0, 0, 8])
+            inner.append(Self.words([1, 0xB7, 7], bigEndian: true))
+            inner.append(contentsOf: [0, 0, 0, UInt8(info.count), 0, 0, 0, 26, 0, 0, 0, 0])
+            inner.append(info)
+            return Data("Nikon\0".utf8) + Data([2, 0x10, 0, 0]) + inner
+        }
+    }
+
+    @Test func readsNikonAFArea() throws {
+        let file = try #require(TIFFFile(data: Self.nikonFile()))
+        let points = try #require(FocusPoints.read(from: file))
+        #expect(abs(points.areas[0].midX - 6744.0 / 8256) < 1e-9)
+        #expect(abs(points.areas[0].midY - 2436.0 / 5504) < 1e-9)
+        #expect(abs(points.areas[0].width - 520.0 / 8256) < 1e-9)
+    }
+
+    @Test func nikonWithoutCoordinatesHasNone() throws {
+        let file = try #require(TIFFFile(data: Self.nikonFile(coordinatesAvailable: false)))
+        #expect(FocusPoints.read(from: file) == nil)
+    }
+
+    /// A Fujifilm EXIF block: a 1920×1280 EXIF image size and a maker note with `FocusMode` and `FocusPixel`.
+    private static func fujiExif(focusMode: Int = 0, focusPixel: (Int, Int)) -> Data {
+        file(make: "FUJIFILM", exif: [(0xA002, 1920), (0xA003, 1280)]) { _ in
+            var note = Data("FUJIFILM".utf8) + Self.words([12, 0, 2])
+            note.append(Self.words([0x1021, 3, 1, 0, focusMode, 0]))
+            note.append(Self.words([0x1023, 3, 2, 0, focusPixel.0, focusPixel.1]))
+            note.append(Self.words([0, 0]))
+            return note
+        }
+    }
+
+    @Test func readsFujifilmFocusPixel() throws {
+        let file = try #require(TIFFFile(data: Self.fujiExif(focusPixel: (1440, 320))))
+        let points = try #require(FocusPoints.read(from: file))
+        #expect(points.areas == [CGRect(x: 0.75, y: 0.25, width: 0, height: 0)])
+    }
+
+    @Test func fujifilmManualFocusHasNoPoint() throws {
+        let file = try #require(TIFFFile(data: Self.fujiExif(focusMode: 1, focusPixel: (1440, 320))))
+        #expect(FocusPoints.read(from: file) == nil)
+    }
+
+    @Test func readsFocusPixelFromARAF() {
+        // RAF header with the embedded JPEG's offset and length at bytes 84 and 88; the JPEG holds APP1 Exif.
+        let exif = Self.fujiExif(focusPixel: (480, 960))
+        var jpeg = Data([0xFF, 0xD8, 0xFF, 0xE1])
+        let length = 2 + 6 + exif.count
+        jpeg.append(contentsOf: [UInt8(length >> 8), UInt8(length & 0xFF)])
+        jpeg.append(Data("Exif\0\0".utf8) + exif)
+        jpeg.append(contentsOf: [0xFF, 0xD9])
+        var raf = Data("FUJIFILMCCD-RAW 0201FF383501".utf8)
+        raf.append(Data(count: 100 - raf.count))
+        for value in [100, jpeg.count] { raf.replaceSubrange((value == 100 ? 84 : 88)..<(value == 100 ? 88 : 92), with: withUnsafeBytes(of: UInt32(value).bigEndian) { Data($0) }) }
+        raf.append(jpeg)
+        #expect(FocusPoints.read(from: raf)?.areas == [CGRect(x: 0.25, y: 0.75, width: 0, height: 0)])
     }
 
     // MARK: - Placing
