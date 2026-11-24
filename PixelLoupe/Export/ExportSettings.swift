@@ -270,6 +270,46 @@ nonisolated struct ExportSettings: Codable, Equatable, Sendable {
     var watermarks = false
     var watermarkName = WatermarkPresets.simpleCopyrightName
 
+    // MARK: Borders
+
+    enum BorderColor: String, Codable, Sendable, CaseIterable {
+        case black, white
+
+        var title: String { self == .black ? "Black" : "White" }
+    }
+
+    enum BorderStyle: String, Codable, Sendable, CaseIterable {
+        /// The same width on every side.
+        case width
+        /// A print-sized frame the whole photo is centered in.
+        case frame
+    }
+
+    enum FrameSize: String, Codable, Sendable, CaseIterable {
+        case threeByFive, fourBySix, fiveBySeven, eightByEight
+
+        /// Inches, the short side first.
+        var inches: (short: Double, long: Double) {
+            switch self {
+            case .threeByFive: (3, 5)
+            case .fourBySix: (4, 6)
+            case .fiveBySeven: (5, 7)
+            case .eightByEight: (8, 8)
+            }
+        }
+
+        var title: String { "\(Int(inches.short)) × \(Int(inches.long)) in" }
+    }
+
+    static let borderWidthRange = 1.0...500.0
+
+    var borders = false
+    var borderColor = BorderColor.white
+    var borderStyle = BorderStyle.width
+    /// Pixels on each side, for the width style.
+    var borderWidth = 50.0
+    var frameSize = FrameSize.fourBySix
+
     // MARK: Post-Processing
 
     enum AfterExport: String, Codable, Sendable, CaseIterable {
@@ -312,6 +352,8 @@ nonisolated struct ExportSettings: Codable, Equatable, Sendable {
         read(.metadata, &metadata); read(.removesPersonInfo, &removesPersonInfo); read(.removesLocationInfo, &removesLocationInfo)
         read(.writesKeywordHierarchy, &writesKeywordHierarchy)
         read(.watermarks, &watermarks); read(.watermarkName, &watermarkName)
+        read(.borders, &borders); read(.borderColor, &borderColor); read(.borderStyle, &borderStyle)
+        read(.borderWidth, &borderWidth); read(.frameSize, &frameSize)
         read(.afterExport, &afterExport)
         applicationPath = try? container.decodeIfPresent(String.self, forKey: .applicationPath)
     }
@@ -332,25 +374,59 @@ nonisolated struct ExportSettings: Codable, Equatable, Sendable {
         }
     }
 
-    /// The scale (of the photo as shown, after cropping) the output is rendered at.
-    func scale(for size: CGSize) -> CGFloat {
+    /// Whether the photo goes in a frame, whose size replaces Resize to Fit's.
+    var usesFrame: Bool { borders && borderStyle == .frame && format != .original }
+
+    /// A frame's size in pixels at the export resolution, turned the way a photo of `size` is.
+    func framePixels(for size: CGSize) -> CGSize {
+        let short = max(1, (frameSize.inches.short * pixelsPerInch).rounded())
+        let long = max(1, (frameSize.inches.long * pixelsPerInch).rounded())
+        return size.width > size.height ? CGSize(width: long, height: short) : CGSize(width: short, height: long)
+    }
+
+    /// The border's whole pixels on each side of a photo of `size`, 0 without one. When resizing, the
+    /// border takes its room from the photo, so it's held to a quarter of the output's short side.
+    func borderPixels(for size: CGSize) -> CGFloat {
+        guard borders, borderStyle == .width, format != .original else { return 0 }
+        let width = CGFloat(borderWidth.clamped(to: Self.borderWidthRange).rounded())
+        guard resizes else { return width }
+        let short = min(size.width, size.height) * scale(for: size)
+        return min(width, (short / 4).rounded(.down))
+    }
+
+    /// The scale (of the photo as shown, after cropping) that the photo is rendered at, leaving room
+    /// for its border or fitting it in its frame.
+    func photoScale(for size: CGSize) -> CGFloat {
+        guard size.width > 0, size.height > 0 else { return 1 }
+        if usesFrame {
+            let frame = framePixels(for: size)
+            return min(frame.width / size.width, frame.height / size.height)
+        }
+        return scale(for: size, border: borderPixels(for: size))
+    }
+
+    /// The scale (of the photo as shown, after cropping) Resize to Fit asks for, with `border` pixels
+    /// on each side counted in the size.
+    func scale(for size: CGSize, border: CGFloat = 0) -> CGFloat {
         guard resizes, format != .original, size.width > 0, size.height > 0 else { return 1 }
         let long = max(size.width, size.height), short = min(size.width, size.height)
         var scale: CGFloat = switch resizeMode {
         case .widthHeight:
             // Fits inside the box, whichever way the photo is turned.
-            min(pixels(width) / size.width, pixels(height) / size.height)
+            min((pixels(width) - 2 * border) / size.width, (pixels(height) - 2 * border) / size.height)
         case .dimensions:
             // The larger value applies to the long edge.
-            min(pixels(max(width, height)) / long, pixels(min(width, height)) / short)
+            min((pixels(max(width, height)) - 2 * border) / long, (pixels(min(width, height)) - 2 * border) / short)
         case .longEdge:
-            pixels(edge) / long
+            (pixels(edge) - 2 * border) / long
         case .shortEdge:
-            pixels(edge) / short
+            (pixels(edge) - 2 * border) / short
         case .megapixels:
-            sqrt(megapixels * 1_000_000 / (size.width * size.height))
+            // (width × s + 2 × border) × (height × s + 2 × border) = the pixels asked for.
+            (sqrt(border * border * (long - short) * (long - short) + megapixels * 1_000_000 * long * short)
+                - border * (long + short)) / (long * short)
         case .percentage:
-            percentage / 100
+            percentage / 100 - 2 * border / short
         }
         if doesNotEnlarge { scale = min(scale, 1) }
         return max(scale, 1 / max(long, 1))

@@ -973,6 +973,9 @@ right:
   or location info), with Title, Caption, keywords, the GPS location and other metadata typed into PixelLoupe (a
   location removed in PixelLoupe leaves the exported file with none); **Watermarking** with your
   watermark presets; and **Post-Processing** (show in Finder or open in another app).
+- **Borders:** a black or white border around the finished photo, either a width in pixels on every side (counted inside
+  Resize to Fit's size; outside the photo when it isn't resized) or a 3 × 5, 4 × 6, 5 × 7 or 8 × 8 inch frame at Image
+  Sizing's resolution, turned to match the photo, with the whole photo centered and touching the frame's edges.
 
 Video is shown as in Lightroom but disabled: PixelLoupe doesn't import video yet. Export with Previous (`⌥⇧⌘E`) repeats
 the last export's settings and File ▸ Export with Preset uses a preset directly. Exports run in the background, a few

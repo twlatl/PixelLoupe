@@ -293,7 +293,8 @@ final class ExportDialogController: NSWindowController, NSWindowDelegate, NSOutl
         // Settings.
         let countLabel = FormLayout.secondaryLabel(window?.title ?? "")
         let sections = NSStackView(views: [
-            .exportLocation, .fileNaming, .video, .fileSettings, .imageSizing, .outputSharpening, .metadata, .watermarking, .postProcessing,
+            .exportLocation, .fileNaming, .video, .fileSettings, .imageSizing, .outputSharpening, .metadata, .watermarking,
+            .borders, .postProcessing,
         ].map { form.section($0, stateKey: Self.sectionStateKey) })
         sections.orientation = .vertical
         sections.alignment = .leading

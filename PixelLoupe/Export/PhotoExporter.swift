@@ -264,17 +264,21 @@ nonisolated enum PhotoExporter {
 
     // MARK: - Rendering
 
-    /// The photo with its edits, sized, sharpened and watermarked, in the export's color space and
-    /// bit depth (no alpha). From the photo's Smart Preview when the original can't be read, at no
-    /// more than the Smart Preview's size (2560 px on the long edge, before cropping).
+    /// The photo with its edits, sized, sharpened, watermarked and bordered, in the export's color
+    /// space and bit depth (no alpha). From the photo's Smart Preview when the original can't be read, at no
+    /// more than the Smart Preview's size (2560 px on the long edge, before cropping) unless it fills a frame.
     static func render(_ item: ExportItem, settings: ExportSettings, watermark: Watermark?) throws -> (image: CGImage, isFromSmartPreview: Bool) {
         guard let develop = DevelopSource.open(item.location) else { throw ExportError.unreadable(item.fileName) }
         let size = develop.croppedSize(item.adjustments)
-        let scale = develop.smartPreview.map { min(settings.scale(for: size), $0.scale) } ?? settings.scale(for: size)
-        var image = develop.image(with: item.adjustments, scale: min(scale, 1))
+        // A frame is always filled, from whatever pixels there are.
+        let available = develop.smartPreview?.scale ?? .infinity
+        let wanted = settings.photoScale(for: size)
+        let scale = settings.usesFrame ? wanted : min(wanted, available)
+        let decodeScale = min(scale, available, 1)
+        var image = develop.image(with: item.adjustments, scale: decodeScale)
         image = image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
-        if scale > 1 {
-            image = image.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: scale, kCIInputAspectRatioKey: 1])
+        if scale > decodeScale {
+            image = image.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: scale / decodeScale, kCIInputAspectRatioKey: 1])
         }
         let target = CGRect(x: 0, y: 0, width: max(1, (size.width * scale).rounded()), height: max(1, (size.height * scale).rounded()))
         // Stretch the last fraction of a pixel so the output has whole-pixel edges.
@@ -290,16 +294,29 @@ nonisolated enum PhotoExporter {
             image = WatermarkRenderer.apply(watermark.settings, imageURL: watermark.imageURL, to: image)
         }
 
+        // The border goes around the finished photo, so it isn't sharpened or watermarked.
+        let border = settings.borderPixels(for: size)
+        let canvas = settings.usesFrame ? settings.framePixels(for: size)
+            : CGSize(width: target.width + 2 * border, height: target.height + 2 * border)
+        let photoRect = CGRect(origin: CGPoint(x: ((canvas.width - target.width) / 2).rounded(.down),
+                                               y: ((canvas.height - target.height) / 2).rounded(.down)), size: target.size)
+
         let colorSpace = settings.colorSpace.cgColorSpace
         let sixteen = settings.format.hasBitDepth && settings.bitDepth == 16
         guard let rendered = context.createCGImage(image, from: target, format: sixteen ? .RGBA16 : .RGBA8, colorSpace: colorSpace),
               let output = CGContext(
-                data: nil, width: Int(target.width), height: Int(target.height), bitsPerComponent: sixteen ? 16 : 8,
+                data: nil, width: Int(canvas.width), height: Int(canvas.height), bitsPerComponent: sixteen ? 16 : 8,
                 bytesPerRow: 0, space: colorSpace,
                 bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue | (sixteen ? CGBitmapInfo.byteOrder16Little.rawValue : 0)
               )
         else { throw ExportError.unreadable(item.fileName) }
-        output.draw(rendered, in: target)
+        if canvas != target.size {
+            let level: CGFloat = settings.borderColor == .white ? 1 : 0
+            guard let color = CGColor(colorSpace: colorSpace, components: [level, level, level, 1]) else { throw ExportError.unreadable(item.fileName) }
+            output.setFillColor(color)
+            output.fill(CGRect(origin: .zero, size: canvas))
+        }
+        output.draw(rendered, in: photoRect)
         guard let flattened = output.makeImage() else { throw ExportError.unreadable(item.fileName) }
         return (flattened, develop.isSmartPreview)
     }

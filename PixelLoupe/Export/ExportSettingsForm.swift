@@ -17,6 +17,7 @@ final class ExportSettingsForm: NSObject, NSTextFieldDelegate {
         case outputSharpening = "Output Sharpening"
         case metadata = "Metadata"
         case watermarking = "Watermarking"
+        case borders = "Borders"
         case postProcessing = "Post-Processing"
     }
 
@@ -86,6 +87,13 @@ final class ExportSettingsForm: NSObject, NSTextFieldDelegate {
     let watermarkCheckbox = NSButton(checkboxWithTitle: "Watermark:", target: nil, action: nil)
     let watermarkPopUp = NSPopUpButton()
 
+    let borderCheckbox = NSButton(checkboxWithTitle: "Border:", target: nil, action: nil)
+    let borderColorButtons = ExportSettings.BorderColor.allCases.map { NSButton(radioButtonWithTitle: $0.title, target: nil, action: nil) }
+    let borderWidthButton = NSButton(radioButtonWithTitle: "Width:", target: nil, action: nil)
+    let borderWidthRow = WatermarkValueRow(range: ExportSettings.borderWidthRange)
+    let frameButton = NSButton(radioButtonWithTitle: "Frame:", target: nil, action: nil)
+    let frameSizePopUp = NSPopUpButton()
+
     let afterExportPopUp = NSPopUpButton()
     let applicationLabel = NSTextField(labelWithString: "")
     let chooseApplicationButton = NSButton(title: "Choose…", target: nil, action: nil)
@@ -113,6 +121,7 @@ final class ExportSettingsForm: NSObject, NSTextFieldDelegate {
         case .outputSharpening: outputSharpening()
         case .metadata: metadataSection()
         case .watermarking: watermarking()
+        case .borders: borders()
         case .postProcessing: postProcessing()
         }
         updateControls()
@@ -172,11 +181,23 @@ final class ExportSettingsForm: NSObject, NSTextFieldDelegate {
             settings.watermarks = watermarkCheckbox.state == .on
             if let name = watermarkPopUp.selectedItem?.representedObject as? String { settings.watermarkName = name }
 
+            settings.borders = borderCheckbox.state == .on
+            settings.frameSize = ExportSettings.FrameSize.allCases[max(0, frameSizePopUp.indexOfSelectedItem)]
+
             settings.afterExport = ExportSettings.AfterExport.allCases[max(0, afterExportPopUp.indexOfSelectedItem)]
         }
         if settings.afterExport == .openInApplication, settings.applicationPath == nil {
             chooseApplication(nil)
         }
+    }
+
+    @objc private func borderColorChanged(_ sender: NSButton) {
+        guard let index = borderColorButtons.firstIndex(of: sender) else { return }
+        change { $0.borderColor = ExportSettings.BorderColor.allCases[index] }
+    }
+
+    @objc private func borderStyleChanged(_ sender: NSButton) {
+        change { $0.borderStyle = sender === frameButton ? .frame : .width }
     }
 
     @objc private func chooseFolder(_ sender: Any?) {
@@ -285,8 +306,9 @@ final class ExportSettingsForm: NSObject, NSTextFieldDelegate {
         compressionPopUp.isEnabled = format == .tiff
 
         resizeCheckbox.state = settings.resizes ? .on : .off
-        resizeCheckbox.isEnabled = rendered
-        let resizing = settings.resizes && rendered
+        // A frame's size replaces Resize to Fit's.
+        resizeCheckbox.isEnabled = rendered && !settings.usesFrame
+        let resizing = settings.resizes && rendered && !settings.usesFrame
         resizeModePopUp.selectItem(at: ExportSettings.ResizeMode.allCases.firstIndex(of: settings.resizeMode) ?? 0)
         dontEnlargeCheckbox.state = settings.doesNotEnlarge ? .on : .off
         for control in [resizeModePopUp, dontEnlargeCheckbox, widthField, heightField, sizeUnitPopUp] as [NSControl] {
@@ -334,6 +356,22 @@ final class ExportSettingsForm: NSObject, NSTextFieldDelegate {
         watermarkCheckbox.state = settings.watermarks ? .on : .off
         watermarkCheckbox.isEnabled = rendered
         watermarkPopUp.isEnabled = settings.watermarks && rendered
+
+        let bordered = settings.borders && rendered
+        borderCheckbox.state = settings.borders ? .on : .off
+        borderCheckbox.isEnabled = rendered
+        for (color, button) in zip(ExportSettings.BorderColor.allCases, borderColorButtons) {
+            button.state = settings.borderColor == color ? .on : .off
+            button.isEnabled = bordered
+        }
+        borderWidthButton.state = settings.borderStyle == .width ? .on : .off
+        frameButton.state = settings.borderStyle == .frame ? .on : .off
+        borderWidthButton.isEnabled = bordered
+        frameButton.isEnabled = bordered
+        borderWidthRow.value = settings.borderWidth
+        borderWidthRow.isEnabled = bordered && settings.borderStyle == .width
+        frameSizePopUp.selectItem(at: ExportSettings.FrameSize.allCases.firstIndex(of: settings.frameSize) ?? 0)
+        frameSizePopUp.isEnabled = settings.usesFrame
 
         afterExportPopUp.selectItem(at: ExportSettings.AfterExport.allCases.firstIndex(of: settings.afterExport) ?? 0)
         applicationLabel.stringValue = settings.applicationPath.map { FileManager.default.displayName(atPath: $0) } ?? "Choose an application…"
@@ -498,6 +536,32 @@ final class ExportSettingsForm: NSObject, NSTextFieldDelegate {
         watermarkPopUp.action = #selector(controlChanged(_:))
         watermarkPopUp.setAccessibilityIdentifier("exportWatermark")
         return grid([[watermarkCheckbox, watermarkPopUp]])
+    }
+
+    private func borders() -> NSView {
+        control(borderCheckbox)
+        for button in borderColorButtons {
+            button.target = self
+            button.action = #selector(borderColorChanged(_:))
+        }
+        for button in [borderWidthButton, frameButton] {
+            button.target = self
+            button.action = #selector(borderStyleChanged(_:))
+        }
+        popUp(frameSizePopUp, ExportSettings.FrameSize.allCases.map(\.title), id: "exportFrameSize")
+        frameSizePopUp.setAccessibilityLabel("Frame Size")
+        borderWidthRow.onChange = { [weak self] value in self?.change { $0.borderWidth = value.rounded() } }
+        borderWidthRow.widthAnchor.constraint(equalToConstant: 260).isActive = true
+        borderWidthRow.slider.setAccessibilityLabel("Border Width")
+        borderWidthRow.field.setAccessibilityLabel("Border Width in Pixels")
+        borderWidthRow.setAccessibilityIdentifier("exportBorderWidth")
+        borderCheckbox.setAccessibilityIdentifier("exportBorder")
+        return grid([
+            [borderCheckbox, FormLayout.row(borderColorButtons)],
+            [borderWidthButton, row(borderWidthRow, label("px"))],
+            [frameButton, frameSizePopUp],
+            [NSGridCell.emptyContentView, secondaryLabel("Frames use Image Sizing’s Resolution instead of Resize to Fit.")],
+        ])
     }
 
     private func postProcessing() -> NSView {
