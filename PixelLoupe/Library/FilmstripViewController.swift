@@ -50,13 +50,8 @@ final class FilmstripViewController: NSViewController, NSCollectionViewDelegate 
         let filterLabel = NSTextField(labelWithString: "Filter:")
         filterLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         filterLabel.textColor = .secondaryLabelColor
-        let divider = NSBox()
-        divider.boxType = .separator
-        divider.heightAnchor.constraint(equalToConstant: 16).isActive = true
-
-        let divider2 = NSBox()
-        divider2.boxType = .separator
-        divider2.heightAnchor.constraint(equalToConstant: 16).isActive = true
+        let divider = Self.verticalDivider()
+        let divider2 = Self.verticalDivider()
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -142,6 +137,20 @@ final class FilmstripViewController: NSViewController, NSCollectionViewDelegate 
             self?.collectionView.visibleItems().forEach { $0.view.needsDisplay = true }
         }
         view = container
+    }
+
+    /// A thin vertical line between the header's filter controls.
+    ///
+    /// The width is pinned: the header's spacer hugs loosely, so on a wide window the stack view can
+    /// stretch an unconstrained separator instead, and a separator wider than it is tall draws as a
+    /// horizontal line across the header (RAW-310).
+    static func verticalDivider() -> NSBox {
+        let divider = NSBox()
+        divider.boxType = .separator
+        divider.heightAnchor.constraint(equalToConstant: 16).isActive = true
+        divider.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        divider.setContentHuggingPriority(.required, for: .horizontal)
+        return divider
     }
 
     override func viewDidLoad() {

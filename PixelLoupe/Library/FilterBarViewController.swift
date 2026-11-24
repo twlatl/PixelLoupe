@@ -262,6 +262,8 @@ final class FilterBarViewController: NSViewController, NSSearchFieldDelegate, NS
         let box = NSBox()
         box.boxType = .separator
         box.heightAnchor.constraint(equalToConstant: 18).isActive = true
+        // Without a width, a separator stretched wider than it is tall draws horizontally (RAW-310).
+        box.widthAnchor.constraint(equalToConstant: 1).isActive = true
         return box
     }
 

@@ -91,6 +91,23 @@ struct FilmstripTests {
         controller.close()
     }
 
+    /// Regression (RAW-310): on a wide window the header stretched the separator between the flag and
+    /// color filters, which then drew as a long horizontal line.
+    @Test func headerDividersStayThinOnAWideWindow() throws {
+        let filmstrip = FilmstripViewController(store: store, state: state)
+        filmstrip.view.frame = NSRect(x: 0, y: 0, width: 2400, height: FilmstripViewController.height)
+        filmstrip.view.layoutSubtreeIfNeeded()
+        let header = try #require(filmstrip.view.descendants.compactMap { $0 as? NSStackView }.first)
+        let dividers = header.arrangedSubviews.compactMap { $0 as? NSBox }.filter { $0.boxType == .separator }
+        #expect(dividers.count == 2)
+        for divider in dividers {
+            // NSBox pads its frame by 2pt each side; layout (and the drawn line) use the alignment rect.
+            let line = divider.alignmentRect(forFrame: divider.frame)
+            #expect(line.width == 1, "a separator wider than it is tall draws horizontally")
+            #expect(line.height == 16)
+        }
+    }
+
     @Test func steppingMovesThroughTheStrip() {
         state.photoOrder = ids
         state.selectedPhotoIDs = [ids[0]]
