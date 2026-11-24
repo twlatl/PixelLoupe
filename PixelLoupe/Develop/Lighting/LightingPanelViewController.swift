@@ -21,6 +21,13 @@ final class LightingPanelViewController: NSViewController {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 0
+        let title = NSTextField(labelWithString: "LIGHTING")
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
+        title.textColor = .secondaryLabelColor
+        // Inset as the sections are.
+        let header = NSStackView(views: [title])
+        header.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 0, right: 14)
+        stack.addArrangedSubview(header)
         for (index, section) in sections.enumerated() {
             addChild(section)
             if index > 0 {
