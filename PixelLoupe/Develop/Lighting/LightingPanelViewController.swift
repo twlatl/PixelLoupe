@@ -21,6 +21,21 @@ final class LightingPanelViewController: NSViewController {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 0
+        let title = NSTextField(labelWithString: "LIGHTING")
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
+        title.textColor = .secondaryLabelColor
+        // Where the other panels' headings are.
+        title.translatesAutoresizingMaskIntoConstraints = false
+        let header = NSView()
+        header.addSubview(title)
+        NSLayoutConstraint.activate([
+            title.topAnchor.constraint(equalTo: header.topAnchor, constant: 12),
+            title.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 14),
+            title.trailingAnchor.constraint(lessThanOrEqualTo: header.trailingAnchor, constant: -14),
+            title.bottomAnchor.constraint(equalTo: header.bottomAnchor),
+        ])
+        stack.addArrangedSubview(header)
+        header.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         for (index, section) in sections.enumerated() {
             addChild(section)
             if index > 0 {

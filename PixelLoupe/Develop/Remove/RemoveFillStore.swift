@@ -141,6 +141,12 @@ nonisolated final class RemoveFillStore: @unchecked Sendable {
         var engine: String?
 
         init(source: DevelopSource, adjustments: PhotoAdjustments, index: Int, generative: String?) {
+            self.init(source: source, adjustments: adjustments, preceding: Array(adjustments.spots[..<index]), spot: adjustments.spots[index],
+                      engine: adjustments.spots[index].usesGenerativeAI ? generative : nil)
+        }
+
+        /// A spot that isn't one of the photo's own, made on top of `preceding` (Blemish Removal's, RAW-306).
+        init(source: DevelopSource, adjustments: PhotoAdjustments, preceding: [PhotoAdjustments.Spot], spot: PhotoAdjustments.Spot, engine: String?) {
             url = source.url
             isSmartPreview = source.isSmartPreview
             var geometry = PhotoAdjustments()
@@ -148,9 +154,9 @@ nonisolated final class RemoveFillStore: @unchecked Sendable {
             geometry.orientation = adjustments.orientation
             geometry.transform = adjustments.transform
             self.geometry = geometry
-            preceding = Array(adjustments.spots[..<index])
-            spot = adjustments.spots[index]
-            engine = spot.usesGenerativeAI ? generative : nil
+            self.preceding = preceding
+            self.spot = spot
+            self.engine = engine
         }
 
         var key: String {
@@ -176,8 +182,9 @@ nonisolated final class RemoveFillStore: @unchecked Sendable {
         }
     }
 
-    /// Makes the fill (or reads it from disk), once however many renders ask at the same time.
-    func make(_ request: Request) -> Fill? {
+    /// Makes the fill (or reads it from disk), once however many renders ask at the same time. `decoded` is the
+    /// photo decoded for making fills, when the caller has one (several fills of the same photo share it).
+    func make(_ request: Request, decoded: DevelopSource? = nil) -> Fill? {
         let key = request.key
         let (group, isMaking) = lock.withLock { () -> (DispatchGroup, Bool) in
             if let group = making[key] { return (group, false) }
@@ -199,11 +206,80 @@ nonisolated final class RemoveFillStore: @unchecked Sendable {
             remember(fill, for: key)
             return fill
         }
-        guard let source = request.isSmartPreview ? DevelopSource(smartPreview: request.url) : DevelopSource(url: request.url),
-              let fill = makeFill(request, source: source) else { return nil }
+        guard let source = decoded ?? Self.decode(request), let fill = makeFill(request, source: source) else { return nil }
         write(fill, for: key)
         remember(fill, for: key)
         return fill
+    }
+
+    private static func decode(_ request: Request) -> DevelopSource? {
+        request.isSmartPreview ? DevelopSource(smartPreview: request.url) : DevelopSource(url: request.url)
+    }
+
+    // MARK: - Blemishes
+
+    /// Photos whose blemish fills are being made in the background, so a redraw doesn't start them again.
+    private var fillingBlemishes: Set<String> = []
+
+    /// The fills for Blemish Removal's `spots` on `source`'s photo, in order; nil for one not made yet. Each is made
+    /// on top of only the photo's own spots it could touch, not the other blemishes, so including another blemish never
+    /// fills the rest again. Waiting makes the missing ones now, one decode for all of them; otherwise they're made in
+    /// the background, `didFill` posted as each is ready.
+    func blemishFills(for source: DevelopSource, adjustments: PhotoAdjustments, spots: [PhotoAdjustments.Spot], waiting: Bool) -> [Fill?] {
+        guard !spots.isEmpty else { return [] }
+        let frame = source.frameSize(adjustments)
+        let requests = spots.map { spot in
+            Request(source: source, adjustments: adjustments,
+                    preceding: Self.spots(adjustments.spots, touching: spot, frameSize: frame), spot: spot, engine: nil)
+        }
+        var fills = requests.map { remembered($0.key) }
+        let missing = fills.indices.filter { fills[$0] == nil }
+        guard !missing.isEmpty else { return fills }
+        if waiting {
+            let decoded = Self.decode(requests[missing[0]])
+            for index in missing { fills[index] = make(requests[index], decoded: decoded) }
+            return fills
+        }
+        let batch = requests[missing[0]].url.path(percentEncoded: false) + "|" + missing.map { requests[$0].key }.joined()
+        let isNew = lock.withLock { fillingBlemishes.insert(batch).inserted }
+        guard isNew else { return fills }
+        let pending = missing.map { requests[$0] }
+        Task.detached(priority: .userInitiated) { [self] in
+            let decoded = Self.decode(pending[0])
+            for request in pending {
+                _ = make(request, decoded: decoded)
+                await MainActor.run { NotificationCenter.default.post(name: Self.didFill, object: self) }
+            }
+            _ = lock.withLock { fillingBlemishes.remove(batch) }
+        }
+        return fills
+    }
+
+    /// Whether every one of Blemish Removal's `spots` has its fill (doesn't wait, or start making them).
+    func blemishFillsReady(for source: DevelopSource, adjustments: PhotoAdjustments, spots: [PhotoAdjustments.Spot]) -> Bool {
+        let frame = source.frameSize(adjustments)
+        return spots.allSatisfy { spot in
+            remembered(Request(source: source, adjustments: adjustments,
+                               preceding: Self.spots(adjustments.spots, touching: spot, frameSize: frame), spot: spot, engine: nil).key) != nil
+        }
+    }
+
+    /// The spots among `spots` whose changes reach the box `spot`'s fill is made over, in order.
+    static func spots(_ spots: [PhotoAdjustments.Spot], touching spot: PhotoAdjustments.Spot, frameSize: CGSize) -> [PhotoAdjustments.Spot] {
+        let aspect = Double(frameSize.width / max(frameSize.height, 1))
+        guard let painted = spot.area?.bounds(aspect: aspect) else { return spots }
+        let filled = box(around: painted, frameSize: frameSize)
+        return spots.filter { reach(of: $0, aspect: aspect).intersects(filled) }
+    }
+
+    /// Where a spot changes the photo, in unit coordinates of a frame `aspect` wide per unit tall (with the room a heal
+    /// blurs into).
+    static func reach(of spot: PhotoAdjustments.Spot, aspect: Double) -> CGRect {
+        let longEdge = max(aspect, 1)
+        let rx = spot.radius * 1.6 * longEdge / max(aspect, 1e-6), ry = spot.radius * 1.6 * longEdge
+        var box = CGRect(x: spot.center.x - rx, y: spot.center.y - ry, width: rx * 2, height: ry * 2)
+        if let painted = spot.area?.bounds(aspect: aspect) { box = box.union(painted) }
+        return box
     }
 
     private func makeFill(_ request: Request, source: DevelopSource) -> Fill? {

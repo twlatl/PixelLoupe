@@ -1,15 +1,34 @@
 import AppKit
 
 /// Remove's marks over the Develop preview (RAW-260): a pin on each spot (as Tool Overlay says), the selected
-/// spot's area (and its source, when it copies from one), an area waiting to be removed in red, and the brush.
+/// spot's area (and its source, when it copies from one), an area waiting to be removed in red, the brush, and the
+/// outlines of the blemishes Blemish Removal removed (RAW-306).
 ///
 /// Drag on the photo to paint; in Heal and Clone a click places a round spot. Drag a pin to move its spot, or a
 /// copied spot's source to move that. ⌘-drag with a Remove spot selected gives it a source of its own. Scroll
-/// to resize the brush.
+/// to resize the brush. Click a blemish's outline to put it back, or to remove it again.
 final class RemoveOverlayView: NSView {
     var previewFrame = PreviewFrame.zero { didSet { invalidateAreas(); needsDisplay = true } }
     var frameRect: CGRect { previewFrame.rect }
     var spots: [PhotoAdjustments.Spot] = [] { didSet { needsDisplay = true } }
+    /// One of Blemish Removal's marks: removed, or put back by the user.
+    struct BlemishMark: Equatable {
+        var id: UInt64
+        var area: PhotoAdjustments.RemoveArea
+        var isExcluded: Bool
+    }
+    /// Blemish Removal's marks: each drawn as a white outline, dashed when put back (unless Tool Overlay is Never).
+    /// A click on one puts it back, or removes it again.
+    var blemishMarks: [BlemishMark] = [] {
+        didSet {
+            guard blemishMarks != oldValue else { return }
+            if !blemishMarks.contains(where: { $0.id == hoveredBlemish }) { hoveredBlemish = nil }
+            needsDisplay = true
+        }
+    }
+    var onToggleBlemish: ((UInt64) -> Void)?
+    /// The mark the pointer is on: filled lightly, to show a click acts on it.
+    private(set) var hoveredBlemish: UInt64? { didSet { if hoveredBlemish != oldValue { needsDisplay = true } } }
     var selectedID: UUID? { didSet { needsDisplay = true } }
     /// An area painted with Detect Objects on, waiting for Remove or Cancel.
     var pendingArea: PhotoAdjustments.RemoveArea? { didSet { needsDisplay = true } }
@@ -166,10 +185,28 @@ final class RemoveOverlayView: NSView {
         return nil
     }
 
+    /// The blemish mark at `point`: the smallest, when they overlap. Pins and the selected spot's source win over it.
+    func blemish(at point: CGPoint) -> BlemishMark? {
+        guard mode == .remove, toolOverlay != .never, pendingArea == nil, !isDetecting, target(at: point) == nil,
+              previewFrame.visible.contains(point) else { return nil }
+        // A little around it, so a tiny mark can be clicked.
+        let center = unit(point), slop: CGFloat = 3
+        let w = slop / max(frameRect.width, 1), h = slop / max(frameRect.height, 1)
+        let box = CGRect(x: center.x - w, y: center.y - h, width: w * 2, height: h * 2)
+        func size(_ mark: BlemishMark) -> CGFloat {
+            let bounds = mark.area.bounds(aspect: aspect) ?? .zero
+            return bounds.width * bounds.height
+        }
+        return blemishMarks.filter { mark in
+            guard let bounds = mark.area.bounds(aspect: aspect), bounds.intersects(box) else { return false }
+            return RemoveAreaRaster.coverage(of: mark.area, box: box, frameSize: frameRect.size, width: 5, height: 5).contains { $0 > 0.5 }
+        }.min { size($0) < size($1) }
+    }
+
     // MARK: Drawing
 
     /// How an area is drawn: filled, or as its outline (a thin line, and a wider one under it to set it off).
-    enum AreaStyle { case fill, outline, outlineShadow }
+    enum AreaStyle { case fill, outline, outlineShadow, dashed, dashedShadow }
 
     private struct AreaMasks {
         var frame: CGRect
@@ -177,6 +214,8 @@ final class RemoveOverlayView: NSView {
         var fill: CGImage
         var outline: CGImage
         var outlineShadow: CGImage
+        var dashed: CGImage
+        var dashedShadow: CGImage
     }
 
     /// Areas drawn at the view's size, kept until the area or the frame changes.
@@ -191,6 +230,8 @@ final class RemoveOverlayView: NSView {
         case .fill: return (masks.fill, masks.box)
         case .outline: return (masks.outline, masks.box)
         case .outlineShadow: return (masks.outlineShadow, masks.box)
+        case .dashed: return (masks.dashed, masks.box)
+        case .dashedShadow: return (masks.dashedShadow, masks.box)
         }
     }
 
@@ -222,8 +263,20 @@ final class RemoveOverlayView: NSView {
                            space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),
                            provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
         }
-        guard let fill = mask(coverage), let outline = mask(edge(points: 1)), let shadow = mask(edge(points: 2.5)) else { return nil }
-        let masks = AreaMasks(frame: frameRect, box: viewBox, fill: fill, outline: outline, outlineShadow: shadow)
+        // Dashes about 4 points long, around the middle of the area.
+        let dashes = max(5, (Double.pi * Double(viewBox.width + viewBox.height) / 2 / 8).rounded())
+        func dash(_ values: [Float]) -> [Float] {
+            values.indices.map { i in
+                let angle = atan2((Double(i / width) + 0.5) / Double(height) - 0.5, (Double(i % width) + 0.5) / Double(width) - 0.5)
+                let turn = (angle / (2 * .pi) + 0.5) * dashes
+                return turn - turn.rounded(.down) < 0.5 ? values[i] : 0
+            }
+        }
+        let line = edge(points: 1), under = edge(points: 2.5)
+        guard let fill = mask(coverage), let outline = mask(line), let shadow = mask(under),
+              let dashed = mask(dash(line)), let dashedShadow = mask(dash(under)) else { return nil }
+        let masks = AreaMasks(frame: frameRect, box: viewBox, fill: fill, outline: outline, outlineShadow: shadow,
+                              dashed: dashed, dashedShadow: dashedShadow)
         areaImages[area] = masks
         return masks
     }
@@ -247,6 +300,16 @@ final class RemoveOverlayView: NSView {
         guard frameRect.width > 0 else { return }
         NSGraphicsContext.saveGraphicsState()
         previewFrame.outline.addClip()
+        // Blemish Removal's marks, outlined (under the selected spot).
+        if toolOverlay != .never, pendingArea == nil {
+            for mark in blemishMarks {
+                if mark.id == hoveredBlemish { drawArea(mark.area, color: NSColor.white.withAlphaComponent(0.28)) }
+                drawArea(mark.area, color: NSColor.black.withAlphaComponent(0.45), style: mark.isExcluded ? .dashedShadow : .outlineShadow)
+            }
+            for mark in blemishMarks {
+                drawArea(mark.area, color: .white, style: mark.isExcluded ? .dashed : .outline)
+            }
+        }
         // The selected spot: its area, and where it copies from.
         if let spot = spots.first(where: { $0.id == selectedID }), pendingArea == nil {
             let center = viewPoint(spot.center), source = viewPoint(spot.source)
@@ -297,7 +360,7 @@ final class RemoveOverlayView: NSView {
         NSGraphicsContext.restoreGraphicsState()
         // The brush, where the pointer is over the photo and not on a pin.
         if let pointer, !isHandHeld, drag == nil || { if case .paint = drag { true } else { false } }(), target(at: pointer) == nil,
-           previewFrame.visible.contains(pointer) {
+           drag != nil || blemish(at: pointer) == nil, previewFrame.visible.contains(pointer) {
             let radius = max(brushSize * longEdge, 2)
             let path = NSBezierPath(ovalIn: circle(pointer, radius))
             path.lineWidth = 2.5
@@ -371,7 +434,7 @@ final class RemoveOverlayView: NSView {
         if isHandHeld { return .openHand }
         switch target(at: point) {
         case .pin?, .source?: return .openHand
-        case nil: return .crosshair
+        case nil: return blemish(at: point) == nil ? .crosshair : .pointingHand
         }
     }
 
@@ -386,6 +449,7 @@ final class RemoveOverlayView: NSView {
         pointer = convert(event.locationInWindow, from: nil)
         isOptionDown = event.modifierFlags.contains(.option)
         if case .pin(let spot)? = target(at: pointer!) { hoveredID = spot.id } else { hoveredID = nil }
+        hoveredBlemish = isHandHeld ? nil : blemish(at: pointer!)?.id
         cursor(at: pointer!).set()
         needsDisplay = true
     }
@@ -393,6 +457,7 @@ final class RemoveOverlayView: NSView {
     override func mouseExited(with event: NSEvent) {
         pointer = nil
         hoveredID = nil
+        hoveredBlemish = nil
         needsDisplay = true
     }
 
@@ -479,6 +544,9 @@ final class RemoveOverlayView: NSView {
             let isClick = !moved || hypot(point.x - start.x, point.y - start.y) < Self.clickSlop && points.count < 4
             if isClick, mode != .remove, pendingArea == nil {
                 onPlace?(points[0])
+            } else if isClick, let mark = blemish(at: start) {
+                // Only a click: a drag over a mark paints.
+                onToggleBlemish?(mark.id)
             } else {
                 onStroke?(PhotoAdjustments.BrushStroke(points: points, size: brushSize, feather: mode == .remove ? 0.1 : 0.3, flow: 1, density: 1,
                                                        isErasing: paintSubtracts))

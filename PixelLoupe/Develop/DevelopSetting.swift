@@ -14,7 +14,7 @@ nonisolated enum DevelopSetting: String, CaseIterable, Codable, Sendable {
     case vignette, grain
     case portraitLighting, rimLight
     case profile, calibration
-    case redEye, spotRemoval, masking, crop
+    case redEye, spotRemoval, blemishRemoval, masking, crop
 
     var title: String {
         switch self {
@@ -50,6 +50,7 @@ nonisolated enum DevelopSetting: String, CaseIterable, Codable, Sendable {
         case .calibration: "Calibration"
         case .redEye: "Red Eye"
         case .spotRemoval: "Spot Removal"
+        case .blemishRemoval: "Blemish Removal"
         case .masking: "Masking"
         case .crop: "Crop & Straighten"
         }
@@ -80,13 +81,14 @@ nonisolated enum DevelopSetting: String, CaseIterable, Codable, Sendable {
         Group(title: "Calibration", settings: [.calibration]),
         Group(title: "Red Eye", settings: [.redEye]),
         Group(title: "Spot Removal", settings: [.spotRemoval]),
+        Group(title: "Blemish Removal", settings: [.blemishRemoval]),
         Group(title: "Masking", settings: [.masking]),
         Group(title: "Crop & Straighten", settings: [.crop]),
     ]
 
     /// Checked when the dialog opens: everything but what's placed on one photo (red eye, spots,
-    /// masks and the crop), as in Lightroom.
-    static let defaultSelection: Set<DevelopSetting> = Set(allCases).subtracting([.redEye, .spotRemoval, .masking, .crop])
+    /// blemishes, masks and the crop), as in Lightroom.
+    static let defaultSelection: Set<DevelopSetting> = Set(allCases).subtracting([.redEye, .spotRemoval, .blemishRemoval, .masking, .crop])
 
     /// `target` with the `settings` taken from `source`. A section's on/off switch comes along with
     /// any of its settings.
@@ -131,6 +133,11 @@ nonisolated enum DevelopSetting: String, CaseIterable, Codable, Sendable {
                 copy(\.redEye)
                 copy(\.redEyes)
             case .spotRemoval: copy(\.spots)
+            case .blemishRemoval:
+                // The blemishes put back are the photo's own: they aren't carried, and the target keeps its own.
+                let excluded = target.blemishRemoval.excluded
+                copy(\.blemishRemoval)
+                result.blemishRemoval.excluded = excluded
             case .masking: copy(\.masks)
             case .crop:
                 copy(\.crop)

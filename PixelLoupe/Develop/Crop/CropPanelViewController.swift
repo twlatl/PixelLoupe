@@ -58,9 +58,9 @@ final class CropPanelViewController: NSViewController {
             return view
         }
 
-        let toolTitle = label("Crop & Straighten", secondary: false)
-        toolTitle.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
-        let toolRow = NSStackView(views: [label("Tool:"), spacer(), toolTitle])
+        let title = NSTextField(labelWithString: "CROP & STRAIGHTEN")
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
+        title.textColor = .secondaryLabelColor
 
         aspectPopUp.controlSize = .small
         aspectPopUp.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -152,12 +152,12 @@ final class CropPanelViewController: NSViewController {
         divider.widthAnchor.constraint(equalToConstant: 1).isActive = true
         let footer = NSStackView(views: [spacer(), reset, divider, close])
 
-        let stack = NSStackView(views: [toolRow, aspectRow, autoRow, angleRow, constrainCheckbox, overlayRow, footer])
+        let stack = NSStackView(views: [title, aspectRow, autoRow, angleRow, constrainCheckbox, overlayRow, footer])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
         stack.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
-        for row in [toolRow, aspectRow, autoRow, angleRow, overlayRow, footer] {
+        for row in [aspectRow, autoRow, angleRow, overlayRow, footer] {
             row.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -28).isActive = true
         }
         stack.setCustomSpacing(16, after: overlayRow)
