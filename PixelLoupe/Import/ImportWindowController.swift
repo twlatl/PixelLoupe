@@ -26,8 +26,8 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     private var cancelButton: NSButton?
 
     static let thumbnailSizeRange: ClosedRange<Double> = 100...400
-    /// The grid pane's narrowest: the filter and the sort button and pop-up, once the count has given way.
-    static let centerMinimumWidth: CGFloat = 560
+    /// The grid pane's narrowest: the filter, Filter By and the sort button and pop-up, once the count has given way.
+    static let centerMinimumWidth: CGFloat = 680
     private static let thumbnailSizeKey = "ImportThumbnailSize"
     private static let includeSubfoldersKey = "ImportIncludesSubfolders"
     private static let ejectAfterImportKey = "ImportEjectsAfterImport"
@@ -66,6 +66,8 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
     // Grid
     private let selectedLabel = NSTextField(labelWithString: "")
     private let filterControl = NSSegmentedControl(labels: ImportSelection.Filter.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
+    /// Filter By: which file types the grid shows (internal for tests).
+    let fileTypePopUp = NSPopUpButton(frame: .zero, pullsDown: true)
     private let sortPopUp = NSPopUpButton()
     private let sortDirectionButton = NSButton()
     private let layout = NSCollectionViewFlowLayout()
@@ -377,7 +379,11 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         sortDirectionButton.action = #selector(toggleSortDirection(_:))
         sortDirectionButton.setAccessibilityIdentifier("importSortDirection")
         updateSortDirectionButton()
-        let header = bar([selectedLabel, flexible(), filterControl, flexible(), sortDirectionButton, sortPopUp])
+        fileTypePopUp.setAccessibilityLabel("Filter By")
+        fileTypePopUp.setAccessibilityIdentifier("importFileTypes")
+        fileTypePopUp.toolTip = "Show only files of the types you choose"
+        updateFileTypeMenu()
+        let header = bar([selectedLabel, flexible(), filterControl, flexible(), fileTypePopUp, sortDirectionButton, sortPopUp])
         // When the pane is narrow, the count goes rather than the bar forcing the pane wider than the
         // split view allows.
         header.setVisibilityPriority(.init(rawValue: 850), for: selectedLabel)
@@ -901,7 +907,9 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         checkAnchor = nil
         selection = ImportSelection(
             files: files, transfer: options.effectiveTransfer, sort: selection.sort, ascending: selection.ascending, filter: selection.filter,
-            destination: options.destination, allowsDuplicates: !options.skipsDuplicates, skipsRejected: options.skipsRejected)
+            fileTypes: selection.fileTypes, destination: options.destination, allowsDuplicates: !options.skipsDuplicates,
+            skipsRejected: options.skipsRejected)
+        updateFileTypeMenu()
         collectionView.reloadData()
         updateCounts()
     }
@@ -961,6 +969,56 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         collectionView.reloadData()
     }
 
+    /// Filter By's menu: All File Types, then each type the source has with its count, checked when shown.
+    /// The pull-down's title says what's shown: "All File Types", the one or two types, or how many.
+    private func updateFileTypeMenu() {
+        let menu = NSMenu()
+        let chosen = selection.fileTypes
+        let available = selection.availableFileTypes
+        let title: String = switch chosen.count {
+        case 0: "All File Types"
+        case 1, 2: chosen.sorted { $0.localizedStandardCompare($1) == .orderedAscending }.joined(separator: ", ")
+        default: "\(chosen.count) File Types"
+        }
+        menu.addItem(withTitle: "Filter By: \(title)", action: nil, keyEquivalent: "")
+        let all = menu.addItem(withTitle: "All File Types", action: #selector(fileTypeChosen(_:)), keyEquivalent: "")
+        all.target = self
+        all.state = chosen.isEmpty ? .on : .off
+        if !available.isEmpty { menu.addItem(.separator()) }
+        for (type, count) in available {
+            let item = menu.addItem(withTitle: "\(type) (\(count))", action: #selector(fileTypeChosen(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = type
+            item.state = chosen.contains(type) ? .on : .off
+        }
+        fileTypePopUp.menu = menu
+        fileTypePopUp.isEnabled = !available.isEmpty
+        fileTypePopUp.setAccessibilityValue(title)
+    }
+
+    /// Choosing a type adds it to those shown, or takes it away if it was shown; All File Types clears
+    /// the choice. Choosing every type is the same as All File Types.
+    @objc private func fileTypeChosen(_ sender: NSMenuItem) {
+        var types = selection.fileTypes
+        if let type = sender.representedObject as? String {
+            if types.contains(type) { types.remove(type) } else { types.insert(type) }
+            if types.count == selection.availableFileTypes.count { types = [] }
+        } else {
+            types = []
+        }
+        setFileTypes(types)
+    }
+
+    /// Filter By (internal for tests).
+    func setFileTypes(_ types: Set<String>) {
+        checkAnchor = nil
+        if let enlargedIndex, !types.isEmpty, !types.contains(ImportSelection.fileType(of: selection.files[enlargedIndex])) { showGrid() }
+        selection.setFileTypes(types)
+        updateFileTypeMenu()
+        collectionView.reloadData()
+        updateCounts()
+    }
+
     @objc private func sortChanged(_ sender: NSPopUpButton) {
         guard let raw = sender.selectedItem?.representedObject as? String, let sort = ImportSelection.Sort(rawValue: raw) else { return }
         Defaults.store.set(raw, forKey: Self.sortKey)
@@ -1004,8 +1062,8 @@ final class ImportWindowController: NSWindowController, NSWindowDelegate, NSTool
         options.duplicateCount = selection.duplicateCount
         let example = selection.shown.first { selection.isChecked($0) } ?? selection.shown.first
         options.exampleFile = example.map { (selection.files[$0].candidate.source.url.lastPathComponent, selection.files[$0].captureDate) }
-        options.rejectedCount = selection.files.indices.count(where: selection.isRejected)
-        selectedLabel.stringValue = selection.files.isEmpty ? "" : "\(selection.checkedCount) of \(selection.files.count) selected"
+        options.rejectedCount = selection.rejectedCount
+        selectedLabel.stringValue = selection.files.isEmpty ? "" : "\(selection.checkedCount) of \(selection.filteredCount) selected"
         let count = selection.checkedCount
         let photos = count == 1 ? "1 photo" : "\(count) photos"
         summaryLabel.stringValue = selection.files.isEmpty

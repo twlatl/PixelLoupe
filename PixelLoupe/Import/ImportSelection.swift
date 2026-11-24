@@ -52,6 +52,10 @@ nonisolated struct ImportSelection: Sendable {
     /// Off: the sort runs backwards (latest, Z or the last type first), folders included.
     private(set) var ascending: Bool
     private(set) var filter: Filter
+    /// Filter By: the file types (see `fileType(of:)`) the grid shows. Empty shows every type. Files of
+    /// other types are hidden and left out of the import, but keep their checkboxes for when they're
+    /// shown again.
+    private(set) var fileTypes: Set<String> = []
     /// Where copies go, for Destination Folders' headings.
     private(set) var destination: ImportDestination?
     /// Don't Import Suspected Duplicates off: files in the library can be checked (they still start unchecked).
@@ -66,7 +70,8 @@ nonisolated struct ImportSelection: Sendable {
 
     init(
         files: [ImportService.ScannedFile], transfer: ImportTransfer = .copy, sort: Sort = .captureTime,
-        ascending: Bool = true, filter: Filter = .all, destination: ImportDestination? = nil, allowsDuplicates: Bool = false, skipsRejected: Bool = false
+        ascending: Bool = true, filter: Filter = .all, fileTypes: Set<String> = [], destination: ImportDestination? = nil,
+        allowsDuplicates: Bool = false, skipsRejected: Bool = false
     ) {
         self.files = files
         self.transfer = transfer
@@ -78,8 +83,31 @@ nonisolated struct ImportSelection: Sendable {
         self.skipsRejected = skipsRejected
         checked = []
         checked = files.indices.map(startsChecked)
+        // Types the new files don't have are dropped, so a filter carried over from another source
+        // can't leave the grid empty; none left shows every type.
+        self.fileTypes = fileTypes.intersection(files.map { Self.fileType(of: $0) })
         arrange()
     }
+
+    /// A file's type for Filter By and the File Type sort: its extension, uppercased ("CR3", "JPG").
+    static func fileType(of file: ImportService.ScannedFile) -> String {
+        file.candidate.source.url.pathExtension.uppercased()
+    }
+
+    /// The types among the files, alphabetically, with how many files each has (Filter By's menu).
+    var availableFileTypes: [(type: String, count: Int)] {
+        var counts: [String: Int] = [:]
+        for file in files { counts[Self.fileType(of: file), default: 0] += 1 }
+        return counts.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }.map { ($0, counts[$0] ?? 0) }
+    }
+
+    /// Whether Filter By lets the file through: it's one of the chosen types, or no type is chosen.
+    func passesFileTypes(_ index: Int) -> Bool {
+        fileTypes.isEmpty || fileTypes.contains(Self.fileType(of: files[index]))
+    }
+
+    /// The files Filter By lets through: the ones that count, and can be imported.
+    var filteredCount: Int { fileTypes.isEmpty ? files.count : files.indices.count(where: passesFileTypes) }
 
     func isDuplicate(_ index: Int) -> Bool { files[index].isDuplicate(for: transfer) }
 
@@ -127,16 +155,21 @@ nonisolated struct ImportSelection: Sendable {
     /// The files the grid shows, in its order.
     var shown: [Int] { sections.flatMap(\.items) }
 
-    var checkedCount: Int { checked.count { $0 } }
+    /// Whether the file goes in the import: checked, and not hidden by Filter By.
+    func isImported(_ index: Int) -> Bool { checked[index] && passesFileTypes(index) }
 
-    var duplicateCount: Int { files.indices.count { isDuplicate($0) } }
+    var checkedCount: Int { files.indices.count(where: isImported) }
+
+    var duplicateCount: Int { files.indices.count { passesFileTypes($0) && isDuplicate($0) } }
+
+    var rejectedCount: Int { files.indices.count { passesFileTypes($0) && isRejected($0) } }
 
     /// The total size of the checked files, sidecars not included.
-    var checkedBytes: Int64 { files.indices.filter { checked[$0] }.reduce(0) { $0 + files[$1].candidate.fileSize } }
+    var checkedBytes: Int64 { files.indices.filter(isImported).reduce(0) { $0 + files[$1].candidate.fileSize } }
 
     /// The checked files, in sort order, ready for `ImportService.importPhotos(_:transfer:destination:)`.
     var checkedCandidates: [ImportService.Candidate] {
-        order.filter { checked[$0] }.map { files[$0].candidate }
+        order.filter(isImported).map { files[$0].candidate }
     }
 
     mutating func setChecked(_ isChecked: Bool, _ indexes: some Sequence<Int>) {
@@ -166,8 +199,9 @@ nonisolated struct ImportSelection: Sendable {
         setChecked(state, shown[min(start, end)...max(start, end)])
     }
 
+    /// Check All and Uncheck All: the files Filter By shows, not the hidden ones.
     mutating func setAll(_ isChecked: Bool) {
-        setChecked(isChecked, files.indices)
+        setChecked(isChecked, files.indices.filter(passesFileTypes))
     }
 
     /// Switching between Copy and Add changes which files count as already in the catalog: those that
@@ -212,6 +246,12 @@ nonisolated struct ImportSelection: Sendable {
         arrange()
     }
 
+    /// Filter By: show only `types` (empty for every type). Types none of the files have are ignored.
+    mutating func setFileTypes(_ types: Set<String>) {
+        fileTypes = types.intersection(files.map { Self.fileType(of: $0) })
+        arrange()
+    }
+
     mutating func setDestination(_ destination: ImportDestination?) {
         self.destination = destination
         arrange()
@@ -226,12 +266,14 @@ nonisolated struct ImportSelection: Sendable {
             case .fileName:
                 break
             case .fileType:
-                let typeA = a.candidate.source.url.pathExtension.uppercased(), typeB = b.candidate.source.url.pathExtension.uppercased()
+                let typeA = Self.fileType(of: a), typeB = Self.fileType(of: b)
                 if typeA != typeB { return typeA < typeB }
             }
             let nameOrder = a.candidate.source.url.lastPathComponent.localizedStandardCompare(b.candidate.source.url.lastPathComponent)
             return nameOrder == .orderedSame ? lhs < rhs : nameOrder == .orderedAscending
         }
+        // Filter By hides files entirely, so the numbers count only the files it lets through.
+        if !fileTypes.isEmpty { order = order.filter(passesFileTypes) }
         if !ascending { order.reverse() }
         numbers = [Int](repeating: 0, count: files.count)
         for (position, index) in order.enumerated() { numbers[index] = position + 1 }
