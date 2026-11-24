@@ -24,10 +24,18 @@ final class LightingPanelViewController: NSViewController {
         let title = NSTextField(labelWithString: "LIGHTING")
         title.font = .systemFont(ofSize: 13, weight: .semibold)
         title.textColor = .secondaryLabelColor
-        // Inset as the sections are.
-        let header = NSStackView(views: [title])
-        header.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 0, right: 14)
+        // Where the other panels' headings are.
+        title.translatesAutoresizingMaskIntoConstraints = false
+        let header = NSView()
+        header.addSubview(title)
+        NSLayoutConstraint.activate([
+            title.topAnchor.constraint(equalTo: header.topAnchor, constant: 12),
+            title.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 14),
+            title.trailingAnchor.constraint(lessThanOrEqualTo: header.trailingAnchor, constant: -14),
+            title.bottomAnchor.constraint(equalTo: header.bottomAnchor),
+        ])
         stack.addArrangedSubview(header)
+        header.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         for (index, section) in sections.enumerated() {
             addChild(section)
             if index > 0 {
