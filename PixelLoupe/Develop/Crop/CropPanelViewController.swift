@@ -148,6 +148,8 @@ final class CropPanelViewController: NSViewController {
         let divider = NSBox()
         divider.boxType = .separator
         divider.heightAnchor.constraint(equalToConstant: 12).isActive = true
+        // Without a width, a separator stretched wider than it is tall draws horizontally (RAW-310).
+        divider.widthAnchor.constraint(equalToConstant: 1).isActive = true
         let footer = NSStackView(views: [spacer(), reset, divider, close])
 
         let stack = NSStackView(views: [toolRow, aspectRow, autoRow, angleRow, constrainCheckbox, overlayRow, footer])
