@@ -49,6 +49,8 @@ nonisolated final class DevelopSource {
     var removeFills = RemoveFillStore.shared
     /// Where Portrait Lighting's Studio and Contour find the photo's faces.
     var faces = FaceStore.shared
+    /// Where Blemish Removal finds the photo's blemishes (RAW-306).
+    var blemishes = BlemishStore.shared
     /// Where a DNG camera profile the photo's settings name is found.
     var profiles = AdobeProfileLibrary.shared
 
@@ -380,6 +382,15 @@ nonisolated enum AdjustmentPipeline {
         let waiting = !Thread.isMainThread
         var image = RetouchRenderer.apply(spots: adjustments.spots, redEyes: adjustments.redEyes, to: base) { index in
             source.removeFills.fill(for: source, adjustments: adjustments, spotIndex: index, waiting: waiting)
+        }
+        // Blemish Removal's spots, once the blemishes are found and as their fills are made (RAW-306).
+        if adjustments.blemishRemoval.isActive,
+           let candidates = source.blemishes.candidates(for: source, adjustments: adjustments, waiting: waiting) {
+            let spots = adjustments.blemishRemoval.spots(for: candidates)
+            for fill in source.removeFills.blemishFills(for: source, adjustments: adjustments, spots: spots, waiting: waiting) {
+                if let fill { image = RetouchRenderer.apply(fill, opacity: 1, to: image) }
+            }
+            image = image.cropped(to: extent)
         }
 
         if adjustments.redEye.isActive {

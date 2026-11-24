@@ -1,7 +1,8 @@
 import AppKit
 
 /// Remove's marks over the Develop preview (RAW-260): a pin on each spot (as Tool Overlay says), the selected
-/// spot's area (and its source, when it copies from one), an area waiting to be removed in red, and the brush.
+/// spot's area (and its source, when it copies from one), an area waiting to be removed in red, the brush, and the
+/// outlines of the blemishes Blemish Removal removed (RAW-306).
 ///
 /// Drag on the photo to paint; in Heal and Clone a click places a round spot. Drag a pin to move its spot, or a
 /// copied spot's source to move that. ⌘-drag with a Remove spot selected gives it a source of its own. Scroll
@@ -10,6 +11,10 @@ final class RemoveOverlayView: NSView {
     var previewFrame = PreviewFrame.zero { didSet { invalidateAreas(); needsDisplay = true } }
     var frameRect: CGRect { previewFrame.rect }
     var spots: [PhotoAdjustments.Spot] = [] { didSet { needsDisplay = true } }
+    /// What Blemish Removal removed: each drawn as a white outline (unless Tool Overlay is Never).
+    var blemishAreas: [PhotoAdjustments.RemoveArea] = [] {
+        didSet { if blemishAreas != oldValue { needsDisplay = true } }
+    }
     var selectedID: UUID? { didSet { needsDisplay = true } }
     /// An area painted with Detect Objects on, waiting for Remove or Cancel.
     var pendingArea: PhotoAdjustments.RemoveArea? { didSet { needsDisplay = true } }
@@ -247,6 +252,15 @@ final class RemoveOverlayView: NSView {
         guard frameRect.width > 0 else { return }
         NSGraphicsContext.saveGraphicsState()
         previewFrame.outline.addClip()
+        // Blemish Removal's areas, outlined (under the selected spot).
+        if toolOverlay != .never, pendingArea == nil {
+            for area in blemishAreas {
+                drawArea(area, color: NSColor.black.withAlphaComponent(0.45), style: .outlineShadow)
+            }
+            for area in blemishAreas {
+                drawArea(area, color: .white, style: .outline)
+            }
+        }
         // The selected spot: its area, and where it copies from.
         if let spot = spots.first(where: { $0.id == selectedID }), pendingArea == nil {
             let center = viewPoint(spot.center), source = viewPoint(spot.source)

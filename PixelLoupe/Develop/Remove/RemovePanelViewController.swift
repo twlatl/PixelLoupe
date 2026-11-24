@@ -3,7 +3,8 @@ import AppKit
 /// The Remove panel (RAW-260), after Lightroom's: Remove, Heal or Clone; the brush's Size (and Feather for Heal
 /// and Clone); Use Generative AI and Detect Objects for Remove; then the Selected card — before removing, the
 /// detected area's Add / Subtract brush with Cancel and Remove; after, the spot's Fill, Opacity and Refresh —
-/// and when spot pins show (Tool Overlay).
+/// and when spot pins show (Tool Overlay). Under Remove's options, Blemish Removal (RAW-306): an Apply switch that finds
+/// blemishes on skin and removes them.
 final class RemovePanelViewController: NSViewController {
     enum Mode: Int, CaseIterable {
         case remove, heal, clone
@@ -77,6 +78,8 @@ final class RemovePanelViewController: NSViewController {
     var onDeleteSelected: (() -> Void)?
     var onReset: (() -> Void)?
     var onClose: (() -> Void)?
+    /// Blemish Removal's Apply switch was turned on or off.
+    var onBlemishApply: ((Bool) -> Void)?
     var isEditingEnabled = true { didSet { refresh() } }
 
     private let defaults: UserDefaults
@@ -88,6 +91,9 @@ final class RemovePanelViewController: NSViewController {
     private let downloadButton = NSButton(title: "Download Model", target: nil, action: nil)
     private let detectCheckbox = NSButton(checkboxWithTitle: "Detect objects", target: nil, action: nil)
     private let removeOptions = NSStackView()
+    private let blemishSwitch = NSSwitch()
+    private let blemishStatus = NSTextField(wrappingLabelWithString: "")
+    private(set) var blemishRemoval = PhotoAdjustments.BlemishRemoval()
     private let card = CardView()
     private let cardTitle = NSTextField(labelWithString: "Selected")
     private let cardDelete = NSButton()
@@ -205,6 +211,7 @@ final class RemovePanelViewController: NSViewController {
         removeOptions.alignment = .leading
         removeOptions.spacing = 6
         for view in [generativeCheckbox, generativeStatus, downloadButton, detectCheckbox] { removeOptions.addArrangedSubview(view) }
+        buildBlemishRemoval()
 
         buildCard()
 
@@ -264,6 +271,37 @@ final class RemovePanelViewController: NSViewController {
         modelObserver = NotificationCenter.default.addObserver(forName: InpaintingModelStore.didChange, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.refresh() }
         }
+        refresh()
+    }
+
+    /// Blemish Removal: its title and Apply switch, and what it found.
+    private func buildBlemishRemoval() {
+        let title = NSTextField(labelWithString: "Blemish Removal")
+        title.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
+        let apply = small(NSTextField(labelWithString: "Apply"))
+        blemishSwitch.controlSize = .mini
+        blemishSwitch.setAccessibilityLabel("Apply Blemish Removal")
+        blemishSwitch.setAccessibilityIdentifier("removeBlemishApply")
+        blemishSwitch.toolTip = "Find blemishes on skin and remove them"
+        target({ [weak self] control in
+            self?.onBlemishApply?((control as! NSSwitch).state == .on)
+        }, for: blemishSwitch)
+        let row = NSStackView(views: [title, NSView(), apply, blemishSwitch])
+        row.spacing = 6
+        _ = small(blemishStatus)
+        blemishStatus.setAccessibilityIdentifier("removeBlemishStatus")
+        let rule = separator()
+        for view in [rule, row, blemishStatus] as [NSView] {
+            removeOptions.addArrangedSubview(view)
+            view.widthAnchor.constraint(equalTo: removeOptions.widthAnchor).isActive = true
+        }
+        removeOptions.setCustomSpacing(10, after: detectCheckbox)
+    }
+
+    /// Shows Blemish Removal's settings and what was found (nil hides the line).
+    func showBlemishRemoval(_ setting: PhotoAdjustments.BlemishRemoval, status: String?) {
+        blemishRemoval = setting
+        blemishStatus.stringValue = status ?? ""
         refresh()
     }
 
@@ -420,6 +458,8 @@ final class RemovePanelViewController: NSViewController {
         generativeStatus.isHidden = !usesGenerativeAI || modelState == .ready
         downloadButton.isHidden = !usesGenerativeAI || !(modelState == .notDownloaded || { if case .failed = modelState { true } else { false } }())
         overlayPopUp.selectItem(at: toolOverlay.rawValue)
+        blemishSwitch.state = blemishRemoval.isEnabled ? .on : .off
+        blemishStatus.isHidden = blemishStatus.stringValue.isEmpty
 
         // The Selected card.
         card.isHidden = pending == nil && selected == nil
@@ -461,6 +501,8 @@ final class RemovePanelViewController: NSViewController {
     var modePickerForTesting: NSSegmentedControl { modePicker }
     var cardForTesting: NSView { card }
     var maskPickerForTesting: NSSegmentedControl { maskPicker }
+    var blemishSwitchForTesting: NSSwitch { blemishSwitch }
+    var blemishStatusForTesting: NSTextField { blemishStatus }
 }
 
 /// The Selected card's rounded, lightly filled background, following the appearance.

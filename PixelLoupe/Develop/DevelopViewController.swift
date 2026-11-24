@@ -1248,6 +1248,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             MainActor.assumeIsolated {
                 self?.refreshSubjectStatus()
                 self?.refreshLightingStatus()
+                self?.refreshBlemishes()
                 self?.metalView.needsDisplay = true
             }
         }
@@ -1369,6 +1370,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         // Remove shows the same spots.
         removeOverlay.spots = spots
         refreshRemoveFills()
+        refreshBlemishes()
         // Resizing a spot sets the size of the next one, as it looks on screen now.
         if ["Resize Spot", "Spot Size"].contains(actionName), let spot = spots.first(where: { $0.id == retouchPanel.selectedID }) {
             spotBrushRadius = spot.radius * retouchOverlay.zoomFactor
@@ -1449,6 +1451,15 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
             retouchChanged([], adjustments.redEyes, isFinal: true, actionName: "Clear Spots")
         }
         removePanel.onClose = { [weak self] in self?.state.developTool = .adjust }
+        removePanel.onBlemishApply = { [weak self] on in
+            guard let self, let source else { return }
+            var newValue = adjustments
+            newValue.blemishRemoval.isEnabled = on
+            // Keep the Adjust panel's copy current, or its next edit would undo this one.
+            panel.display(newValue, asShotWhiteBalance: source.asShotWhiteBalance, isRaw: source.isRaw)
+            adjustmentsChanged(newValue, isFinal: true, actionName: "Blemish Removal")
+            refreshBlemishes()
+        }
         removeOverlay.onStroke = { [weak self] stroke in self?.removeStroke(stroke) }
         removeOverlay.onPlace = { [weak self] point in self?.placeRemoveCircle(at: point) }
         removeOverlay.onSelect = { [weak self] id in self?.selectRemoveSpot(id) }
@@ -1461,6 +1472,7 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         fillObserver = NotificationCenter.default.addObserver(forName: RemoveFillStore.didFill, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.refreshRemoveFills()
+                self?.refreshBlemishes()
                 self?.metalView.needsDisplay = true
             }
         }
@@ -1473,6 +1485,34 @@ final class DevelopViewController: NSViewController, MTKViewDelegate {
         removeOverlay.selectedID = removeSelectedID
         removePanel.showSelected(adjustments.spots.first { $0.id == removeSelectedID })
         refreshRemoveFills()
+        refreshBlemishes()
+    }
+
+    /// Shows what Blemish Removal found and removed: the panel's line and the outlines. The blemishes are found when the
+    /// preview first draws with it on, which posts `SubjectMatteStore.didFind`; their fills post `RemoveFillStore.didFill`.
+    private func refreshBlemishes() {
+        let setting = adjustments.blemishRemoval
+        guard let source, state.developTool == .remove, setting.isEnabled else {
+            removeOverlay.blemishAreas = []
+            removePanel.showBlemishRemoval(setting, status: nil)
+            return
+        }
+        guard let candidates = source.blemishes.knownCandidates(for: source, adjustments: adjustments) else {
+            removeOverlay.blemishAreas = []
+            removePanel.showBlemishRemoval(setting, status: "Finding blemishes…")
+            return
+        }
+        let spots = setting.spots(for: candidates)
+        removeOverlay.blemishAreas = spots.compactMap(\.area)
+        let status: String
+        if spots.isEmpty {
+            status = "No blemishes found."
+        } else if !source.removeFills.blemishFillsReady(for: source, adjustments: adjustments, spots: spots) {
+            status = "Removing \(spots.count) blemish\(spots.count == 1 ? "" : "es")…"
+        } else {
+            status = "\(spots.count) blemish\(spots.count == 1 ? "" : "es") removed."
+        }
+        removePanel.showBlemishRemoval(setting, status: status)
     }
 
     /// Marks the pins of spots whose fills are still being made.

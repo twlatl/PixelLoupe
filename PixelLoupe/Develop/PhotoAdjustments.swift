@@ -35,6 +35,8 @@ nonisolated struct PhotoAdjustments: Codable, Equatable, Sendable {
     var spots: [Spot] = []
     /// Positioned red-eye corrections (the automatic ``redEye`` toggle is separate).
     var redEyes: [RedEyeSpot] = []
+    /// Remove's Blemish Removal (RAW-306): blemishes found on skin and removed, after the spots.
+    var blemishRemoval = BlemishRemoval()
 
     static let `default` = PhotoAdjustments()
 
@@ -692,7 +694,7 @@ nonisolated extension PhotoAdjustments {
     private enum CodingKeys: String, CodingKey {
         case light, color, blackAndWhite, redEye, whiteBalance, curves, levels, definition
         case selectiveColor, noiseReduction, sharpen, vignette, crop, orientation, lens, presence, effects, transform, profile, calibration, portraitLighting, rimLight
-        case masks, spots, redEyes
+        case masks, spots, redEyes, blemishRemoval
     }
 
     /// Sections missing from older saved settings decode as their defaults.
@@ -727,6 +729,7 @@ nonisolated extension PhotoAdjustments {
         masks = try decode(.masks, masks)
         spots = try decode(.spots, spots)
         redEyes = try decode(.redEyes, redEyes)
+        blemishRemoval = try decode(.blemishRemoval, blemishRemoval)
         // Grain used to belong to Black & White.
         if !container.contains(.effects), let legacy = try? container.nestedContainer(keyedBy: LegacyBlackAndWhiteKeys.self, forKey: .blackAndWhite),
            let grain = try? legacy.decodeIfPresent(Double.self, forKey: .grain), grain > 0 {
