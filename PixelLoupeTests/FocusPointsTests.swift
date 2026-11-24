@@ -139,6 +139,50 @@ struct FocusPointsTests {
         #expect(FocusPoints.read(from: file) == nil)
     }
 
+    /// A Nikon DSLR maker note with `AFInfo2` version 0100: the 51-point schema and primary point `point`.
+    private static func nikonDSLRFile(point: UInt8) -> Data {
+        file(make: "NIKON CORPORATION") { _ in
+            let info = Data("0100".utf8) + Data([0, 0, 1, point]) + Data(count: 8)
+            var inner = Data([0x4D, 0x4D, 0, 42, 0, 0, 0, 8])
+            inner.append(Self.words([1, 0xB7, 7], bigEndian: true))
+            inner.append(contentsOf: [0, 0, 0, UInt8(info.count), 0, 0, 0, 26, 0, 0, 0, 0])
+            inner.append(info)
+            return Data("Nikon\0".utf8) + Data([2, 0x10, 0, 0]) + inner
+        }
+    }
+
+    @Test func readsNikonDSLRPrimaryPoint() throws {
+        // Point 2 of the 51-point grid is B6, one row above the center.
+        let file = try #require(TIFFFile(data: Self.nikonDSLRFile(point: 2)))
+        let points = try #require(FocusPoints.read(from: file))
+        #expect(points.areas.count == 1)
+        #expect(abs(points.areas[0].midX - 0.5) < 1e-9)
+        #expect(points.areas[0].midY < 0.5)
+        let unfocused = try #require(TIFFFile(data: Self.nikonDSLRFile(point: 0)))
+        #expect(FocusPoints.read(from: unfocused) == nil)
+    }
+
+    @Test func nikonGridsPlacePointsByRowAndColumn() throws {
+        let grid51 = try #require(NikonGrid(schema: 1, model: "NIKON D750"))
+        #expect(grid51.names.count == 51)
+        #expect(grid51.point(1) == CGPoint(x: 0.5, y: 0.5)) // C6, the center
+        // A1 (46) sits over column 2, the top row; D1 (51) is the full row's first column, below the center.
+        let a1 = try #require(grid51.point(46)), d1 = try #require(grid51.point(51))
+        #expect(a1.x > d1.x)
+        #expect(a1.y < 0.5 && d1.y > 0.5)
+        #expect(NikonGrid(schema: 3, model: "NIKON D7000")?.names.count == 39)
+        let grid153 = try #require(NikonGrid(schema: 7, model: "NIKON D850"))
+        #expect(grid153.names.count == 153)
+        #expect(grid153.point(1) == CGPoint(x: 0.5, y: 0.5)) // E9
+        #expect(try #require(grid153.point(153)).x < 0.5) // I1: bottom left
+        // A DX body spreads the same grid wider.
+        let dx = try #require(NikonGrid(schema: 7, model: "NIKON D500"))
+        let dxCorner = try #require(dx.point(153)), fxCorner = try #require(grid153.point(153))
+        #expect(dxCorner.x < fxCorner.x)
+        #expect(grid51.point(0) == nil)
+        #expect(grid51.point(52) == nil)
+    }
+
     /// A Fujifilm EXIF block: a 1920×1280 EXIF image size and a maker note with `FocusMode` and `FocusPixel`.
     private static func fujiExif(focusMode: Int = 0, focusPixel: (Int, Int)) -> Data {
         file(make: "FUJIFILM", exif: [(0xA002, 1920), (0xA003, 1280)]) { _ in

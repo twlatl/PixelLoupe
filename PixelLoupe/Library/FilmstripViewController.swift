@@ -66,7 +66,7 @@ final class FilmstripViewController: NSViewController, NSCollectionViewDelegate 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let header = NSStackView(views: [
-            filteredButton, infoLabel, spacer, focusPointsCheckbox, filterLabel, FlagFilterControl(state: state), divider,
+            focusPointsCheckbox, filteredButton, infoLabel, spacer, filterLabel, FlagFilterControl(state: state), divider,
             ColorLabelFilterControl(state: state, identifierPrefix: "filmstrip."), divider2,
             RatingFilterControl(state: state, identifierPrefix: "filmstrip."),
         ])

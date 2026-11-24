@@ -11,7 +11,7 @@ import Foundation
 /// - **Canon** (CR2): `AFInfo2` (0x26), or `AFInfo` (0x12) on older bodies: every AF point's box, centered on
 ///   the image with Y up, and which of them were in focus. Only the in-focus points are drawn.
 /// - **Nikon** (NEF) with `AFInfo2` version 3 (Z 5/6/7/30/50/fc, D780, D6): the AF area's center and size.
-///   Older DSLRs only name a point on their AF grid (such as "C6"), with no coordinates.
+///   Older DSLRs only name the primary point on their AF grid (such as "C6"), placed by ``NikonGrid``.
 /// - **Fujifilm** (RAF): `FocusPixel` (0x1023), in the pixels of the embedded preview's EXIF size; manual
 ///   focus still records the selected point, so `FocusMode` (0x1021) is checked first.
 ///
@@ -135,14 +135,25 @@ nonisolated struct FocusPoints: Equatable, Sendable {
 
     /// Nikon's maker note is "Nikon\0", a version, and then a TIFF of its own whose offsets count from its header.
     /// `AFInfo2` (0xB7) version 3 has the AF area's center and size in an `AFImageWidth` × `AFImageHeight` image,
-    /// origin top-left, when its byte 7 says coordinates are available.
+    /// origin top-left, when its byte 7 says coordinates are available. Versions 0100 and 0101 (DSLRs) only name the
+    /// primary point on the AF grid; see ``NikonGrid``.
     private static func nikon(_ file: TIFFFile, makerNote: TIFFFile.Entry) -> FocusPoints? {
         guard makerNote.count > 18, let bytes = file.bytes(makerNote), bytes.starts(with: Data("Nikon\0".utf8)),
               let inner = TIFFFile(data: Data(bytes.dropFirst(10))), let entry = inner.ifd0[0xB7],
-              let infoData = inner.bytes(entry), infoData.count >= 0x36
+              let infoData = inner.bytes(entry), infoData.count >= 8
         else { return nil }
         let info = [UInt8](infoData)
-        guard info[0] == UInt8(ascii: "0"), info[1] == UInt8(ascii: "3"), info[7] == 1 else { return nil }
+        guard info[0] == UInt8(ascii: "0") else { return nil }
+        if info[1] == UInt8(ascii: "1") {
+            let model = file.ifd0[272].flatMap(file.string)?.trimmingCharacters(in: .whitespaces).uppercased() ?? ""
+            // PrimaryAFPoint: byte 7 in version 0100, byte 0x44 in 0101; 0 when nothing was in focus.
+            let at = info[3] == UInt8(ascii: "1") ? 0x44 : 7
+            guard at < info.count, let grid = NikonGrid(schema: Int(info[6]), model: model),
+                  let point = grid.point(Int(info[at]))
+            else { return nil }
+            return FocusPoints(areas: [CGRect(origin: point, size: .zero)])
+        }
+        guard info[1] == UInt8(ascii: "3"), info.count >= 0x36, info[7] == 1 else { return nil }
         let w = words(Data(info[0x2A..<0x36]), isBigEndian: inner.isBigEndian).map { $0 & 0xFFFF }
         let (imageWidth, imageHeight, x, y, width, height) = (w[0], w[1], w[2], w[3], w[4], w[5])
         guard imageWidth > 0, imageHeight > 0, x > 0 || y > 0, x <= imageWidth, y <= imageHeight else { return nil }
@@ -265,6 +276,67 @@ nonisolated struct FocusPoints: Equatable, Sendable {
             result = CGPoint(x: 1 - result.y, y: result.x)
         }
         return result
+    }
+}
+
+/// The AF point grids of Nikon DSLRs, which record only the primary point's number (`AFInfo2` versions 0100 and
+/// 0101). The point names and their order come from ExifTool; where the grid sits in the frame isn't recorded, so
+/// its spacing was fitted to where Ted's photos are sharpest (D750 for 51 points, D850 for 153, D7000 for 39), and
+/// is only approximate.
+nonisolated struct NikonGrid {
+    /// The point names in the order the camera numbers them, from 1: row letter (A at the top) and column.
+    let names: [Substring]
+    /// The center point's row (A is 0) and column.
+    let center: (row: Int, column: Int)
+    /// Columns the short top and bottom rows (A and E) start in from the full rows' first column.
+    let shortRowIndent: Int
+    /// The distance between neighboring points, as a fraction of the image's width and height.
+    let pitch: (x: Double, y: Double)
+
+    /// DX bodies put the same AF module over a smaller sensor, so its points spread 1.5× wider across the frame.
+    private static let dxModels: Set<String> = ["NIKON D300", "NIKON D300S", "NIKON D7100", "NIKON D7200", "NIKON D7500", "NIKON D500"]
+
+    init?(schema: Int, model: String) {
+        let crop = Self.dxModels.contains(model) ? 1.5 : 1
+        switch schema {
+        case 1: // 51 points: rows A–E, the full rows B–D with 11 columns, A and E with 9 (D750, D810, D4…).
+            names = """
+            C6 B6 A5 D6 E5 C7 B7 A6 D7 E6 C5 B5 A4 D5 E4 C8 B8 A7 D8 E7 C9 B9 A8 D9 E8 C10 B10 A9 D10 E9 C11 B11 D11 \
+            C4 B4 A3 D4 E3 C3 B3 A2 D3 E2 C2 B2 A1 D2 E1 C1 B1 D1
+            """.split(separator: " ")
+            center = (2, 6)
+            shortRowIndent = 1
+            pitch = (0.0325 * crop, 0.07 * crop)
+        case 3: // 39 points: rows B–D with 11 columns, A and E with 3 (D7000, D600, D610…).
+            names = """
+            C6 B6 A2 D6 E2 C7 B7 A3 D7 E3 C5 B5 A1 D5 E1 C8 B8 D8 C9 B9 D9 C10 B10 D10 C11 B11 D11 C4 B4 D4 C3 B3 D3 \
+            C2 B2 D2 C1 B1 D1
+            """.split(separator: " ")
+            center = (2, 6)
+            shortRowIndent = 4
+            pitch = (0.06, 0.115)
+        case 7: // 153 points: 9 rows (A–I) by 17 columns, numbered a column at a time from the center (D850, D5, D500).
+            let columns = [9, 10, 11, 8, 7, 12, 13, 14, 15, 16, 17, 6, 5, 4, 3, 2, 1]
+            names = columns.flatMap { column in "EDCBAFGHI".map { Substring("\($0)\(column)") } }
+            center = (4, 9)
+            shortRowIndent = 0
+            pitch = (0.0325 * crop, 0.0575 * crop)
+        default:
+            return nil
+        }
+    }
+
+    /// Where point `number` (from 1) sits, in unit coordinates of the image as stored, origin top-left.
+    func point(_ number: Int) -> CGPoint? {
+        guard number >= 1, number <= names.count, let letter = names[number - 1].first?.asciiValue,
+              var column = Int(names[number - 1].dropFirst())
+        else { return nil }
+        let row = Int(letter) - Int(UInt8(ascii: "A"))
+        if shortRowIndent > 0, row == 0 || row == 4 { column += shortRowIndent }
+        return CGPoint(
+            x: 0.5 + Double(column - center.column) * pitch.x,
+            y: 0.5 + Double(row - center.row) * pitch.y
+        )
     }
 }
 
