@@ -300,7 +300,9 @@ nonisolated final class DevelopSource {
                 rawFilter.isLensCorrectionEnabled = isBuiltInLensProfileApplied(adjustments)
             }
 
-            if let output = rawFilter.outputImage { return Self.enlarged(output, by: enlargement) }
+            if let output = rawFilter.outputImage {
+                return Self.enlarged(decodeScale < 1 ? Self.repairingEdges(output) : output, by: enlargement)
+            }
         }
         return Self.enlarged(scaledBaseImage(scale: decodeScale), by: enlargement)
     }
@@ -329,6 +331,15 @@ nonisolated final class DevelopSource {
         filter.cubeData = cube.data
         filter.colorSpace = CGColorSpace(name: cube.colorSpaceName as CFString)
         return (filter, cameraProfile.hasToneCurve, cameraProfile.baselineExposureOffset)
+    }
+
+    /// The RAW engine rounds a scaled-down photo's size up and mixes its outermost pixels with the black beyond
+    /// the frame (opaque, so it shows as a dark line). They take the color of the pixels next to them instead;
+    /// the size and everything inside stay as they are.
+    static func repairingEdges(_ image: CIImage) -> CIImage {
+        let extent = image.extent
+        guard !extent.isInfinite, extent.width > 4, extent.height > 4 else { return image }
+        return image.cropped(to: extent.insetBy(dx: 1, dy: 1)).clampedToExtent().cropped(to: extent)
     }
 
     private static func enlarged(_ image: CIImage, by factor: CGFloat) -> CIImage {
