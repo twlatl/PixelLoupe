@@ -66,7 +66,11 @@ struct ExportBorderTests {
             #expect(settings.framePixels(for: CGSize(width: 4000, height: 6000)) == CGSize(width: short, height: long))
         }
         settings.frameSize = .eightByEight
-        #expect(settings.photoScale(for: landscape) == 0.4, "touches the frame, not Resize to Fit's size")
+        #expect(settings.photoScale(for: landscape) == 0.36, "fits inside the margin, not Resize to Fit's size")
+        #expect(settings.frameMargin(for: landscape) == 120)
+        settings.frameSize = .fourBySix
+        #expect(abs(settings.photoScale(for: landscape) - 0.27) < 0.000_1, "a border even when the photo has the frame's shape")
+        settings.frameSize = .eightByEight
         settings.resolutionUnit = .pixelsPerCentimeter
         settings.resolution = 100
         #expect(settings.framePixels(for: landscape).width == 2032)
@@ -134,13 +138,13 @@ struct ExportBorderTests {
         }
     }
 
-    @Test func framedPhotoIsCenteredAndEnlargedToTouch() async throws {
+    @Test func framedPhotoIsCenteredAndEnlargedWithBorderOnEverySide() async throws {
         let (image, properties) = try await export(bordered { $0.borderStyle = .frame; $0.frameSize = .eightByEight; $0.resolution = 20 })
         #expect(image.width == 160 && image.height == 160)
         #expect((properties[kCGImagePropertyDPIWidth] as? Double).map { abs($0 - 20) < 0.1 } == true, "prints at 8 × 8 in")
-        // 64 × 48 fits as 160 × 120, with 20 pixels above and below.
-        #expect(pixel(image, 80, 18) == [255, 255, 255] && pixel(image, 80, 141) == [255, 255, 255])
-        for (x, y) in [(1, 80), (158, 80), (80, 22), (80, 137)] { #expect(isGray(pixel(image, x, y))) }
+        // 64 × 48 fits as 144 × 108, with 8 pixels at the sides and 26 above and below.
+        for (x, y) in [(0, 80), (7, 80), (152, 80), (159, 80), (80, 25), (80, 134)] { #expect(pixel(image, x, y) == [255, 255, 255]) }
+        for (x, y) in [(10, 80), (149, 80), (80, 28), (80, 131)] { #expect(isGray(pixel(image, x, y))) }
     }
 
     // MARK: Form

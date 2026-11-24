@@ -281,7 +281,7 @@ nonisolated struct ExportSettings: Codable, Equatable, Sendable {
     enum BorderStyle: String, Codable, Sendable, CaseIterable {
         /// The same width on every side.
         case width
-        /// A print-sized frame the whole photo is centered in.
+        /// A print-sized frame the whole photo is centered in, with border on every side.
         case frame
     }
 
@@ -384,6 +384,13 @@ nonisolated struct ExportSettings: Codable, Equatable, Sendable {
         return size.width > size.height ? CGSize(width: long, height: short) : CGSize(width: short, height: long)
     }
 
+    /// The least border, in whole pixels, between a photo of `size` and each side of its frame: 5% of
+    /// the frame's short side. Two sides have more where the photo's shape differs from the frame's.
+    func frameMargin(for size: CGSize) -> CGFloat {
+        let frame = framePixels(for: size)
+        return (min(frame.width, frame.height) * 0.05).rounded()
+    }
+
     /// The border's whole pixels on each side of a photo of `size`, 0 without one. When resizing, the
     /// border takes its room from the photo, so it's held to a quarter of the output's short side.
     func borderPixels(for size: CGSize) -> CGFloat {
@@ -399,8 +406,8 @@ nonisolated struct ExportSettings: Codable, Equatable, Sendable {
     func photoScale(for size: CGSize) -> CGFloat {
         guard size.width > 0, size.height > 0 else { return 1 }
         if usesFrame {
-            let frame = framePixels(for: size)
-            return min(frame.width / size.width, frame.height / size.height)
+            let frame = framePixels(for: size), margin = frameMargin(for: size)
+            return min((frame.width - 2 * margin) / size.width, (frame.height - 2 * margin) / size.height)
         }
         return scale(for: size, border: borderPixels(for: size))
     }
