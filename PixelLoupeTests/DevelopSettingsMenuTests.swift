@@ -51,6 +51,7 @@ struct DevelopSettingsMenuTests {
         a.portraitLighting.effect = .stage
         a.masks = [.init(components: [.init(shape: .radial(.init(center: .init(x: 0.5, y: 0.5), radiusX: 0.2, radiusY: 0.2)))])]
         a.spots = [.init()]
+        a.blemishRemoval.isEnabled = true
         a.redEyes = [.init()]
         return a
     }
@@ -70,6 +71,16 @@ struct DevelopSettingsMenuTests {
         #expect(DevelopSetting.apply(Set(DevelopSetting.allCases), from: source, to: PhotoAdjustments()) == source)
         let listed = DevelopSetting.groups.flatMap(\.settings)
         #expect(listed.count == DevelopSetting.allCases.count && Set(listed) == Set(DevelopSetting.allCases))
+    }
+
+    @Test("Blemish Removal is copied without the blemishes put back; the target keeps its own")
+    func copiesBlemishRemoval() {
+        var source = PhotoAdjustments(), target = PhotoAdjustments()
+        source.blemishRemoval = .init(isEnabled: true, blemishes: 0.7, naturalMarks: 0.2, excluded: [1, 2])
+        target.blemishRemoval.excluded = [3]
+        let pasted = DevelopSetting.apply([.blemishRemoval], from: source, to: target)
+        #expect(pasted.blemishRemoval == .init(isEnabled: true, blemishes: 0.7, naturalMarks: 0.2, excluded: [3]))
+        #expect(!DevelopSetting.apply(DevelopSetting.defaultSelection, from: source, to: target).blemishRemoval.isEnabled)
     }
 
     @Test("Only the chosen settings are copied; what belongs to the photo stays by default")
