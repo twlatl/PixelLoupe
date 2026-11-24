@@ -101,8 +101,10 @@ struct BlemishRemovalTests {
     // MARK: - Settings
 
     private func candidate(_ id: UInt64, x: Double = 0.5, y: Double = 0.5, size: Double = 0.05, blemish: Double = 0.8, natural: Double = 0) -> BlemishCandidate {
+        // An empty margin around it, as found marks have: the outline is drawn where the mark meets it.
+        let coverage = (0..<64).map { i -> UInt8 in (1...6).contains(i / 8) && (1...6).contains(i % 8) ? 255 : 0 }
         let matte = PhotoAdjustments.ObjectMatte(box: CGRect(x: x - size / 2, y: y - size / 2, width: size, height: size), width: 8, height: 8,
-                                                 coverage: [UInt8](repeating: 255, count: 64))
+                                                 coverage: coverage)
         return BlemishCandidate(id: id, center: .init(x: x, y: y), radius: size / 2, matte: matte, blemish: blemish, natural: natural)
     }
 
@@ -244,7 +246,7 @@ struct BlemishRemovalTests {
             overlay.mouseUp(with: mouse(.leftMouseUp, x))
         }
         click(200)
-        click(240)
+        click(225)
         #expect(toggled == [1, 2] && strokes == 0)
         #expect(overlay.cursor(at: CGPoint(x: 200, y: 150)) == .pointingHand && overlay.cursor(at: CGPoint(x: 40, y: 150)) == .crosshair)
         click(40)
@@ -270,17 +272,25 @@ struct BlemishRemovalTests {
 
     @Test("A mark put back is drawn dashed: some of its outline, not all")
     func dashes() throws {
-        func drawn(excluded: Bool) throws -> Int {
+        // How much is drawn, in points: not how many pixels, which depends on the screen's scale and how lines fall on it.
+        func drawn(excluded: Bool, pixels: Int) throws -> Double {
             let overlay = overlay()
             overlay.blemishMarks = [try mark(1, size: 0.3, excluded: excluded)]
-            let rep = try #require(overlay.bitmapImageRepForCachingDisplay(in: overlay.bounds))
+            let rep = try #require(NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: 400 * pixels, pixelsHigh: 300 * pixels, bitsPerSample: 8, samplesPerPixel: 4,
+                hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+            ))
+            rep.size = overlay.bounds.size
             overlay.cacheDisplay(in: overlay.bounds, to: rep)
-            var count = 0
-            for y in 0..<rep.pixelsHigh { for x in 0..<rep.pixelsWide where (rep.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.6 { count += 1 } }
-            return count
+            var sum = 0.0
+            for y in 0..<rep.pixelsHigh { for x in 0..<rep.pixelsWide { sum += Double(rep.colorAt(x: x, y: y)?.alphaComponent ?? 0) } }
+            let scale = Double(rep.pixelsWide) / 400
+            return sum / (scale * scale)
         }
-        let solid = try drawn(excluded: false), dashed = try drawn(excluded: true)
-        #expect(solid > 100 && Double(dashed) > Double(solid) * 0.3 && Double(dashed) < Double(solid) * 0.7, "solid \(solid), dashed \(dashed)")
+        for pixels in [1, 2] {
+            let solid = try drawn(excluded: false, pixels: pixels), dashed = try drawn(excluded: true, pixels: pixels)
+            #expect(solid > 100 && dashed > solid * 0.3 && dashed < solid * 0.7, "at \(pixels)x: solid \(solid), dashed \(dashed)")
+        }
     }
 
     @Test("Apply, putting a mark back and Reset are each one undo step")
