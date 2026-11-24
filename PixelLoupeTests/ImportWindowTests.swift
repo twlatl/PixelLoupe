@@ -106,6 +106,48 @@ struct ImportWindowTests {
         #expect(selection.checkedCount == 2, "a duplicate can't be checked")
     }
 
+    @Test func filterByShowsAndImportsOnlyTheChosenTypes() {
+        var selection = ImportSelection(files: [
+            file("A.cr3", date: "2026-10-12T09:00:00", size: 100),
+            file("A.jpg", date: "2026-10-12T09:00:01", size: 10),
+            file("B.cr3", date: "2026-10-12T10:00:00", duplicate: true, size: 100),
+            file("B.JPG", date: "2026-10-12T10:00:01", size: 10),
+            file("C.heic", date: "2026-10-12T11:00:00", size: 1),
+        ])
+        let names = { (s: ImportSelection) in s.shown.map { s.files[$0].candidate.source.url.lastPathComponent } }
+        #expect(selection.availableFileTypes.map(\.type) == ["CR3", "HEIC", "JPG"], "extensions, uppercased, so .jpg and .JPG are one type")
+        #expect(selection.availableFileTypes.map(\.count) == [2, 1, 2])
+        #expect(selection.filteredCount == 5)
+
+        selection.setFileTypes(["CR3"])
+        #expect(names(selection) == ["A.cr3", "B.cr3"])
+        #expect(selection.filteredCount == 2)
+        #expect(selection.checkedCount == 1, "B.cr3 is in the library")
+        #expect(selection.checkedBytes == 100)
+        #expect(selection.duplicateCount == 1)
+        #expect(selection.checkedCandidates.map(\.source.url.lastPathComponent) == ["A.cr3"], "hidden types aren't imported")
+        #expect(selection.files.indices.filter { selection.passesFileTypes($0) }.map(selection.number) == [1, 2],
+                "numbers count only the files shown")
+
+        // Check All and Uncheck All leave hidden files alone, so showing them again brings their checks back.
+        selection.setAll(false)
+        #expect(selection.checkedCount == 0)
+        selection.setFileTypes(["CR3", "JPG"])
+        #expect(names(selection) == ["A.cr3", "A.jpg", "B.cr3", "B.JPG"])
+        #expect(selection.checkedCount == 2, "the JPGs kept their checks")
+
+        selection.setFileTypes([])
+        #expect(selection.checkedCandidates.map(\.source.url.lastPathComponent) == ["A.jpg", "B.JPG", "C.heic"])
+        selection.setFileTypes(["PNG"])
+        #expect(selection.fileTypes.isEmpty && names(selection).count == 5, "a type none of the files have shows everything")
+
+        // A new source keeps the chosen types it has, and drops the others.
+        let carried = ImportSelection(files: [file("D.jpg", date: "2026-10-13T09:00:00"), file("D.dng", date: "2026-10-13T09:00:00")],
+                                      fileTypes: ["CR3", "JPG"])
+        #expect(carried.fileTypes == ["JPG"])
+        #expect(names(carried) == ["D.jpg"])
+    }
+
     @Test func shiftClickGivesTheRangeTheLastClickedState() {
         var selection = ImportSelection(files: (1...8).map { file("IMG_\($0).jpg", date: "2026-10-12T09:0\($0):00", duplicate: $0 == 4) })
         func states() -> [Bool] { selection.files.indices.map(selection.isChecked) }
@@ -513,11 +555,13 @@ private extension NSView {
 
 @Suite("Import window feedback", .serialized)
 struct ImportWindowFeedbackTests {
-    private func window(with files: Int) async throws -> (ImportWindowController, NSCollectionView, TemporaryDirectory, URL) {
+    /// `files` JPEGs named .jpg, then `jpegs` more named .jpeg (a second file type for Filter By).
+    private func window(with files: Int, jpegs: Int = 0) async throws -> (ImportWindowController, NSCollectionView, TemporaryDirectory, URL) {
         let directory = try TemporaryDirectory()
         let card = try directory.subdirectory("Card")
-        for index in 1...files {
-            try Fixtures.writeJPEG(to: card.appending(path: "IMG_\(index).jpg"), captureDate: "2025:06:0\(index) 09:00:00")
+        for index in 1...(files + jpegs) {
+            let name = index > files ? "IMG_\(index).jpeg" : "IMG_\(index).jpg"
+            try Fixtures.writeJPEG(to: card.appending(path: name), captureDate: "2025:06:0\(index) 09:00:00")
         }
         let info = Fixtures.managedInfo(storage: try directory.subdirectory("Storage"))
         let catalog = directory.url.appending(path: "Test.pixelloupe")
@@ -547,6 +591,27 @@ struct ImportWindowFeedbackTests {
         let path = try #require(controller.window?.toolbar?.items.compactMap(\.view).flatMap { $0.feedbackDescendants }
             .compactMap { $0 as? NSTextField }.first { $0.stringValue.contains("2025") })
         #expect(path.stringValue.hasSuffix("2025 › 2025-06-01"))
+    }
+
+    @Test func filterByListsTheSourcesTypesAndNarrowsTheGrid() async throws {
+        let (controller, grid, directory, _) = try await window(with: 3, jpegs: 2)
+        defer {
+            controller.close()
+            withExtendedLifetime(directory) {}
+        }
+        let popUp = controller.fileTypePopUp
+        #expect(popUp.itemArray.map(\.title) == ["Filter By: All File Types", "All File Types", "", "JPEG (2)", "JPG (3)"])
+        #expect(popUp.itemArray[1].state == .on)
+        #expect(grid.numberOfItems(inSection: 0) == 5)
+
+        controller.setFileTypes(["JPEG"])
+        #expect(popUp.itemArray[0].title == "Filter By: JPEG")
+        #expect(popUp.itemArray[3].state == .on && popUp.itemArray[1].state == .off && popUp.itemArray[4].state == .off)
+        #expect(grid.numberOfItems(inSection: 0) == 2)
+        let count = try #require(controller.window?.contentView?.feedbackDescendant { $0.accessibilityIdentifier() == "importSelectedCount" } as? NSTextField)
+        #expect(count.stringValue == "2 of 2 selected")
+        let summary = try #require(controller.window?.contentView?.feedbackDescendant { $0.accessibilityIdentifier() == "importSummary" } as? NSTextField)
+        #expect(summary.stringValue.hasPrefix("2 photos"), "the JPGs filtered out aren't imported")
     }
 
     @Test func aCheckboxOnASelectedPhotoChecksTheWholeSelection() async throws {
