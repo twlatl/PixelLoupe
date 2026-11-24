@@ -53,6 +53,66 @@ nonisolated struct CatalogSettings: Codable, Equatable, Sendable {
     /// library reads every original.
     var detectsDuplicates = false
 
+    /// Catalog Settings ▸ Metadata ▸ Automatically clear history (RAW-309): when every photo's Develop history is
+    /// cleared as the catalog opens. Current settings and snapshots are kept; only the history steps go.
+    enum HistoryCleanup: String, Codable, CaseIterable, Identifiable, Sendable {
+        case never
+        /// Once, the next time the catalog opens; then Never.
+        case nextLaunch
+        case everyLaunch
+        case monthly
+        case yearly
+
+        var id: Self { self }
+        var title: String {
+            switch self {
+            case .never: "Never"
+            case .nextLaunch: "When PixelLoupe next relaunches"
+            case .everyLaunch: "Every time PixelLoupe relaunches"
+            case .monthly: "Once a month"
+            case .yearly: "Once a year"
+            }
+        }
+    }
+
+    private(set) var historyCleanup = HistoryCleanup.never
+    /// When the current choice was made: Once a month and Once a year count from here until history is first cleared.
+    private(set) var historyCleanupChosen: Date?
+    /// When history was last cleared automatically.
+    private(set) var lastHistoryCleanup: Date?
+
+    /// Chooses when history is cleared. Choosing starts the clock for Once a month and Once a year, so history isn't
+    /// cleared the next time the catalog opens just because it never has been.
+    mutating func chooseHistoryCleanup(_ cleanup: HistoryCleanup, now: Date = .now) {
+        guard cleanup != historyCleanup else { return }
+        historyCleanup = cleanup
+        historyCleanupChosen = now
+    }
+
+    /// Whether history should be cleared as the catalog opens. Once a month and Once a year count from the later of
+    /// the last clear and when the choice was made.
+    func isHistoryCleanupDue(now: Date = .now, calendar: Calendar = .current) -> Bool {
+        let interval: DateComponents
+        switch historyCleanup {
+        case .never: return false
+        case .nextLaunch, .everyLaunch: return true
+        case .monthly: interval = DateComponents(month: 1)
+        case .yearly: interval = DateComponents(year: 1)
+        }
+        guard let start = [lastHistoryCleanup, historyCleanupChosen].compactMap(\.self).max(),
+              let next = calendar.date(byAdding: interval, to: start) else { return false }
+        return now >= next
+    }
+
+    /// History was cleared: the date is recorded, and When PixelLoupe next relaunches gives way to Never.
+    mutating func historyDidClear(at date: Date = .now) {
+        lastHistoryCleanup = date
+        if historyCleanup == .nextLaunch {
+            historyCleanup = .never
+            historyCleanupChosen = date
+        }
+    }
+
     // MARK: Backups (RAW-269)
 
     /// Catalog Settings ▸ Backups ▸ Back Up Catalog: when PixelLoupe offers to back the catalog up as it quits.
@@ -130,6 +190,7 @@ nonisolated struct CatalogSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case standardPreviewSize, previewQuality, previewCacheLimitGB, includesDevelopSettingsInExports, detectsDuplicates
+        case historyCleanup, historyCleanupChosen, lastHistoryCleanup
         case backupSchedule, scheduleBeforeNextExit, backupFolderPath, backupsToKeep, testsBackupIntegrity
     }
 
@@ -141,6 +202,9 @@ nonisolated struct CatalogSettings: Codable, Equatable, Sendable {
         previewCacheLimitGB = try? container.decodeIfPresent(Double.self, forKey: .previewCacheLimitGB)
         includesDevelopSettingsInExports = (try? container.decodeIfPresent(Bool.self, forKey: .includesDevelopSettingsInExports)) ?? false
         detectsDuplicates = (try? container.decodeIfPresent(Bool.self, forKey: .detectsDuplicates)) ?? false
+        historyCleanup = (try? container.decodeIfPresent(HistoryCleanup.self, forKey: .historyCleanup)) ?? .never
+        historyCleanupChosen = try? container.decodeIfPresent(Date.self, forKey: .historyCleanupChosen)
+        lastHistoryCleanup = try? container.decodeIfPresent(Date.self, forKey: .lastHistoryCleanup)
         backupSchedule = (try? container.decodeIfPresent(BackupSchedule.self, forKey: .backupSchedule)) ?? .weekly
         scheduleBeforeNextExit = try? container.decodeIfPresent(BackupSchedule.self, forKey: .scheduleBeforeNextExit)
         backupFolderPath = try? container.decodeIfPresent(String.self, forKey: .backupFolderPath)

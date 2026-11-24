@@ -242,6 +242,26 @@ final class CatalogStore: NSObject {
         }
     }
 
+    /// Catalog Settings ▸ Metadata ▸ Automatically clear history (RAW-309): clears every photo's Develop history when
+    /// it's due, as the catalog opens, in the background. It can't be undone, and isn't put on the undo stack.
+    func clearHistoryIfDue(now: Date = .now) async {
+        guard settings.isHistoryCleanupDue(now: now) else { return }
+        let context = newBackgroundContext()
+        let deleted: [NSManagedObjectID]
+        do {
+            deleted = try await context.perform { try DevelopHistory.clearAllHistory(in: context) }
+        } catch {
+            Self.logger.error("Failed to clear history: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        let undoManager = viewContext.undoManager
+        undoManager?.disableUndoRegistration()
+        NSManagedObjectContext.mergeChanges(fromRemoteContextSave: [NSDeletedObjectsKey: deleted], into: [viewContext])
+        undoManager?.enableUndoRegistration()
+        settings.historyDidClear(at: now)
+        Self.logger.info("Cleared history: \(deleted.count) steps")
+    }
+
     func newBackgroundContext() -> NSManagedObjectContext {
         let context = container.newBackgroundContext()
         context.mergePolicy = NSMergePolicy.mergeByPropertyObjectTrump

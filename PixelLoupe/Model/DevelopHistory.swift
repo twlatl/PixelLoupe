@@ -107,6 +107,15 @@ nonisolated enum DevelopHistory {
         for step in photo.historySteps { context.delete(step) }
     }
 
+    /// Deletes every photo's history steps in one batch, for Automatically clear history (RAW-309). Photos keep their
+    /// current settings and snapshots. Returns the deleted steps' IDs so other contexts can drop them.
+    static func clearAllHistory(in context: NSManagedObjectContext) throws -> [NSManagedObjectID] {
+        let request = NSBatchDeleteRequest(fetchRequest: NSFetchRequest<any NSFetchRequestResult>(entityName: "DevelopHistoryStep"))
+        request.resultType = .resultTypeObjectIDs
+        let result = try context.execute(request) as? NSBatchDeleteResult
+        return result?.result as? [NSManagedObjectID] ?? []
+    }
+
     // MARK: Snapshots
 
     static func snapshots(for photo: Photo) -> [DevelopSnapshot] {
